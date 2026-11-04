@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { sendArchived } = require('../lib/localArchive');
 const { ticketVisibilityClause, canManageTicket, isGeneralManager } = require('../lib/ticketVisibility');
 const { getSbuScope, departmentIdsForTab } = require('../lib/sbuGroups');
 
@@ -633,7 +634,7 @@ router.get('/:id/attachments', requireAuth, async (req, res, next) => {
   try {
     if (!(await ticketIVisible(req.user.id, req.params.id))) return res.status(404).json({ error: 'Not found' });
     const [rows] = await pool.query(
-      `SELECT a.id, a.file_name, a.mime_type, a.size_bytes, a.created_at, a.uploaded_by_user_id,
+      `SELECT a.id, a.file_name, a.mime_type, a.size_bytes, a.created_at, a.archived_at, a.uploaded_by_user_id,
               u.display_name AS uploaded_by_name
          FROM ticket_attachments a
          LEFT JOIN users u ON u.id = a.uploaded_by_user_id
@@ -684,7 +685,7 @@ router.post('/:id/attachments', requireAuth, async (req, res, next) => {
     await pool.query('UPDATE tickets SET updated_at = NOW() WHERE id = ?', [req.params.id]);
 
     const [[row]] = await pool.query(
-      `SELECT a.id, a.file_name, a.mime_type, a.size_bytes, a.created_at, a.uploaded_by_user_id,
+      `SELECT a.id, a.file_name, a.mime_type, a.size_bytes, a.created_at, a.archived_at, a.uploaded_by_user_id,
               u.display_name AS uploaded_by_name
          FROM ticket_attachments a LEFT JOIN users u ON u.id = a.uploaded_by_user_id
         WHERE a.id = ?`,
@@ -698,10 +699,12 @@ router.get('/:id/attachments/:attachmentId/file', requireAuth, async (req, res, 
   try {
     if (!(await ticketIVisible(req.user.id, req.params.id))) return res.status(404).json({ error: 'Not found' });
     const [[row]] = await pool.query(
-      'SELECT file_name, mime_type, file_data FROM ticket_attachments WHERE id = ? AND ticket_id = ?',
+      'SELECT file_name, mime_type, archive_path, file_data FROM ticket_attachments WHERE id = ? AND ticket_id = ?',
       [req.params.attachmentId, req.params.id],
     );
     if (!row) return res.status(404).json({ error: 'Not found' });
+    // Moved to the office archive drive (db/archive-attachments.js): served from there.
+    if (row.archive_path) return sendArchived(req, res, row);
     res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
     // Only ever images and PDFs get here, both of which the browser renders, so they open in
     // a tab rather than downloading.

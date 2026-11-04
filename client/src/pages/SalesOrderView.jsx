@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import ArchivedTag, { blobErrorMessage } from '../components/ArchivedTag';
 import { usePeriodLocked } from '../utils/periodLock';
 import { useAuth } from '../context/useAuth';
 import SalesInvoiceModal from '../components/SalesInvoiceModal';
@@ -218,8 +219,8 @@ export default function SalesOrderView() {
       window.open(url, '_blank');
       // Revoked on a delay: revoking immediately can beat the new tab to the object.
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch {
-      setAttachmentError('Could not open that file.');
+    } catch (err) {
+      setAttachmentError(await blobErrorMessage(err, 'Could not open that file.'));
     }
   }
 
@@ -577,7 +578,7 @@ export default function SalesOrderView() {
                 {attachments.map((a, idx) => (
                   <tr key={`${a.source}-${a.id}`}>
                     <td>{idx + 1}</td>
-                    <td><button type="button" className="link-btn" onClick={() => openAttachment(a)}>{a.file_name}</button></td>
+                    <td><button type="button" className="link-btn" onClick={() => openAttachment(a)}>{a.file_name}</button><ArchivedTag at={a.archived_at} /></td>
                     <td>{a.source === 'order' ? 'This order' : 'Estimate'}</td>
                     <td>{a.mime_type === 'application/pdf' ? 'PDF' : (String(a.mime_type || '').startsWith('image/') ? 'Image' : a.mime_type)}</td>
                     <td>{fileSize(a.size_bytes)}</td>

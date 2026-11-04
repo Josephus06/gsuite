@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const pool = require('../db');
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 const storage = require('../lib/objectStorage');
+const localArchive = require('../lib/localArchive');
 
 const router = express.Router();
 
@@ -270,7 +271,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     const [versions] = await pool.query(
       `SELECT v.id, v.version_no, v.file_name, v.mime_type, v.checksum_sha256,
               COALESCE(v.size_bytes_large, v.size_bytes) AS size_bytes,
-              v.storage, v.upload_status, v.upload_started_at,
+              v.storage, v.upload_status, v.upload_started_at, v.archived_at,
               v.note, v.created_at, u.display_name AS uploaded_by_name
          FROM archive_file_versions v LEFT JOIN users u ON u.id = v.uploaded_by_user_id
         WHERE v.file_id = ? ORDER BY v.version_no DESC`,
@@ -314,7 +315,7 @@ router.get('/:id/versions/:versionId/download', requireAuth, requirePermission(R
     // returns before it is ever touched for a stored-in-Spaces version.
     const [[v]] = await pool.query(
       `SELECT file_name, mime_type, size_bytes, size_bytes_large, version_no,
-              storage, storage_key, upload_status
+              storage, storage_key, upload_status, archive_path
          FROM archive_file_versions WHERE id = ? AND file_id = ?`,
       [req.params.versionId, req.params.id],
     );
@@ -323,6 +324,18 @@ router.get('/:id/versions/:versionId/download', requireAuth, requirePermission(R
     // A large file is fetched straight from storage on a short-lived signed URL. The bytes never
     // pass through this server: streaming 150 GB through Node would hold a connection open for
     // hours for no benefit, when storage can serve it directly.
+    // Moved to the office archive drive (db/archive-attachments.js): a short-lived signed link the
+    // browser downloads itself, served off the office drive (through the cloud when away from it).
+    if (v.archive_path) {
+      await logFile(null, req, {
+        fileId: req.params.id, versionId: req.params.versionId,
+        action: 'downloaded', detail: `v${v.version_no} ${v.file_name} (office archive)`,
+      });
+      return res.json({
+        archive_link: `/archive-link/${localArchive.signLink(v)}`, expires_in: localArchive.LINK_TTL_SECONDS,
+        file_name: v.file_name, size_bytes: v.size_bytes_large || v.size_bytes,
+      });
+    }
     if (v.storage === 'spaces') {
       if (v.upload_status !== 'complete') {
         return res.status(409).json({ error: `This upload is ${v.upload_status} and cannot be downloaded yet.` });

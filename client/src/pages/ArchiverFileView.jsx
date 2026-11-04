@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import api from '../api/client';
+import ArchivedTag from '../components/ArchivedTag';
 import { useAuth } from '../context/useAuth';
 import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -122,10 +123,12 @@ export default function ArchiverFileView() {
       // A version stored in object storage is fetched from there directly on a short-lived signed
       // URL -- the bytes never come through the app, which is the only workable answer at tens of
       // gigabytes. Small in-database versions still stream through as a blob.
-      if (version.storage === 'spaces') {
+      // Moved to the office archive drive ('local'): a short-lived signed link served off the office
+      // server, which the browser downloads itself -- the same flow, so large files never sit in memory.
+      if (version.storage === 'spaces' || version.storage === 'local') {
         const { data } = await api.get(`/archiver/files/${id}/versions/${version.id}/download`);
         const a = document.createElement('a');
-        a.href = data.url;
+        a.href = data.url || `${api.defaults.baseURL}${data.archive_link}`;
         a.rel = 'noreferrer noopener';
         // No `download` attribute: it is ignored cross-origin. The signed URL carries a
         // Content-Disposition instead, which is what actually names the saved file.
@@ -276,7 +279,7 @@ export default function ArchiverFileView() {
                 {versions.map((v) => (
                   <tr key={v.id} style={{ fontWeight: v.version_no === file.current_version ? 600 : undefined }}>
                     <td data-label="Version">v{v.version_no}{v.version_no === file.current_version ? ' · current' : ''}</td>
-                    <td data-label="File" style={{ fontSize: 12 }}>{v.file_name}</td>
+                    <td data-label="File" style={{ fontSize: 12 }}>{v.file_name}{v.storage === 'local' && <ArchivedTag at={v.archived_at || v.created_at} />}</td>
                     <td data-label="Type">{fileKind(v.mime_type)}</td>
                     <td data-label="Size">{formatBytes(v.size_bytes)}</td>
                     <td data-label="Uploaded">{formatDateTime(v.created_at)}</td>

@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../db');
 const { requireOpenPeriod, assertRepChangeAllowed } = require('../lib/accountingPeriod');
 const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
+const { sendArchived } = require('../lib/localArchive');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { computeSalesOrderStatus, invoicedOrTicketedSql, openDtQtySql } = require('../lib/salesOrderStatus');
 const { releaseIfDirectToProduction } = require('../lib/directToProduction');
@@ -792,7 +793,7 @@ router.get('/:id/attachments', requireAuth, requirePermission(ROUTE, 'can_view')
 
     // A sales order with no estimate behind it (imported or non-standard) simply has none.
     const [inherited] = so.estimate_id ? await pool.query(
-      `SELECT a.id, a.file_name, a.mime_type, a.size_bytes, a.created_at, u.display_name AS uploaded_by_name
+      `SELECT a.id, a.file_name, a.mime_type, a.size_bytes, a.created_at, a.archived_at, u.display_name AS uploaded_by_name
          FROM estimate_attachments a
          LEFT JOIN users u ON u.id = a.uploaded_by_user_id
         WHERE a.estimate_id = ? ORDER BY a.id`,
@@ -800,7 +801,7 @@ router.get('/:id/attachments', requireAuth, requirePermission(ROUTE, 'can_view')
     ) : [[]];
 
     const [own] = await pool.query(
-      `SELECT a.id, a.file_name, a.mime_type, a.size_bytes, a.created_at, u.display_name AS uploaded_by_name
+      `SELECT a.id, a.file_name, a.mime_type, a.size_bytes, a.created_at, a.archived_at, u.display_name AS uploaded_by_name
          FROM sales_order_attachments a
          LEFT JOIN users u ON u.id = a.uploaded_by_user_id
         WHERE a.sales_order_id = ? ORDER BY a.id`,
@@ -882,7 +883,7 @@ router.post('/:id/order-attachments', requireAuth, requirePermission(ROUTE, 'can
       [req.params.id, String(fileName).slice(0, 255), String(mimeType).slice(0, 100), buf.length, buf, req.user.id]
     );
     const [[row]] = await pool.query(
-      `SELECT a.id, a.file_name, a.mime_type, a.size_bytes, a.created_at, a.uploaded_by_user_id,
+      `SELECT a.id, a.file_name, a.mime_type, a.size_bytes, a.created_at, a.archived_at, a.uploaded_by_user_id,
               u.display_name AS uploaded_by_name
          FROM sales_order_attachments a
          LEFT JOIN users u ON u.id = a.uploaded_by_user_id
@@ -899,10 +900,12 @@ router.get('/:id/order-attachments/:attachmentId/file', requireAuth, requirePerm
     if (!so) return res.status(404).json({ error: 'Not found' });
 
     const [[row]] = await pool.query(
-      'SELECT file_name, mime_type, file_data FROM sales_order_attachments WHERE id = ? AND sales_order_id = ?',
+      'SELECT file_name, mime_type, archive_path, file_data FROM sales_order_attachments WHERE id = ? AND sales_order_id = ?',
       [req.params.attachmentId, req.params.id]
     );
     if (!row) return res.status(404).json({ error: 'Not found' });
+    // Moved to the office archive drive (db/archive-attachments.js): served from there.
+    if (row.archive_path) return sendArchived(req, res, row);
     res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
     res.setHeader('Content-Disposition', `inline; filename="${row.file_name.replace(/"/g, '')}"`);
     res.send(row.file_data);
@@ -933,10 +936,12 @@ router.get('/:id/attachments/:attachmentId/file', requireAuth, requirePermission
     // Matched against the estimate id as well as the attachment id, so an attachment on
     // someone else's estimate cannot be pulled through this order's URL.
     const [[row]] = await pool.query(
-      'SELECT file_name, mime_type, file_data FROM estimate_attachments WHERE id = ? AND estimate_id = ?',
+      'SELECT file_name, mime_type, archive_path, file_data FROM estimate_attachments WHERE id = ? AND estimate_id = ?',
       [req.params.attachmentId, estimateId],
     );
     if (!row) return res.status(404).json({ error: 'Not found' });
+    // Moved to the office archive drive (db/archive-attachments.js): served from there.
+    if (row.archive_path) return sendArchived(req, res, row);
     res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
     res.setHeader('Content-Disposition', `inline; filename="${row.file_name.replace(/"/g, '')}"`);
     res.send(row.file_data);

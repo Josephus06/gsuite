@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
+import ArchivedTag, { blobErrorMessage } from './ArchivedTag';
 
 // Images and PDFs attached to a ticket -- the screenshot of the error, the scan of the form.
 // A ticket is usually raised about something the person can see, and describing a screen in
@@ -55,7 +56,7 @@ export default function TicketAttachments({ ticketId, currentUserId, isAdmin }) 
     let cancelled = false;
     (async () => {
       for (const r of rows) {
-        if (!isImage(r.mime_type) || previews[r.id]) continue;
+        if (!isImage(r.mime_type) || previews[r.id] || r.archived_at) continue; // archived: opened on click, not previewed
         try {
           const { data } = await api.get(`/tickets/${ticketId}/attachments/${r.id}/file`, { responseType: 'blob' });
           if (cancelled) return;
@@ -129,8 +130,8 @@ export default function TicketAttachments({ ticketId, currentUserId, isAdmin }) 
       window.open(url, '_blank');
       // Revoked on a delay: revoking immediately can beat the new tab to the object.
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch {
-      setError('Could not open that file.');
+    } catch (err) {
+      setError(await blobErrorMessage(err, 'Could not open that file.'));
     }
   }
 
@@ -210,6 +211,7 @@ export default function TicketAttachments({ ticketId, currentUserId, isAdmin }) 
                 <div style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.file_name}>
                   {r.file_name}
                 </div>
+                <ArchivedTag at={r.archived_at} />
                 <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>
                   {fileSize(r.size_bytes)} · {r.uploaded_by_name || 'Unknown'}
                 </div>

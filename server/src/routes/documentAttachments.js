@@ -5,6 +5,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, userCan } = require('../middleware/auth');
+const { sendArchived } = require('../lib/localArchive');
 
 const router = express.Router();
 
@@ -29,7 +30,7 @@ async function docFor(req) {
   return { ...doc, canEdit, canAdd };
 }
 
-const LIST_SQL = `SELECT a.id, a.kind, a.file_name, a.mime_type, a.size_bytes, a.created_at, a.uploaded_by_user_id,
+const LIST_SQL = `SELECT a.id, a.kind, a.file_name, a.mime_type, a.size_bytes, a.created_at, a.archived_at, a.uploaded_by_user_id,
                          u.display_name AS uploaded_by_name
                     FROM document_attachments a LEFT JOIN users u ON u.id = a.uploaded_by_user_id`;
 
@@ -69,9 +70,11 @@ router.get('/:docType/:docId/:attachmentId/file', requireAuth, async (req, res, 
     const doc = await docFor(req);
     if (!doc) return res.status(404).json({ error: 'Not found' });
     const [[row]] = await pool.query(
-      'SELECT file_name, mime_type, file_data FROM document_attachments WHERE id = ? AND doc_type = ? AND doc_id = ?',
+      'SELECT file_name, mime_type, archive_path, file_data FROM document_attachments WHERE id = ? AND doc_type = ? AND doc_id = ?',
       [req.params.attachmentId, req.params.docType, req.params.docId]);
     if (!row) return res.status(404).json({ error: 'Not found' });
+    // Moved to the office archive drive (db/archive-attachments.js): served from there.
+    if (row.archive_path) return sendArchived(req, res, row);
     res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
     res.setHeader('Content-Disposition', `inline; filename="${row.file_name.replace(/"/g, '')}"`);
     res.send(row.file_data);

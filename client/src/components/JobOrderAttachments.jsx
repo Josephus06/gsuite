@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
+import ArchivedTag, { blobErrorMessage } from './ArchivedTag';
 import { displayDateTime } from '../utils/dates';
 
 // Files attached to a Job Order. Two different sets live against the same JO and the same
@@ -126,8 +127,8 @@ export default function JobOrderAttachments({
       window.open(url, '_blank');
       // Revoked on a delay: revoking immediately can beat the new tab to the object.
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch {
-      setError('Could not open that file');
+    } catch (err) {
+      setError(await blobErrorMessage(err, 'Could not open that file'));
     }
   }
 
@@ -156,6 +157,7 @@ export default function JobOrderAttachments({
               <div className="att-icon">{fileExt(r.file_name)}</div>
               <div className="att-body">
                 <button type="button" className="att-name" onClick={() => handleOpen(r.id)}>{r.file_name}</button>
+                <ArchivedTag at={r.archived_at} />
                 <div className="att-meta">
                   {fileSize(r.size_bytes)} · {r.uploaded_by_name || 'Unknown'}
                   {r.created_at ? ` · ${displayDateTime(r.created_at)}` : ''}

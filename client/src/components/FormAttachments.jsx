@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import api from '../api/client';
+import ArchivedTag, { blobErrorMessage } from './ArchivedTag';
 import { displayDateTime } from '../utils/dates';
 
 // Files attached to a form -- every type (2026-10-07): the receipt behind a liquidation, the
@@ -85,8 +86,8 @@ export default function FormAttachments({ formId }) {
       const url = URL.createObjectURL(data);
       window.open(url, '_blank');
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch {
-      setError('Could not open that file');
+    } catch (err) {
+      setError(await blobErrorMessage(err, 'Could not open that file'));
     }
   }
 
@@ -112,6 +113,7 @@ export default function FormAttachments({ formId }) {
               <div className="att-icon">{fileExt(r.file_name)}</div>
               <div className="att-body">
                 <button type="button" className="att-name" onClick={() => open(r.id)}>{r.file_name}</button>
+                <ArchivedTag at={r.archived_at} />
                 <div className="att-meta">
                   {fileSize(r.size_bytes)} · {r.uploaded_by_name || 'Unknown'}
                   {r.created_at ? ` · ${displayDateTime(r.created_at)}` : ''}

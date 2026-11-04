@@ -5,6 +5,7 @@ const { buildEstimatePdf, estimatePdfFilename } = require('../lib/estimatePdf');
 const pool = require('../db');
 const { assertPeriodOpen, requireOpenPeriod } = require('../lib/accountingPeriod');
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
+const { sendArchived } = require('../lib/localArchive');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { isHeadOfficeUser } = require('../lib/userLocation');
 const { BILLABLE_ESTIMATE_SQL } = require('../lib/estimateBilling');
@@ -1546,7 +1547,7 @@ const ESTIMATE_ATTACHMENT_TYPES = /^(application\/pdf|image\/(png|jpe?g|gif|webp
 router.get('/:id/attachments', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [rows] = await pool.query(
-      `SELECT a.id, a.file_name, a.mime_type, a.size_bytes, a.created_at, u.display_name AS uploaded_by_name
+      `SELECT a.id, a.file_name, a.mime_type, a.size_bytes, a.created_at, a.archived_at, u.display_name AS uploaded_by_name
          FROM estimate_attachments a
          LEFT JOIN users u ON u.id = a.uploaded_by_user_id
         WHERE a.estimate_id = ? ORDER BY a.id`,
@@ -1597,10 +1598,12 @@ router.post('/:id/attachments', requireAuth, requirePermission(ROUTE, 'can_edit'
 router.get('/:id/attachments/:attachmentId/file', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[row]] = await pool.query(
-      'SELECT file_name, mime_type, file_data FROM estimate_attachments WHERE id = ? AND estimate_id = ?',
+      'SELECT file_name, mime_type, archive_path, file_data FROM estimate_attachments WHERE id = ? AND estimate_id = ?',
       [req.params.attachmentId, req.params.id],
     );
     if (!row) return res.status(404).json({ error: 'Not found' });
+    // Moved to the office archive drive (db/archive-attachments.js): served from there.
+    if (row.archive_path) return sendArchived(req, res, row);
     res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
     // Both types here render in a browser tab, which is what someone checking a PO wants.
     res.setHeader('Content-Disposition', `inline; filename="${row.file_name.replace(/"/g, '')}"`);

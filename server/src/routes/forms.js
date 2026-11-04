@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission, userCan, isSystemAdmin } = require('../middleware/auth');
+const { sendArchived } = require('../lib/localArchive');
 const { insertNumbered } = require('../lib/docNumber');
 const { computeLiquidationGl } = require('../lib/glImpact');
 const { BILLABLE_FORM_TYPES, liquidationBilling } = require('../lib/liquidationPosting');
@@ -2328,7 +2329,7 @@ router.get('/:id/attachments', requireAuth, async (req, res, next) => {
     if (!doc) return res.status(404).json({ error: 'Not found' });
     if (!(await maySee(req.user.id, doc))) return res.status(403).json({ error: 'This form is not yours to view.' });
     const [rows] = await pool.query(
-      `SELECT a.id, a.file_name, a.mime_type, a.size_bytes, a.created_at, a.uploaded_by_user_id,
+      `SELECT a.id, a.file_name, a.mime_type, a.size_bytes, a.created_at, a.archived_at, a.uploaded_by_user_id,
               u.display_name AS uploaded_by_name
          FROM form_request_attachments a LEFT JOIN users u ON u.id = a.uploaded_by_user_id
         WHERE a.form_request_id = ? ORDER BY a.created_at DESC, a.id DESC`, [doc.id]);
@@ -2372,9 +2373,11 @@ router.get('/:id/attachments/:attachmentId/file', requireAuth, async (req, res, 
     if (!doc) return res.status(404).json({ error: 'Not found' });
     if (!(await maySee(req.user.id, doc))) return res.status(403).json({ error: 'This form is not yours to view.' });
     const [[row]] = await pool.query(
-      'SELECT file_name, mime_type, file_data FROM form_request_attachments WHERE id = ? AND form_request_id = ?',
+      'SELECT file_name, mime_type, archive_path, file_data FROM form_request_attachments WHERE id = ? AND form_request_id = ?',
       [req.params.attachmentId, doc.id]);
     if (!row) return res.status(404).json({ error: 'Not found' });
+    // Moved to the office archive drive (db/archive-attachments.js): served from there.
+    if (row.archive_path) return sendArchived(req, res, row);
     res.setHeader('Content-Type', row.mime_type || 'application/octet-stream');
     // PDFs and images open in a tab; anything else downloads.
     const inline = /^(application\/pdf|image\/)/.test(row.mime_type || '');

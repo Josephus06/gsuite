@@ -392,6 +392,9 @@ app.use('/api/reports/delivery-vs-actual', deliveryVsActualReportRoutes);
 app.use('/api/reports/weighted-sales', weightedSalesReportRoutes);
 app.use('/api/reports/top-customers', topCustomersReportRoutes);
 app.use('/api/reports/installation-orders', installationOrdersReportRoutes);
+// A large file moved to the office archive drive: the short-lived signed link its download route
+// issued (lib/localArchive.js). No login header -- a browser download carries none; the signature is the permission.
+app.get('/api/archive-link/:token', (req, res, next) => require('./lib/localArchive').serveLink(req, res).catch(next));
 app.use('/api/budgets', budgetRoutes);
 // BIR Reports > Sales Report / Purchase Report -- mounted under its own prefix so each page
 // keeps its own permission row rather than borrowing the Accounting reports'.
