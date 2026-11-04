@@ -28,6 +28,7 @@ function notificationTypeLabel(type) {
     case 'ticket_approved': return 'Approved';
     case 'ticket_resolved': return 'Resolved';
     case 'gm_approval_needed': return 'GM Approval';
+    case 'nsso_rma_approval': return 'RMA Approval';
     case 'parked_bank_items': return 'Bank Items';
     case 'feed_post': return 'New Post';
     case 'feed_reaction': return 'Reaction';

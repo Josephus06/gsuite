@@ -5,11 +5,12 @@ const { requireOpenPeriod } = require('../lib/accountingPeriod');
 const { releaseIfDirectToProduction } = require('../lib/directToProduction');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission, userCan, isSystemAdmin } = require('../middleware/auth');
-const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
+const { getSalesRepEmployeeScope, isAboveInChain, directSupervisorIds } = require('../lib/salesVisibility');
 const { sendXlsx, day } = require('../lib/xlsxExport');
 const { DESIGN_QUEUE_STATUS } = require('../lib/designSupervisorVisibility');
 const { notifyDesignSupervisors } = require('../lib/designNotifications');
-const { mayGmApprove, notifyGmApproval } = require('../lib/generalManagers');
+const { notifyGmApproval } = require('../lib/generalManagers');
+const { insertFor } = require('../lib/approvalNotifications');
 
 const router = express.Router();
 // Non-Standard Sales Order (NSSO-<TYPE>-####): a sales-order-like document raised outside the
@@ -388,8 +389,10 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     if (!n) return res.status(404).json({ error: 'Not found' });
     // Defence in depth for the list filter above: hiding a document from the list while still
     // serving it to anyone who types its id is not a restriction. See lib/salesVisibility.js.
+    // ...except to whoever has to approve it: an RMA's approver is its creator's supervisor or head,
+    // whose sales team need not cover the NSSO's rep.
     const salesScope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
-    if (salesScope && !salesScope.includes(n.sales_rep_id)) {
+    if (salesScope && !salesScope.includes(n.sales_rep_id) && !(n.status === 'pending_approval' && await mayApproveNsso(req.user.id, n))) {
       return res.status(404).json({ error: 'Not found' });
     }
     const [lines] = await pool.query(
@@ -425,7 +428,9 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     const [invoices] = await pool.query(
       'SELECT id, invoice_no, date_created, gross_amount, status FROM sales_invoices WHERE nsso_id = ? ORDER BY id DESC', [req.params.id]
     );
-    res.json({ ...n, lines, billing, deliveries, invoices });
+    // Whether this user may approve it -- an RMA's approver depends on who created it, which the page
+    // cannot work out on its own.
+    res.json({ ...n, lines, billing, deliveries, invoices, may_approve: await mayApproveNsso(req.user.id, n) });
   } catch (err) { next(err); }
 });
 
@@ -533,20 +538,23 @@ router.post('/:id/lines/from-source', requireAuth, requireOpenPeriod('non_standa
     }
     await recomputeTotals(conn, req.params.id);
     await conn.commit();
-    // An RMA / RMA-Installation with its lines is ready for the GM (mayApproveNsso). Told once: the
-    // wizard can save the lines again, and a second notice for the same NSSO is noise.
+    // An RMA / RMA-Installation with its lines is ready for its creator's supervisor (mayApproveNsso).
+    // Told once: the wizard can save the lines again, and a second notice for the same NSSO is noise.
     if (lineNo) {
-      const [[n]] = await pool.query('SELECT nsso_no, type, status FROM non_standard_sales_orders WHERE id = ?', [req.params.id]);
+      const [[n]] = await pool.query('SELECT nsso_no, type, status, created_by_user_id FROM non_standard_sales_orders WHERE id = ?', [req.params.id]);
       const [[told]] = await pool.query(
-        "SELECT 1 AS x FROM notifications WHERE type = 'gm_approval' AND related_type = 'NonStandardSalesOrder' AND related_id = ? LIMIT 1",
+        "SELECT 1 AS x FROM notifications WHERE type = 'nsso_rma_approval' AND related_type = 'NonStandardSalesOrder' AND related_id = ? LIMIT 1",
         [req.params.id]
       );
       if (n && ['rma', 'rma_installation'].includes(n.type) && n.status === 'pending_approval' && !told) {
-        await notifyGmApproval({
-          title: `${n.nsso_no} needs GM approval`,
-          message: `${n.type === 'rma' ? 'RMA' : 'RMA - Installation'} NSSO with ${lineNo} job order line(s).`,
-          relatedType: 'NonStandardSalesOrder', relatedId: Number(req.params.id),
-        }, req.user.id);
+        try {
+          await insertFor(await directSupervisorIds(n.created_by_user_id), {
+            type: 'nsso_rma_approval',
+            title: `${n.nsso_no} needs your approval`,
+            message: `${n.type === 'rma' ? 'RMA' : 'RMA - Installation'} NSSO with ${lineNo} job order line(s).`,
+            relatedType: 'NonStandardSalesOrder', relatedId: Number(req.params.id),
+          }, req.user.id);
+        } catch (e) { console.error('[notifications] NSSO RMA approval:', e.message); }
       }
     }
     const [lines] = await pool.query(
@@ -740,10 +748,15 @@ router.put('/:id/lines/:lineId/sample', requireAuth, requireOpenPeriod('non_stan
 // "NSSO Can Approve" does not reach it (asked 2026-10-06). Every other type is still governed by
 // that permission alone.
 //
-// An RMA or RMA-Installation is approved by a General Manager (or a System Admin), not on that
-// permission either (asked 2026-10-31): create -> GM approval -> create the NSJO.
-async function mayApproveNsso(userId, type) {
-  if (type === 'rma' || type === 'rma_installation') return mayGmApprove(userId);
+// An RMA or RMA-Installation is approved by the supervisor -- or anyone above them, the head -- of
+// whoever created it (user_supervisors), or a System Admin; not on that permission either. Then
+// the NSJO-RMA made from it waits on a General Manager (asked 2026-11-04; it was the GM approving
+// the NSSO from 2026-10-31): create -> head approves -> create NSJO-RMA -> GM approves -> Design.
+async function mayApproveNsso(userId, n) {
+  const { type } = n;
+  if (type === 'rma' || type === 'rma_installation') {
+    return (await isSystemAdmin(userId)) || isAboveInChain(userId, n.created_by_user_id);
+  }
   if (type === 'sample') {
     if (await isSystemAdmin(userId)) return true;
     const [[u]] = await pool.query('SELECT is_sales_business_unit FROM users WHERE id = ?', [userId]);
@@ -756,12 +769,12 @@ async function mayApproveNsso(userId, type) {
 router.put('/:id/approve', requireAuth, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[n]] = await conn.query('SELECT status, type FROM non_standard_sales_orders WHERE id = ?', [req.params.id]);
+    const [[n]] = await conn.query('SELECT status, type, created_by_user_id FROM non_standard_sales_orders WHERE id = ?', [req.params.id]);
     if (!n) return res.status(404).json({ error: 'Not found' });
-    if (!(await mayApproveNsso(req.user.id, n.type))) {
+    if (!(await mayApproveNsso(req.user.id, n))) {
       return res.status(403).json({
         error: n.type === 'sample' ? 'Only an SBU head can approve a Sample NSSO.'
-          : ['rma', 'rma_installation'].includes(n.type) ? 'Only a General Manager can approve an RMA / RMA-Installation NSSO.'
+          : ['rma', 'rma_installation'].includes(n.type) ? 'Only the supervisor or head of whoever created this RMA NSSO can approve it.'
             : 'You do not have permission to perform this action',
       });
     }
@@ -866,8 +879,11 @@ router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE
     // Supervisor's queue to be assigned an artist, then layout, Sales Approval and Production.
     // The NSSO's own approval was the supervisor's, so the old "Pending RMA Approval" / "Pending
     // Approval" step is no longer entered (JOs already parked there keep their RMA buttons).
-    const initialStatus = DESIGN_QUEUE_STATUS;
-    const initialSubStatus = 'For Design Supervisor';
+    // An NSJO-RMA (RMA or RMA-Installation) waits on a General Manager first (asked 2026-11-04);
+    // approving it (routes/jobOrders.js approve-rma) sends it on to the Design Supervisor.
+    const needsGm = ['rma', 'rma_installation'].includes(nsso.type);
+    const initialStatus = needsGm ? 'Pending RMA Approval' : DESIGN_QUEUE_STATUS;
+    const initialSubStatus = needsGm ? 'Pending' : 'For Design Supervisor';
 
     await conn.beginTransaction();
     // Number: NSJO-<TYPE>-<nssoNum>-<seq>-<total>. TYPE + nssoNum come from the NSSO doc no.
@@ -926,7 +942,7 @@ router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE
     await logAudit(conn, { id: nsso.id, userId: req.user.id, eventType: 'Updated', fieldName: 'created_job_order', newValue: jobOrderNo });
     // A Direct to Production job type skips Design (lib/directToProduction.js) -- and then there is
     // no artist to find, so the supervisors are not told.
-    const released = await releaseIfDirectToProduction(conn, {
+    const released = needsGm || await releaseIfDirectToProduction(conn, {
       jobOrderId: joId, jobTypeId: line.job_type_id, userId: req.user.id,
       fromStatus: initialStatus, fromSubStatus: initialSubStatus,
     });
@@ -938,6 +954,13 @@ router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE
       relatedType: 'JobOrder', relatedId: joId, excludeUserId: req.user.id,
     });
     await conn.commit();
+    if (needsGm) {
+      await notifyGmApproval({
+        title: `${jobOrderNo} needs GM approval`,
+        message: line.description ? String(line.description).slice(0, 500) : null,
+        relatedType: 'JobOrder', relatedId: joId,
+      }, req.user.id);
+    }
     res.status(201).json({ job_order_id: joId, job_order_no: jobOrderNo });
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });

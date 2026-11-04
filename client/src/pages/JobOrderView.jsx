@@ -291,7 +291,12 @@ export default function JobOrderView() {
   const isRfqc = String(jo.job_order_no || '').startsWith('RFQC-');
   // RMA / RMA-Installation / Sample / RWIP / RFQC all show rework context; only Internal (INT) is plain.
   const isRmaType = isRwip || /-(RMA|INST|SAM)-/.test(jo.nsso_no || jo.job_order_no || '');
-  const canApproveRma = can('/non-standard-sales-orders', 'can_approve');
+  // An NSJO-RMA (RMA or RMA-Installation) is approved by a General Manager (or a System Admin), and
+  // goes on to the Design Supervisor (asked 2026-11-04); other parked NSJOs keep the NSSO Can Approve.
+  const isNsjoRma = isNsjo && /^NSJO-(RMA|INST)-/.test(jo.job_order_no || '');
+  const canApproveRma = isNsjoRma && !jo.rma_approved_at
+    ? (!!user?.is_general_manager || user?.account_type === 'System Admin')
+    : can('/non-standard-sales-orders', 'can_approve');
   const isPendingRma = isNsjo && !isNsjoDesign && !jo.rma_approved_at;
   const canForwardProduction = isNsjo && !isNsjoDesign && !!jo.rma_approved_at && jo.status !== 'Released' && jo.status !== 'Cancelled';
   // Whose button it is: this job order's own sales rep (maySalesRevise already states that --

@@ -135,4 +135,30 @@ async function reportEmployeeIds(userId) {
   return rows.map((r) => r.employee_id);
 }
 
-module.exports = { getSalesRepEmployeeScope, isRepOrSupervisorOf, reportEmployeeIds };
+// Is this user above the given user in user_supervisors -- a direct supervisor, or the supervisor's
+// supervisor and on up (the "head" of whoever raised a document)? Walked upward from the subject,
+// each user once, so a loop in the graph cannot spin forever.
+async function isAboveInChain(userId, subjectUserId) {
+  if (!userId || !subjectUserId) return false;
+  const seen = new Set([Number(subjectUserId)]);
+  let level = [Number(subjectUserId)];
+  while (level.length) {
+    const [rows] = await pool.query('SELECT DISTINCT supervisor_id FROM user_supervisors WHERE user_id IN (?)', [level]);
+    const next = rows.map((r) => Number(r.supervisor_id)).filter((id) => !seen.has(id));
+    if (next.includes(Number(userId))) return true;
+    next.forEach((id) => seen.add(id));
+    level = next;
+  }
+  return false;
+}
+
+// The users a user reports to directly (user_supervisors), active ones only.
+async function directSupervisorIds(userId) {
+  const [rows] = await pool.query(
+    'SELECT us.supervisor_id AS id FROM user_supervisors us JOIN users u ON u.id = us.supervisor_id WHERE us.user_id = ? AND u.is_active = TRUE',
+    [userId],
+  );
+  return rows.map((r) => r.id);
+}
+
+module.exports = { getSalesRepEmployeeScope, isRepOrSupervisorOf, reportEmployeeIds, isAboveInChain, directSupervisorIds };

@@ -4,6 +4,7 @@ const { costMissingLines, costProcessLine, costInputsChanged } = require('../lib
 const { completeDesignProcesses } = require('../lib/designAutoComplete');
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 const { mayGmApprove } = require('../lib/generalManagers');
+const { releaseIfDirectToProduction } = require('../lib/directToProduction');
 const { motherUom } = require('../lib/reworkUom');
 const { isPlannerUser, isPlanner, PLANNER_COLUMNS } = require('../lib/plannerRoles');
 const { isAdvanceCopy } = require('../lib/advanceCopy');
@@ -445,16 +446,48 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
   }
 });
 
-// Approve RMA -- releases an NSSO-spawned job order from "Pending RMA Approval" into the normal
-// production flow. Gated by the NSSO page's can_approve permission (the same "NSSO Can Approve"
-// right that lets a user approve the Non-Standard Sales Order also approves its rework JOs).
-router.put('/:id/approve-rma', requireAuth, requirePermission('/non-standard-sales-orders', 'can_approve'), async (req, res, next) => {
+// Approve RMA -- releases an NSSO-spawned job order from "Pending RMA Approval".
+//
+// An NSJO-RMA (its NSSO an RMA or RMA-Installation) is approved by a General Manager or a System
+// Admin, and goes on into the Design Supervisor's queue like a standard JO (asked 2026-11-04: head
+// approves the NSSO, the GM the NSJO-RMA). rma_approved_at stays empty for these -- it marks the
+// older two-step flow below (approve, then Forward to Production), which JOs parked before then keep,
+// gated by the NSSO page's can_approve permission.
+router.put('/:id/approve-rma', requireAuth, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[jo]] = await conn.query('SELECT id, nsso_id, rma_approved_at FROM job_orders WHERE id = ?', [req.params.id]);
+    const [[jo]] = await conn.query(
+      `SELECT jo.id, jo.job_order_no, jo.nsso_id, jo.rma_approved_at, jo.status, jo.sub_status, jo.job_type_id, jo.description, n.type AS nsso_type
+         FROM job_orders jo LEFT JOIN non_standard_sales_orders n ON n.id = jo.nsso_id WHERE jo.id = ?`, [req.params.id]);
     if (!jo) return res.status(404).json({ error: 'Not found' });
     if (!jo.nsso_id) return res.status(409).json({ error: 'This job order is not an RMA job order.' });
     if (jo.rma_approved_at) return res.status(409).json({ error: 'This RMA job order is already approved.' });
+    const gmStep = ['rma', 'rma_installation'].includes(jo.nsso_type);
+    if (gmStep ? !(await mayGmApprove(req.user.id)) : !(await userCan(req.user.id, '/non-standard-sales-orders', 'can_approve'))) {
+      return res.status(403).json({ error: gmStep ? 'Only a General Manager can approve an NSJO-RMA.' : 'You do not have permission to perform this action' });
+    }
+    if (jo.status !== 'Pending RMA Approval' && jo.status !== 'Pending Approval') {
+      return res.status(409).json({ error: 'This job order is not pending approval.' });
+    }
+    if (gmStep) {
+      await conn.beginTransaction();
+      await conn.query("UPDATE job_orders SET status = ?, sub_status = 'For Design Supervisor', updated_at = NOW() WHERE id = ?", [DESIGN_QUEUE_STATUS, jo.id]);
+      await logAudit(conn, { jobOrderId: jo.id, userId: req.user.id, eventType: 'Approved', fieldName: 'status', oldValue: jo.status, newValue: DESIGN_QUEUE_STATUS });
+      // From here exactly as an NSJO used to start: a Direct to Production job type skips Design,
+      // anything else waits on the Design Supervisor for an artist.
+      const released = await releaseIfDirectToProduction(conn, {
+        jobOrderId: jo.id, jobTypeId: jo.job_type_id, userId: req.user.id,
+        fromStatus: DESIGN_QUEUE_STATUS, fromSubStatus: 'For Design Supervisor',
+      });
+      if (!released) await notifyDesignSupervisors(conn, {
+        title: `${jo.job_order_no} needs an artist assigned`,
+        message: jo.description ? String(jo.description).slice(0, 500) : null,
+        relatedType: 'JobOrder', relatedId: jo.id, excludeUserId: req.user.id,
+      });
+      await conn.commit();
+      const [[done]] = await pool.query('SELECT * FROM job_orders WHERE id = ?', [jo.id]);
+      return res.json(done);
+    }
     const [[u]] = await conn.query('SELECT employee_id FROM users WHERE id = ?', [req.user.id]);
     await conn.beginTransaction();
     // Approving the RMA moves it to "Planned - Pending for BOM" but NOT yet into production --
