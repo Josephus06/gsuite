@@ -185,6 +185,8 @@ const NAV_STRUCTURE = [
       { route: '/reports/pending-billing', label: 'Pending Billing' },
       { route: '/reports/weighted-sales', label: 'Weighted Sales per Month' },
       { route: '/reports/top-customers', label: 'Top Customers per Year' },
+      // SOs per month with their installation JOs -- by Job Type or process (2026-11-04).
+      { route: '/reports/installation-orders', label: 'Installation Orders per Month' },
     ],
   },
   {
