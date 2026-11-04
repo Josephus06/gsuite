@@ -627,7 +627,13 @@ router.put('/:id', requireAuth, requireOpenPeriod('sales_orders', 'non_gl'), asy
         if (!same) await soAudit(conn, req.params.id, req.user.id, `line ${old.line_no} · ${k}`, ov, nv);
       }
       if (old.job_order_id) {
-        await conn.query('UPDATE job_orders SET quantity = ?, description = ?, job_location_id = ?, updated_at = NOW() WHERE id = ?', [qty, v.description, v.job_location_id, old.job_order_id]);
+        // The JO is made from the line (create-jo copies these), so an edit carries over to it -- size and
+        // delivery too, not only qty / description / location: SO-196032 line 3 went 150 x 150 MM to
+        // 20 x 20 CM and JO-196032-3-5 still read 150 x 150 (2026-11-04).
+        await conn.query(
+          `UPDATE job_orders SET quantity = ?, description = ?, job_location_id = ?, units = ?, length = ?, width = ?, height = ?,
+             delivery_date = ?, delivery_time = ?, updated_at = NOW() WHERE id = ?`,
+          [qty, v.description, v.job_location_id, v.units, v.length, v.width, v.height, v.delivery_date, v.delivery_time, old.job_order_id]);
       }
     }
     // header totals from the lines as they now stand -- only when some line's pricing changed

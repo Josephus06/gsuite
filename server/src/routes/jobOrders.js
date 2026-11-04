@@ -337,7 +337,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
               COALESCE(NULLIF(jo.contact_phone, ''), nsso.contact_phone) AS contact_phone,
               COALESCE(NULLIF(jo.shipping_address, ''), nsso.shipping_address) AS shipping_address,
               so.production_lead_time,
-              sol.subtotal AS line_subtotal, sol.disc_amount AS line_disc_amount,
+              sol.subtotal AS line_subtotal, sol.disc_amount AS line_disc_amount, sol.uom AS line_uom,
               c.name AS customer_name, c.id AS customer_id, cc.contact_name,
               jt.display_name AS job_type_name, jt.gp_rate_head AS passing_gp_rate, loc.location_name AS job_location_name,
               oloc.location_name AS office_location_name, sd.name AS sales_division_name,

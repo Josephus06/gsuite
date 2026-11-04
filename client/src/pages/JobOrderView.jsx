@@ -541,7 +541,7 @@ export default function JobOrderView() {
             <div>Artist : <span className="hi">{jo.artist_name}</span></div>
             {jo.artist_id && <div>Layout Qty : <span className="hi">{jo.layout_qty ?? 1}</span></div>}
             <div>Qty : <span className="hi">{jo.quantity} {jo.units}</span> Qty Built: <span className="hi">{jo.quantity_built} {jo.units}</span> Qty Inspected: <span className="hi">{jo.quantity_inspected} {jo.units}</span></div>
-            <div>Length : <span className="hi">{jo.length ?? 0}</span> Width : <span className="hi">{jo.width ?? 0}</span> Height : <span className="hi">{jo.height ?? ''}</span></div>
+            <div>Length : <span className="hi">{jo.length ?? 0}</span> Width : <span className="hi">{jo.width ?? 0}</span> Height : <span className="hi">{jo.height ?? ''}</span>{jo.line_uom ? <> UOM : <span className="hi">{jo.line_uom}</span></> : null}</div>
             <div>Memo : <span className="hi">{jo.memo}</span></div>
             {isRmaType && <div>Cause of Error : <span className="hi">{jo.reason_code_name || jo.reason}</span></div>}
             {isRmaType && <div>Action/s to be taken : <span className="hi">{jo.action_to_be_taken}</span></div>}
