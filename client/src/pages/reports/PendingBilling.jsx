@@ -3,7 +3,8 @@ import { Link } from 'react-router-dom';
 import api from '../../api/client';
 import { CustomerLink } from '../../components/PartyLink';
 import LoadingSpinner from '../../components/LoadingSpinner';
-import { displayDate } from '../../utils/dates';
+import { displayDate, displayDateTime } from '../../utils/dates';
+import { useAuth } from '../../context/useAuth';
 import FilterPicker from '../../components/FilterPicker';
 import SearchInput from '../../components/SearchInput';
 
@@ -22,6 +23,44 @@ export default function PendingBilling() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [exporting, setExporting] = useState(false);
+  // can_update here ticks wt PAR&Pics / wt PO by hand; an attachment ticks them for everyone.
+  const { can } = useAuth();
+  const canMark = can('/reports/pending-billing', 'can_update');
+  const [marking, setMarking] = useState('');
+
+  // A PO mark belongs to the sales order, so it changes every row of that order.
+  async function toggleMark(row, target, checked) {
+    const id = target === 'par' ? row.id : row.sales_order_id;
+    setMarking(`${target}|${id}`); setError('');
+    try {
+      const { data: { mark } } = await api.put('/reports/pending-billing/mark', { target, id, checked });
+      setData((d) => ({
+        ...d,
+        rows: d.rows.map((r) => {
+          if (target === 'par' && r.id === id) return { ...r, par_pics_mark: mark, with_par_pics: r.par_pics_file || !!mark };
+          if (target === 'po' && r.sales_order_id === id) return { ...r, po_mark: mark, with_po: r.po_file || !!mark };
+          return r;
+        }),
+      }));
+    } catch (e) { setError(e.response?.data?.error || 'Could not save the tick.'); } finally { setMarking(''); }
+  }
+
+  const markBox = (row, target) => {
+    const file = target === 'par' ? row.par_pics_file : row.po_file;
+    const mark = target === 'par' ? row.par_pics_mark : row.po_mark;
+    const id = target === 'par' ? row.id : row.sales_order_id;
+    const editable = canMark && !file && !!id && marking !== `${target}|${id}`;
+    const what = target === 'par' ? 'PAR & Pics' : 'PO';
+    let title = `No ${what} yet`;
+    if (file) title = `${what} attached`;
+    else if (mark) title = `Ticked by ${mark.by || 'someone'}${mark.at ? `, ${displayDateTime(mark.at)}` : ''}`;
+    return (
+      <input type="checkbox" checked={!!(file || mark)} title={title} aria-label={`with ${what}`}
+        readOnly={!editable} style={{ cursor: editable ? 'pointer' : 'default' }}
+        onClick={editable ? undefined : (e) => e.preventDefault()}
+        onChange={editable ? (e) => toggleMark(row, target, e.target.checked) : undefined} />
+    );
+  };
 
   useEffect(() => { api.get('/employees').then((r) => setReps(r.data)).catch(() => {}); }, []);
   useEffect(() => {
@@ -108,8 +147,8 @@ export default function PendingBilling() {
                   <tr>
                     <th>Job Order</th><th>SO / NSSO</th><th>Customer</th><th>Sales Rep</th><th>Department</th><th>Description</th>
                     <th>Completed</th>
-                    <th title="The Job Order has a PAR & Pics file (Production > Job Order > Production Attachment)" style={{ textAlign: 'center' }}>wt PAR&amp;Pics</th>
-                    <th title="The Sales Order has a file typed PO (Sales Order > Attachment)" style={{ textAlign: 'center' }}>wt PO</th>
+                    <th title="The Job Order has a PAR & Pics file (Production > Job Order > Production Attachment), or someone with Update rights here ticked it" style={{ textAlign: 'center' }}>wt PAR&amp;Pics</th>
+                    <th title="The Sales Order has a file typed PO (Sales Order > Attachment), or someone with Update rights here ticked it" style={{ textAlign: 'center' }}>wt PO</th>
                     <th className="text-right">Days Pending</th><th className="text-right">Qty</th>
                     <th className="text-right">Delivered</th><th className="text-right">Invoiced</th><th className="text-right">To Bill</th>
                     <th className="text-right">Unit Price</th><th className="text-right">Unbilled Amount</th>
@@ -126,8 +165,8 @@ export default function PendingBilling() {
                       <td>{r.department_name || ''}</td>
                       <td style={{ maxWidth: 320 }}>{r.description}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>{displayDate(r.completed_date || r.so_date)}</td>
-                      <td style={{ textAlign: 'center' }}><input type="checkbox" checked={!!r.with_par_pics} readOnly onClick={(e) => e.preventDefault()} style={{ cursor: 'default' }} aria-label="with PAR & Pics" /></td>
-                      <td style={{ textAlign: 'center' }}><input type="checkbox" checked={!!r.with_po} readOnly onClick={(e) => e.preventDefault()} style={{ cursor: 'default' }} aria-label="with PO" /></td>
+                      <td style={{ textAlign: 'center' }}>{markBox(r, 'par')}</td>
+                      <td style={{ textAlign: 'center' }}>{markBox(r, 'po')}</td>
                       <td className="text-right" style={r.days_pending > 30 ? { color: 'var(--danger, #b91c1c)', fontWeight: 600 } : undefined}>{r.days_pending ?? ''}</td>
                       <td className="text-right">{qty(r.quantity)}</td>
                       <td className="text-right">{qty(r.quantity_delivered)}</td>
