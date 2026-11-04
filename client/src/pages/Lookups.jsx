@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -158,7 +159,12 @@ const noteTypesOf = (a) => (a.note_form_types ? String(a.note_form_types).split(
 
 export default function Lookups() {
   const { can } = useAuth();
-  const [activeKey, setActiveKey] = useState(CONFIG[0].key);
+  const navigate = useNavigate();
+  // ?tab=processes: the process view / edit pages come back to their own tab.
+  const [params] = useSearchParams();
+  const [activeKey, setActiveKey] = useState(CONFIG.some((c) => c.key === params.get('tab')) ? params.get('tab') : CONFIG[0].key);
+  // A process has its own view and edit pages (Materials, Ink and the Ink Calculation -- 2026-11-04).
+  const isProcesses = activeKey === 'processes';
   const [rows, setRows] = useState([]);
   const [refOptions, setRefOptions] = useState({});
   const [userOptions, setUserOptions] = useState([]);
@@ -196,12 +202,14 @@ export default function Lookups() {
   useEffect(() => { load(); }, [activeKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function openCreate() {
+    if (isProcesses) { navigate('/processes/new'); return; }
     setForm(emptyForm(active.fields));
     setEditing('new');
     setError('');
   }
 
   function openEdit(row) {
+    if (isProcesses) { navigate(`/processes/${row.id}/edit`); return; }
     const f = {};
     for (const field of active.fields) f[field.name] = field.type === 'checkbox' ? !!row[field.name] : (row[field.name] ?? '');
     setForm(f);
@@ -312,13 +320,14 @@ export default function Lookups() {
               const match = userOptions.find((u) => u.id === r[f.name]);
               return match ? match.display_name : '—';
             }
-            : undefined,
+            : (isProcesses && f.name === 'process_code' ? (r) => <Link to={`/processes/${r.id}`}>{r.process_code}</Link> : undefined),
     }));
 
   // Search box over whichever tab is open: matches any column as shown (a referenced name, not its id).
   const q = search.trim().toLowerCase();
   const shownRows = !q ? rows : rows.filter((r) => columns.some((c) => {
-    const v = c.render ? c.render(r) : r[c.key];
+    // A link (the process code) searches by its own text.
+    const v = c.render && !(isProcesses && c.key === 'process_code') ? c.render(r) : r[c.key];
     return (typeof v === 'string' || typeof v === 'number') && String(v).toLowerCase().includes(q);
   }));
 

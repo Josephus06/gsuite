@@ -207,6 +207,8 @@ import TransactionSettings from './pages/TransactionSettings';
 import ProcessCosting from './pages/ProcessCosting';
 import InventoryReplenishment from './pages/InventoryReplenishment';
 import ProcessCostingView from './pages/ProcessCostingView';
+import ProcessView from './pages/ProcessView';
+import ProcessEdit from './pages/ProcessEdit';
 import ProcessCostingEdit from './pages/ProcessCostingEdit';
 import MaterialCosting from './pages/MaterialCosting';
 import MaterialCostEdit from './pages/MaterialCostEdit';
@@ -603,6 +605,9 @@ function App() {
         <Route path="/asset-disposals/:id" element={<AssetDisposalView />} />
         <Route path="/reports/fixed-asset-roll-forward" element={<FixedAssetRollForward />} />
         <Route path="/lookups" element={<Lookups />} />
+        <Route path="/processes/new" element={<ProcessEdit />} />
+        <Route path="/processes/:id" element={<ProcessView />} />
+        <Route path="/processes/:id/edit" element={<ProcessEdit />} />
         <Route path="/transaction-settings" element={<TransactionSettings />} />
         <Route path="/process-costing" element={<ProcessCosting />} />
         <Route path="/purchasing/replenishment" element={<InventoryReplenishment />} />

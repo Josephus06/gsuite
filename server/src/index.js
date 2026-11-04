@@ -7,6 +7,7 @@ const cors = require('cors');
 
 const authRoutes = require('./routes/auth');
 const lookupRoutes = require('./routes/lookups');
+const processRoutes = require('./routes/processes');
 const publicQuoteRoutes = require('./routes/publicQuotes');
 const webProductRoutes = require('./routes/webProducts');
 const employeeRoutes = require('./routes/employees');
@@ -307,6 +308,7 @@ app.use('/downloads', (req, res) => res.status(404).type('text').send('Not found
 
 app.use('/api/auth', authRoutes);
 app.use('/api/lookups', lookupRoutes);
+app.use('/api/processes', processRoutes);
 // Unauthenticated: the customer-facing quote site is the only caller. See routes/publicQuotes.js.
 app.use('/api/public', publicQuoteRoutes);
 // Unauthenticated: the driver's own run sheet, opened from a tokenised link. See routes/driverRuns.js.
