@@ -170,6 +170,9 @@ export default function DesignSchedule() {
   const put = (k, e) => { if (!byDay.has(k)) byDay.set(k, []); byDay.get(k).push(e); };
   for (const e of shown) {
     put(e.display_date, e);
+    // A carried-over slot also stays on the day it was scheduled, marked Not done, for monitoring
+    // (asked 2026-11-04) -- a copy: it cannot be dragged, and opens the same slot.
+    if (e.carried_over_from) put(e.carried_over_from, { ...e, carried_over_from: null, missed: true });
     if (e.proposed_start) put(String(e.proposed_start).slice(0, 10), { ...e, ghost: true });
   }
   for (const list of byDay.values()) {
@@ -181,7 +184,7 @@ export default function DesignSchedule() {
 
   // Which slots this user may drag to another day (the server checks whose they are).
   function canMove(e) {
-    if (e.ghost) return false;
+    if (e.ghost || e.missed) return false;
     if (e.status === 'Draft') return side.sales;
     return e.status === 'Confirmed' && e.phase !== 'Done' && (side.sbu || side.design);
   }
@@ -281,7 +284,7 @@ export default function DesignSchedule() {
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 8, fontSize: 11 }}>
           {Object.keys(PHASE_BADGE).filter((p) => p !== 'Cancelled').map((p) => <span key={p} className={`badge ${PHASE_BADGE[p]}`}>{PHASE_LABEL[p] || p}</span>)}
-          <span className="muted">↻ carried over · ⇄ change pending{side.sales || side.design ? ' · drag a slot to move it' : ''}</span>
+          <span className="muted">↻ carried over · ✕ not done on its day · ⇄ change pending{side.sales || side.design ? ' · drag a slot to move it' : ''}</span>
         </div>
         {loading ? <LoadingSpinner /> : view === 'day' ? (
           <>
@@ -307,13 +310,14 @@ export default function DesignSchedule() {
                       {WEEKDAYS[d.getDay()]} {d.getDate()}
                     </button>
                     {list.map((e) => (
-                      <button key={`${e.id}${e.ghost ? 'g' : ''}`} type="button" draggable={canMove(e)}
+                      <button key={`${e.id}${e.ghost ? 'g' : ''}${e.missed ? 'm' : ''}`} type="button" draggable={canMove(e)}
                         onDragStart={(ev) => ev.dataTransfer.setData('text/plain', String(e.id))}
                         onClick={() => openSlot(e)} className={`badge ${PHASE_BADGE[e.phase]}`}
                         style={{
                           display: 'block', width: '100%', textAlign: 'left', marginTop: 4, padding: '4px 6px', whiteSpace: 'normal', fontSize: 11, lineHeight: 1.35,
-                          cursor: canMove(e) ? 'grab' : 'pointer', border: e.ghost ? '1px dashed currentColor' : 'none', opacity: e.ghost ? 0.6 : 1,
+                          cursor: canMove(e) ? 'grab' : 'pointer', border: e.ghost ? '1px dashed currentColor' : (e.missed ? '1px solid var(--danger, #b91c1c)' : 'none'), opacity: e.ghost ? 0.6 : 1,
                         }}>
+                        {e.missed && <div style={{ fontWeight: 700, color: 'var(--danger, #b91c1c)' }}>✕ Not done -- carried over to {displayDate(e.display_date)}</div>}
                         <strong>{e.carried_over_from ? '↻ ' : ''}{timeOf(e.ghost ? e.proposed_start : e.scheduled_start)} - {timeOf(e.ghost ? e.proposed_end : e.scheduled_end)}</strong>
                         <div>{e.order_no} ({e.order_type})</div>
                         <div>{e.customer_name}</div>
@@ -394,16 +398,16 @@ function EventChip({ e, draggable, onOpen }) {
       draggable={draggable}
       onDragStart={(ev) => ev.dataTransfer.setData('text/plain', String(e.id))}
       onClick={(ev) => { ev.stopPropagation(); onOpen(); }}
-      title={`${e.order_no} · ${e.customer_name || ''} · ${PHASE_LABEL[e.phase] || e.phase}${e.artist_name ? ` · ${e.artist_name}` : ''}${e.carried_over_from ? ` · carried over from ${displayDate(e.carried_over_from)}` : ''}${sharesTime(e) ? ` · ${bookedText(e)} by ${e.created_by_name}` : ''}`}
+      title={`${e.missed ? `NOT DONE -- carried over to ${displayDate(e.display_date)} · ` : ''}${e.order_no} · ${e.customer_name || ''} · ${PHASE_LABEL[e.phase] || e.phase}${e.artist_name ? ` · ${e.artist_name}` : ''}${e.carried_over_from ? ` · carried over from ${displayDate(e.carried_over_from)}` : ''}${sharesTime(e) ? ` · ${bookedText(e)} by ${e.created_by_name}` : ''}`}
       className={`badge ${PHASE_BADGE[e.phase]}`}
       style={{
         display: 'block', width: '100%', textAlign: 'left', cursor: draggable ? 'grab' : 'pointer', marginTop: 3,
         whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontSize: 11,
-        border: e.ghost ? '1px dashed currentColor' : 'none', opacity: e.ghost ? 0.6 : 1,
+        border: e.ghost ? '1px dashed currentColor' : (e.missed ? '1px solid var(--danger, #b91c1c)' : 'none'), opacity: e.ghost ? 0.6 : 1,
         textDecoration: e.phase === 'Done' ? 'line-through' : 'none',
       }}
     >
-      {e.carried_over_from && '↻ '}{e.proposed_by_side && !e.ghost && '⇄ '}{sharesTime(e) && <strong>{ordinal(Number(e.booked_rank))} </strong>}{timeOf(start)} {e.order_no}
+      {e.missed && <strong style={{ color: 'var(--danger, #b91c1c)' }}>✕ Not done </strong>}{e.carried_over_from && '↻ '}{e.proposed_by_side && !e.ghost && '⇄ '}{sharesTime(e) && <strong>{ordinal(Number(e.booked_rank))} </strong>}{timeOf(start)} {e.order_no}
     </button>
   );
 }
@@ -491,16 +495,17 @@ function DayTimeline({ list, canSchedule, onOpen, onNew }) {
             const top = ((s - firstHour * 60) / 60) * HOUR_PX;
             const height = Math.max(((f - s) / 60) * HOUR_PX, 26);
             return (
-              <button key={`${e.id}${e.ghost ? 'g' : ''}`} type="button" onClick={() => onOpen(e)}
+              <button key={`${e.id}${e.ghost ? 'g' : ''}${e.missed ? 'm' : ''}`} type="button" onClick={() => onOpen(e)}
                 className={`badge ${PHASE_BADGE[e.phase]}`}
                 title={e.description || ''}
                 style={{
                   position: 'absolute', top: top + 1, height: height - 2,
                   left: `calc(56px + (100% - 62px) * ${col / n})`, width: `calc((100% - 62px) / ${n} - 4px)`,
                   textAlign: 'left', cursor: 'pointer', overflow: 'hidden', padding: '3px 6px', fontSize: 12, lineHeight: 1.3,
-                  border: e.ghost ? '1px dashed currentColor' : '1px solid rgba(0,0,0,0.08)', opacity: e.ghost ? 0.6 : 1,
+                  border: e.ghost ? '1px dashed currentColor' : (e.missed ? '1px solid var(--danger, #b91c1c)' : '1px solid rgba(0,0,0,0.08)'), opacity: e.ghost ? 0.6 : 1,
                   display: 'block', whiteSpace: 'normal',
                 }}>
+                {e.missed && <div style={{ fontWeight: 700, color: 'var(--danger, #b91c1c)' }}>✕ Not done -- carried over to {displayDate(e.display_date)}</div>}
                 <div><strong>{timeOf(e.ghost ? e.proposed_start : e.scheduled_start)} - {timeOf(e.ghost ? e.proposed_end : e.scheduled_end)}</strong> · {e.order_no} <span style={{ opacity: 0.7 }}>({e.order_type})</span></div>
                 <div>{e.customer_name}{e.artist_name ? ` · ${e.ghost && e.proposed_artist_name ? e.proposed_artist_name : e.artist_name}` : ''}{e.delivery_date ? ` · Delivery ${displayDate(e.delivery_date)}` : ''}</div>
                 <div style={{ opacity: 0.8 }}>
