@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission } = require('../middleware/auth');
+const { sendXlsx, day } = require('../lib/xlsxExport');
 
 const router = express.Router();
 const ROUTE = '/receiving-reports';
@@ -69,44 +70,42 @@ router.get('/items', requireAuth, requirePermission(ROUTE, 'can_view'), async (r
   } catch (err) { next(err); }
 });
 
-router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
-  try {
-    const { search, supplier_id: supplierId } = req.query;
-    // Date: As of (up to that day) or a From-To period (2026-10-13). from/to alone still work.
-    const ISO = /^\d{4}-\d{2}-\d{2}$/;
-    let { from, to } = req.query;
-    if (req.query.date_mode === 'as_of') { from = null; to = req.query.as_of; }
-    if (from && !ISO.test(from)) from = null;
-    if (to && !ISO.test(to)) to = null;
-    const limit = Math.min(Number(req.query.limit) || 100, 500);
-    const offset = Math.max(Number(req.query.offset) || 0, 0);
+// The list's filters as SQL -- shared by the list and its Extract.
+function listFilter(req) {
+  const { search, supplier_id: supplierId } = req.query;
+  // Date: As of (up to that day) or a From-To period (2026-10-13). from/to alone still work.
+  const ISO = /^\d{4}-\d{2}-\d{2}$/;
+  let { from, to } = req.query;
+  if (req.query.date_mode === 'as_of') { from = null; to = req.query.as_of; }
+  if (from && !ISO.test(from)) from = null;
+  if (to && !ISO.test(to)) to = null;
+  const where = [];
+  const params = [];
+  if (search) {
+    where.push('(r.receipt_no LIKE ? OR po.po_no LIKE ? OR s.name LIKE ? OR r.ref_no LIKE ?)');
+    const like = `%${search}%`;
+    params.push(like, like, like, like);
+  }
+  // Inclusive of the end date: date_created is a DATE, so a plain <= is what a user means
+  // by "to 31 Aug".
+  if (from) { where.push('r.date_created >= ?'); params.push(from); }
+  if (to) { where.push('r.date_created <= ?'); params.push(to); }
+  if (supplierId) { where.push('po.supplier_id = ?'); params.push(supplierId); }
+  // Location, Department, Item (2026-10-13): a receipt matches when any of its lines does.
+  const lineMatch = (cond, val) => {
+    where.push(`EXISTS (SELECT 1 FROM purchase_order_receipt_lines rlf
+                  LEFT JOIN purchase_order_lines polf ON polf.id = rlf.purchase_order_line_id
+                 WHERE rlf.purchase_order_receipt_id = r.id AND ${cond})`);
+    params.push(val);
+  };
+  if (Number(req.query.location_id) > 0) lineMatch('rlf.location_id = ?', Number(req.query.location_id));
+  if (Number(req.query.department_id) > 0) lineMatch('polf.department_id = ?', Number(req.query.department_id));
+  if (Number(req.query.item_id) > 0) lineMatch('rlf.item_id = ?', Number(req.query.item_id));
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+  return { whereSql, params };
+}
 
-    const where = [];
-    const params = [];
-    if (search) {
-      where.push('(r.receipt_no LIKE ? OR po.po_no LIKE ? OR s.name LIKE ? OR r.ref_no LIKE ?)');
-      const like = `%${search}%`;
-      params.push(like, like, like, like);
-    }
-    // Inclusive of the end date: date_created is a DATE, so a plain <= is what a user means
-    // by "to 31 Aug".
-    if (from) { where.push('r.date_created >= ?'); params.push(from); }
-    if (to) { where.push('r.date_created <= ?'); params.push(to); }
-    if (supplierId) { where.push('po.supplier_id = ?'); params.push(supplierId); }
-    // Location, Department, Item (2026-10-13): a receipt matches when any of its lines does.
-    const lineMatch = (cond, val) => {
-      where.push(`EXISTS (SELECT 1 FROM purchase_order_receipt_lines rlf
-                    LEFT JOIN purchase_order_lines polf ON polf.id = rlf.purchase_order_line_id
-                   WHERE rlf.purchase_order_receipt_id = r.id AND ${cond})`);
-      params.push(val);
-    };
-    if (Number(req.query.location_id) > 0) lineMatch('rlf.location_id = ?', Number(req.query.location_id));
-    if (Number(req.query.department_id) > 0) lineMatch('polf.department_id = ?', Number(req.query.department_id));
-    if (Number(req.query.item_id) > 0) lineMatch('rlf.item_id = ?', Number(req.query.item_id));
-    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-
-    const [rows] = await pool.query(
-      `SELECT r.id, r.receipt_no, r.date_created, r.ref_no, r.memo, r.is_on_hold,
+const LIST_SELECT = `SELECT r.id, r.receipt_no, r.date_created, r.ref_no, r.memo, r.is_on_hold,
               r.subtotal, r.net_of_tax, r.tax_amount, r.total_amount,
               po.id AS purchase_order_id, po.po_no,
               po.supplier_id, s.name AS supplier_name,
@@ -118,10 +117,15 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
          FROM purchase_order_receipts r
          JOIN purchase_orders po ON po.id = r.purchase_order_id
          LEFT JOIN suppliers s ON s.id = po.supplier_id
-         LEFT JOIN users u ON u.id = r.created_by_user_id
-         ${whereSql}
-        ORDER BY r.date_created DESC, r.id DESC
-        LIMIT ? OFFSET ?`,
+         LEFT JOIN users u ON u.id = r.created_by_user_id`;
+
+router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    const { whereSql, params } = listFilter(req);
+    const [rows] = await pool.query(
+      `${LIST_SELECT} ${whereSql} ORDER BY r.date_created DESC, r.id DESC LIMIT ? OFFSET ?`,
       [...params, limit, offset]
     );
 
@@ -136,6 +140,42 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
     res.json({ rows, total: totals.total, total_amount: totals.total_amount, limit, offset });
   } catch (err) {
+    next(err);
+  }
+});
+
+// Extract (asked 2026-11-05): every receiving report under the list's filters, as a workbook.
+// Registered before /:id.
+router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const { whereSql, params } = listFilter(req);
+    const [rows] = await pool.query(`${LIST_SELECT} ${whereSql} ORDER BY r.date_created DESC, r.id DESC`, params);
+    await sendXlsx(res, {
+      filename: 'receiving-reports.xlsx',
+      sheet: 'Receiving Reports',
+      columns: [
+        { header: 'RR No', key: 'rr', width: 14 },
+        { header: 'Date', key: 'date', width: 12 },
+        { header: 'PO No', key: 'po', width: 14 },
+        { header: 'Supplier', key: 'supplier', width: 40 },
+        { header: 'Ref No', key: 'ref', width: 24 },
+        { header: 'Items', key: 'items', width: 8, numFmt: '#,##0' },
+        { header: 'Qty Received', key: 'qty', width: 14, numFmt: '#,##0.####' },
+        { header: 'Net of VAT', key: 'net', width: 15, money: true },
+        { header: 'Tax', key: 'tax', width: 13, money: true },
+        { header: 'Total', key: 'total', width: 15, money: true },
+        { header: 'Prepared By', key: 'by', width: 24 },
+        { header: 'Memo', key: 'memo', width: 50 },
+      ],
+      rows: rows.map((r) => ({
+        rr: r.receipt_no, date: day(r.date_created), po: r.po_no || '', supplier: r.supplier_name || '', ref: r.ref_no || '',
+        items: Number(r.line_count || 0), qty: Number(r.qty_received || 0),
+        net: Number(r.net_of_tax || 0), tax: Number(r.tax_amount || 0), total: Number(r.total_amount || 0),
+        by: r.created_by_name || '', memo: r.memo || '',
+      })),
+    });
+  } catch (err) {
+    if (res.headersSent) { res.destroy(err); return; }
     next(err);
   }
 });

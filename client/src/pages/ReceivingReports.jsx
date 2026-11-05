@@ -57,22 +57,47 @@ export default function ReceivingReports() {
 
   const [suppliers, setSuppliers] = useState([]);
 
+  // The filters as request params -- the list and its Extract send the same ones.
+  function listParams() {
+    const params = {};
+    if (search) params.search = search;
+    if (supplier) params.supplier_id = supplier.id;
+    if (dateMode === 'as_of') {
+      params.date_mode = 'as_of';
+      if (asOf) params.as_of = asOf;
+    } else {
+      if (from) params.from = from;
+      if (to) params.to = to;
+    }
+    if (locationId) params.location_id = locationId;
+    if (departmentId) params.department_id = departmentId;
+    if (item) params.item_id = item.id;
+    return params;
+  }
+
+  // Extract (asked 2026-11-05): every receiving report under the filters, as a workbook.
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState('');
+  async function runExport() {
+    setExporting(true); setExportError('');
+    try {
+      const { data } = await api.get('/receiving-reports/export', { params: listParams(), responseType: 'blob' });
+      const url = URL.createObjectURL(data);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'receiving-reports.xlsx';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      setExportError('Could not extract the receiving reports.');
+    } finally {
+      setExporting(false);
+    }
+  }
+
   async function load() {
     setLoading(true);
     try {
-      const params = { limit, offset: (page - 1) * limit };
-      if (search) params.search = search;
-      if (supplier) params.supplier_id = supplier.id;
-      if (dateMode === 'as_of') {
-        params.date_mode = 'as_of';
-        if (asOf) params.as_of = asOf;
-      } else {
-        if (from) params.from = from;
-        if (to) params.to = to;
-      }
-      if (locationId) params.location_id = locationId;
-      if (departmentId) params.department_id = departmentId;
-      if (item) params.item_id = item.id;
+      const params = { ...listParams(), limit, offset: (page - 1) * limit };
       const { data } = await api.get('/receiving-reports', { params });
       setRows(data.rows);
       setTotal(data.total);
@@ -181,9 +206,13 @@ export default function ReceivingReports() {
               </div>
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+          <div style={{ display: 'flex', gap: 8, marginTop: 12, alignItems: 'center', flexWrap: 'wrap' }}>
             <button className="btn btn-primary" onClick={runSearch}>Search</button>
             <button className="btn" onClick={clearFilters}>Clear</button>
+            <button className="btn" disabled={exporting} onClick={runExport} title="Download every receiving report under the filters above">
+              {exporting ? 'Extracting...' : 'Extract'}
+            </button>
+            {exportError && <span style={{ color: 'var(--danger)' }}>{exportError}</span>}
           </div>
         </div>
       )}
