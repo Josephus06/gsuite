@@ -111,10 +111,17 @@ export default function CustomerRefundView() {
 
       <div className="estimate-footer card" style={{ marginTop: 20 }}>
         <div><span className="muted">Total Refund</span><div className="hi-lg">{money(cr.refund_amount)}</div></div>
+        {cr.amount_due !== undefined && (
+          <>
+            <div><span className="muted">Paid by Customer Payments</span><div className="hi-lg">{money(cr.amount_paid)}</div></div>
+            <div><span className="muted">Amount Due</span><div className="hi-lg">{money(cr.amount_due)}</div></div>
+          </>
+        )}
       </div>
 
       <div className="status-tabs" style={{ marginTop: 20 }}>
         <button className={`status-tab ${tab === 'apply' ? 'active' : ''}`} onClick={() => setTab('apply')}>Apply {money(cr.refund_amount)}</button>
+        <button className={`status-tab ${tab === 'payments' ? 'active' : ''}`} onClick={() => setTab('payments')}>Payments {money(cr.amount_paid || 0)}</button>
         <button className={`status-tab ${tab === 'gl' ? 'active' : ''}`} onClick={() => setTab('gl')}>GL Impact</button>
         <button className={`status-tab ${tab === 'system' ? 'active' : ''}`} onClick={() => setTab('system')}>System Info</button>
       </div>
@@ -136,6 +143,31 @@ export default function CustomerRefundView() {
                     <td>{formatDate(l.payment_date)}</td>
                     <td>{money(l.original_amount)}</td>
                     <td>{money(l.refund_amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Customer Payments applied to this refund (2026-11-05) -- applied from the payment's APPLY tab. */}
+      {tab === 'payments' && (
+        <div className="card">
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Customer Payment #</th><th>Date</th><th>Applied Amount</th></tr></thead>
+              <tbody>
+                {!(cr.payments_applied || []).length && (
+                  <tr><td colSpan={3} className="muted" style={{ textAlign: 'center', padding: 20 }}>
+                    No Customer Payment is applied to this refund yet -- apply one from the payment&apos;s APPLY tab.
+                  </td></tr>
+                )}
+                {(cr.payments_applied || []).map((p) => (
+                  <tr key={p.id}>
+                    <td><Link className="link-btn" to={`/customer-payments/${p.customer_payment_id}`}>{p.customer_payment_no}</Link></td>
+                    <td>{formatDate(p.date_created)}</td>
+                    <td>{money(p.applied_amount)}</td>
                   </tr>
                 ))}
               </tbody>

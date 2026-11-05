@@ -21,6 +21,26 @@ async function logAudit(conn, { refundId, userId, eventType, fieldName = null, o
   );
 }
 
+// Customer Payments applied to a refund (2026-11-05; customer_payment_lines.customer_refund_id,
+// add-payment-refund-apply.js). A refund debits A/R, so it stays open until payments are applied to
+// it; its amount due is the refund less what non-voided payments apply.
+let refundApplyReady = false;
+async function refundsReady(q = pool) {
+  if (!refundApplyReady) {
+    const [c] = await q.query("SHOW COLUMNS FROM customer_payment_lines LIKE 'customer_refund_id'");
+    refundApplyReady = c.length > 0;
+  }
+  return refundApplyReady;
+}
+async function paymentsApplied(q, refundId) {
+  if (!(await refundsReady(q))) return [];
+  const [rows] = await q.query(
+    `SELECT cpl.id, cpl.customer_payment_id, cpl.applied_amount, cp.customer_payment_no, cp.date_created, cp.status
+       FROM customer_payment_lines cpl JOIN customer_payments cp ON cp.id = cpl.customer_payment_id
+      WHERE cpl.customer_refund_id = ? AND cp.status <> 'voided' ORDER BY cp.date_created, cp.id`, [refundId]);
+  return rows;
+}
+
 // Powers the create form: the customer's refundable payments plus the two default GL accounts.
 router.get('/for-customer/:customerId', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
@@ -108,7 +128,13 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     );
 
     const glImpact = await computeCustomerRefundGl(cr);
-    res.json({ ...cr, lines, gl_impact: glImpact });
+    const payments = await paymentsApplied(pool, cr.id);
+    const paid = payments.reduce((t, p) => t + Number(p.applied_amount), 0);
+    res.json({
+      ...cr, lines, gl_impact: glImpact, payments_applied: payments,
+      amount_paid: Number(paid.toFixed(2)),
+      amount_due: cr.status === 'voided' ? 0 : Number(Math.max(Number(cr.refund_amount) - paid, 0).toFixed(2)),
+    });
   } catch (err) {
     next(err);
   }
@@ -213,6 +239,12 @@ router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_void'), async
     if (cr) await assertPeriodOpen(cr.date_created, 'ar', conn);
     if (!cr) return res.status(404).json({ error: 'Not found' });
     if (cr.status === 'voided') return res.status(409).json({ error: 'This Customer Refund is already voided.' });
+    const applied = await paymentsApplied(conn, req.params.id);
+    if (applied.length) {
+      return res.status(409).json({
+        error: `Customer Payment(s) ${applied.map((p) => p.customer_payment_no).join(', ')} are applied to this refund -- unapply them first.`,
+      });
+    }
 
     await conn.beginTransaction();
     await conn.query("UPDATE customer_refunds SET status = 'voided', voided_by_user_id = ?, voided_at = NOW() WHERE id = ?", [req.user.id, req.params.id]);

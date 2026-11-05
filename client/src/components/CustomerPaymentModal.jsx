@@ -61,6 +61,8 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
   // payment whether or not the filter is hiding it, and the APPLY tab total keeps showing it.
   const [applyFilter, setApplyFilter] = useState('');
   const [creditAmounts, setCreditAmounts] = useState({}); // credit_memo_id -> string
+  // Customer Refunds as open items (2026-11-05): a refund debits A/R, so a payment can settle it.
+  const [refundAmounts, setRefundAmounts] = useState({}); // customer_refund_id -> string
   const [departments, setDepartments] = useState([]);
   const [users, setUsers] = useState([]);
   const [methods, setMethods] = useState([]);
@@ -131,12 +133,15 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
         if (p.deposit_account_id) setDepositAccount({ id: p.deposit_account_id, account_code: p.deposit_account_code, account_name: p.deposit_account_name });
         const applied = {};
         const credited = {};
+        const refunded = {};
         for (const l of p.lines || []) {
+          if (l.customer_refund_id) refunded[l.customer_refund_id] = String(Number(l.applied_amount).toFixed(2));
           if (l.sales_invoice_id) applied[l.sales_invoice_id] = String(Number(l.applied_amount).toFixed(2));
           if (l.credit_memo_id) credited[l.credit_memo_id] = String(Number(l.applied_amount).toFixed(2));
         }
         setApplyAmounts(applied);
         setCreditAmounts(credited);
+        setRefundAmounts(refunded);
       }
       setLoading(false);
     }).catch((err) => {
@@ -168,7 +173,7 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
       || String(l.bs_si_no || '').toLowerCase().includes(applyQuery)
   );
   const received = Number(paymentAmount) || 0;
-  const tickedToInvoices = Object.values(applyAmounts).reduce((s, v) => s + (Number(v) || 0), 0);
+  const tickedToInvoices = [...Object.values(applyAmounts), ...Object.values(refundAmounts)].reduce((s, v) => s + (Number(v) || 0), 0);
   // What will actually be applied: never more than the payment, since saving fits the ticked
   // invoices to it (fitToPayment below). Shown that way so the panel never reads negative.
   const appliedToInvoices = received > 0 ? Math.min(tickedToInvoices, received) : tickedToInvoices;
@@ -199,9 +204,15 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
 
   async function handleSave() {
     setError('');
-    const apply = fitToPayment(Object.entries(applyAmounts)
-      .filter(([, v]) => Number(v) > 0)
-      .map(([id, v]) => ({ sales_invoice_id: Number(id), applied_amount: Number(v) })));
+    // Invoices and refunds are fitted to the payment together, invoices first.
+    const fitted = fitToPayment([
+      ...Object.entries(applyAmounts).filter(([, v]) => Number(v) > 0)
+        .map(([id, v]) => ({ sales_invoice_id: Number(id), applied_amount: Number(v) })),
+      ...Object.entries(refundAmounts).filter(([, v]) => Number(v) > 0)
+        .map(([id, v]) => ({ customer_refund_id: Number(id), applied_amount: Number(v) })),
+    ]);
+    const apply = fitted.filter((l) => l.sales_invoice_id);
+    const refunds = fitted.filter((l) => l.customer_refund_id);
     const credits = Object.entries(creditAmounts)
       .filter(([, v]) => Number(v) > 0)
       .map(([id, v]) => ({ credit_memo_id: Number(id), applied_amount: Number(v) }));
@@ -212,7 +223,7 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
     const missing = [
       [!dateCreated, 'Date'], [!department, 'Department'], [!memo.trim(), 'Memo'],
       [!receiptType, 'Receipt'], [!orNo.trim(), 'OR #'], [!paymentType, 'Payment Type'], [!issuedBy, 'Issued By'],
-      [!(received > 0) && !(credits.length && !apply.length), 'Payment Amount'], [!paymentMethod, 'Payment Method'],
+      [!(received > 0) && !(credits.length && !apply.length && !refunds.length), 'Payment Amount'], [!paymentMethod, 'Payment Method'],
       [cheque && !bankName.trim(), 'Bank'], [cheque && !chequeDate, 'Cheque Date'], [cheque && !chequeNo.trim(), 'Cheque No'],
       [!cheque && paymentMethod?.requires_reference && !referenceNo.trim(), 'Reference No'],
     ].filter(([bad]) => bad).map(([, label]) => label);
@@ -242,6 +253,7 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
         memo,
         apply_lines: apply,
         credit_lines: credits,
+        refund_lines: refunds,
       };
       // One payload, two verbs. Editing replaces the whole application rather than patching it,
       // which is why the same body serves both.
@@ -407,7 +419,7 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
                               else {
                                 // What is left of the payment, if a payment amount is keyed in --
                                 // ticking an invoice then takes only what the money covers.
-                                const already = Object.values(prev).reduce((sum, v) => sum + (Number(v) || 0), 0);
+                                const already = [...Object.values(prev), ...Object.values(refundAmounts)].reduce((sum, v) => sum + (Number(v) || 0), 0);
                                 const left = received > 0 ? Math.max(0, received - already) : Infinity;
                                 next[l.sales_invoice_id] = String(Math.min(Number(l.amount_due), left).toFixed(2));
                               }
@@ -436,6 +448,52 @@ export default function CustomerPaymentModal({ invoiceId, customerId, paymentId,
                 </tbody>
               </table>
               </div>
+              {(data.refund_lines || []).length > 0 && (
+                <div className="table-wrap" style={{ marginTop: 14 }}>
+                  <table>
+                    <thead>
+                      <tr><th></th><th>Customer Refund #</th><th>Customer</th><th>Date Created</th><th>Original Amount</th><th>Amount Due</th><th>Applied Amount</th></tr>
+                    </thead>
+                    <tbody>
+                      {data.refund_lines.map((l) => {
+                        const checked = refundAmounts[l.customer_refund_id] !== undefined;
+                        return (
+                          <tr key={`r${l.customer_refund_id}`}>
+                            <td>
+                              <input
+                                type="checkbox" checked={checked}
+                                onChange={() => setRefundAmounts((prev) => {
+                                  const next = { ...prev };
+                                  if (checked) delete next[l.customer_refund_id];
+                                  else {
+                                    const already = [...Object.values(applyAmounts), ...Object.values(prev)].reduce((sum, v) => sum + (Number(v) || 0), 0);
+                                    const left = received > 0 ? Math.max(0, received - already) : Infinity;
+                                    const due = Number(l.amount_due) + Number(l.applied_by_this_payment || 0) * (paymentId ? 1 : 0);
+                                    next[l.customer_refund_id] = String(Math.min(due, left).toFixed(2));
+                                  }
+                                  return next;
+                                })}
+                              />
+                            </td>
+                            <td>{l.customer_refund_no}</td>
+                            <td>{l.customer_name}</td>
+                            <td>{formatDate(l.date_created)}</td>
+                            <td>{money(l.refund_amount)}</td>
+                            <td>{money(l.amount_due)}</td>
+                            <td>
+                              <input
+                                type="number" step="0.01" style={{ width: 120 }} disabled={!checked}
+                                value={refundAmounts[l.customer_refund_id] ?? ''}
+                                onChange={(e) => setRefundAmounts((prev) => ({ ...prev, [l.customer_refund_id]: e.target.value }))}
+                              />
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
 

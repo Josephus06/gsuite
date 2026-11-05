@@ -431,8 +431,10 @@ async function computeCustomerPaymentGl(cp, lines) {
     : await coaById(cp.deposit_account_id);
   if (!depositAcct) return [];
 
+  // Invoices and Customer Refunds (2026-11-05): a refund debited A/R, so the payment applied to it
+  // credits A/R the same way.
   const appliedToInvoices = lines
-    .filter((l) => l.sales_invoice_id)
+    .filter((l) => l.sales_invoice_id || l.customer_refund_id)
     .reduce((s, l) => s + Number(l.applied_amount || 0), 0);
   const amount = Number(appliedToInvoices.toFixed(2));
   const unapplied = cp.created_by_user_id ? Number((Number(cp.unapplied_amount) || 0).toFixed(2)) : 0;

@@ -89,16 +89,25 @@ async function applyToInvoice(conn, invoiceId, amount) {
 // is the balance as it would be if this payment had never existed. That ordering is what lets an
 // unchanged payment be re-saved: check first and the invoice it settles no longer has the
 // balance it is settling, so its own application reads as an over-application.
-async function prepareApplication(conn, { applyLines, creditLines, paymentAmount }) {
+async function prepareApplication(conn, { applyLines, creditLines, refundLines, paymentAmount, customerId }) {
   const submittedApply = (Array.isArray(applyLines) ? applyLines : [])
     .filter((l) => l.sales_invoice_id && Number(l.applied_amount) > 0);
+  // One line per refund: the same refund twice would each pass the amount-due check on its own.
+  const refundById = new Map();
+  for (const l of (Array.isArray(refundLines) ? refundLines : [])) {
+    const id = Number(l.customer_refund_id);
+    const amt = Number(Number(l.applied_amount).toFixed(2));
+    if (id && amt > 0) refundById.set(id, Number(((refundById.get(id) || 0) + amt).toFixed(2)));
+  }
+  const submittedRefunds = [...refundById].map(([id, amt]) => ({ customer_refund_id: id, applied_amount: amt }));
+  await checkRefundLines(conn, submittedRefunds, customerId);
   const submittedCredits = (Array.isArray(creditLines) ? creditLines : [])
     .filter((l) => l.credit_memo_id && Number(l.applied_amount) > 0);
 
   // Nothing applied is allowed: the whole payment then sits unapplied, on account (an advance, or
   // cash for invoices not raised yet), and posts to 23000 Customer Deposits -- see
   // computeCustomerPaymentGl. What it cannot be is nothing at all.
-  if (!submittedApply.length && !submittedCredits.length && !(Number(paymentAmount) > 0)) {
+  if (!submittedApply.length && !submittedCredits.length && !submittedRefunds.length && !(Number(paymentAmount) > 0)) {
     throw Object.assign(new Error('Enter a Payment Amount, or apply an amount to an invoice or credit.'), { status: 400 });
   }
 
@@ -117,7 +126,7 @@ async function prepareApplication(conn, { applyLines, creditLines, paymentAmount
   }
 
   const appliedTotal = Number(
-    [...submittedApply, ...submittedCredits].reduce((s, l) => s + Number(l.applied_amount), 0).toFixed(2)
+    [...submittedApply, ...submittedCredits, ...submittedRefunds].reduce((s, l) => s + Number(l.applied_amount), 0).toFixed(2)
   );
   // The cash actually received. Defaults to what was applied when the form doesn't say
   // otherwise; anything beyond that is unapplied cash sitting on account.
@@ -136,6 +145,7 @@ async function prepareApplication(conn, { applyLines, creditLines, paymentAmount
   return {
     submittedApply,
     submittedCredits,
+    submittedRefunds,
     appliedTotal,
     received,
     unapplied: Number((received - cashApplied).toFixed(2)),
@@ -185,6 +195,65 @@ async function reverseInvoiceApplication(conn, invoiceId, amount) {
     "UPDATE sales_invoices SET amount_due = ?, status = IF(status = 'paid_in_full' AND ? > 0.005, 'saved', status) WHERE id = ?",
     [newDue, newDue, invoiceId]
   );
+}
+
+// CUSTOMER REFUNDS as open items (asked 2026-11-05). A refund debits A/R like an invoice, so a
+// payment can be applied to it: the line carries customer_refund_id, the amount counts as cash
+// applied (it credits A/R in the payment's GL), and the refund's amount due is derived -- its
+// amount less what non-voided payments apply to it -- so voiding or editing a payment needs no
+// separate reversal. add-payment-refund-apply.js adds the column; until it has run, refunds are
+// simply not offered.
+let refundApplyReady = false;
+async function refundsReady(q = pool) {
+  if (!refundApplyReady) {
+    const [c] = await q.query("SHOW COLUMNS FROM customer_payment_lines LIKE 'customer_refund_id'");
+    refundApplyReady = c.length > 0;
+  }
+  return refundApplyReady;
+}
+const refundDueSql = (a) => `(${a}.refund_amount - COALESCE((SELECT SUM(rl.applied_amount) FROM customer_payment_lines rl
+    JOIN customer_payments rp ON rp.id = rl.customer_payment_id
+   WHERE rl.customer_refund_id = ${a}.id AND rp.status <> 'voided'), 0))`;
+
+// The customer's (and its related customers') refunds with an amount still due -- plus, when
+// editing, the ones this payment already applies to, so the form can show and reduce them.
+async function openRefundLines(customerId, paymentId = 0) {
+  if (!(await refundsReady())) return [];
+  const [rows] = await pool.query(
+    `SELECT cr.id AS customer_refund_id, cr.customer_refund_no, cr.date_created, cr.refund_amount,
+            ${refundDueSql('cr')} AS amount_due, c.name AS customer_name,
+            COALESCE(mine.applied_amount, 0) AS applied_by_this_payment
+       FROM customer_refunds cr
+       LEFT JOIN customers c ON c.id = cr.customer_id
+       LEFT JOIN (SELECT customer_refund_id, SUM(applied_amount) AS applied_amount FROM customer_payment_lines
+                   WHERE customer_payment_id = ? AND customer_refund_id IS NOT NULL GROUP BY customer_refund_id) mine
+              ON mine.customer_refund_id = cr.id
+      WHERE cr.customer_id IN (?) AND cr.status <> 'voided'
+        AND (${refundDueSql('cr')} > 0.005 OR mine.customer_refund_id IS NOT NULL)
+      ORDER BY (cr.customer_id = ?) DESC, cr.id DESC`,
+    [Number(paymentId) || 0, await payableCustomerIds(customerId), Number(customerId)]);
+  return rows;
+}
+
+// Checks refund lines against what each refund still has due (as it stands -- an edit has already
+// removed this payment's own lines) and that each is this customer's or a related customer's.
+async function checkRefundLines(conn, lines, customerId) {
+  if (!lines.length) return;
+  if (!(await refundsReady(conn))) throw Object.assign(new Error('Applying to Customer Refunds is not set up yet.'), { status: 409 });
+  const ids = (await payableCustomerIds(customerId, conn)).map(Number);
+  for (const l of lines) {
+    const [[cr]] = await conn.query(
+      `SELECT cr.customer_refund_no, cr.customer_id, cr.status, ${refundDueSql('cr')} AS due FROM customer_refunds cr WHERE cr.id = ?`,
+      [l.customer_refund_id]);
+    if (!cr) throw Object.assign(new Error('One of the selected refunds is no longer valid.'), { status: 400 });
+    if (cr.status === 'voided') throw Object.assign(new Error(`${cr.customer_refund_no} is void.`), { status: 409 });
+    if (!ids.includes(Number(cr.customer_id))) {
+      throw Object.assign(new Error(`${cr.customer_refund_no} is not this customer's, or a customer on its Relationships.`), { status: 400 });
+    }
+    if (Number(l.applied_amount) > Number(cr.due) + 0.005) {
+      throw Object.assign(new Error(`Applied Amount (${l.applied_amount}) exceeds ${cr.customer_refund_no}'s remaining Amount Due (${Number(cr.due).toFixed(2)}).`), { status: 409 });
+    }
+  }
 }
 
 // Powers the Customer Payment modal. Every one of this customer's still-open invoices is
@@ -237,7 +306,10 @@ router.get('/for-invoice/:invoiceId', requireAuth, requirePermission(ROUTE, 'can
       [si.customer_id]
     );
 
-    res.json({ ...si, creator_location: await resolveDefaultLocation(req.user.id), apply_lines: applyLines, credit_lines: creditLines });
+    res.json({
+      ...si, creator_location: await resolveDefaultLocation(req.user.id), apply_lines: applyLines, credit_lines: creditLines,
+      refund_lines: await openRefundLines(si.customer_id),
+    });
   } catch (err) {
     next(err);
   }
@@ -343,6 +415,7 @@ router.get('/for-customer/:customerId', requireAuth, requirePermission(ROUTE, 'c
       creator_location: await resolveDefaultLocation(req.user.id),
       apply_lines: applyLines,
       credit_lines: creditLines,
+      refund_lines: await openRefundLines(req.params.customerId, req.query.payment_id),
     });
   } catch (err) {
     next(err);
@@ -619,10 +692,11 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
 
     const [lines] = await pool.query(
       `SELECT cpl.*, si.invoice_no, si.date_created AS invoice_date, si.gross_amount AS invoice_gross,
-              cm.credit_memo_no
+              cm.credit_memo_no${(await refundsReady()) ? ', rf.customer_refund_no, rf.date_created AS refund_date, rf.refund_amount' : ''}
        FROM customer_payment_lines cpl
        LEFT JOIN sales_invoices si ON si.id = cpl.sales_invoice_id
        LEFT JOIN credit_memos cm ON cm.id = cpl.credit_memo_id
+       ${(await refundsReady()) ? 'LEFT JOIN customer_refunds rf ON rf.id = cpl.customer_refund_id' : ''}
        WHERE cpl.customer_payment_id = ?`,
       [req.params.id]
     );
@@ -662,7 +736,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       // cash. Stored as sent -- the form decides what to ask for off the payment_methods master
       // list, and re-deciding it here would mean two places to keep in step with that list.
       reference_no: referenceNo, bank_name: bankName, cheque_no: chequeNo, cheque_date: chequeDate,
-      apply_lines: applyLines, credit_lines: creditLines,
+      apply_lines: applyLines, credit_lines: creditLines, refund_lines: refundLines,
     } = req.body;
 
     if (!customerId) return res.status(400).json({ error: 'Customer is required.' });
@@ -679,8 +753,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
 
     // Shared with the edit path so the two can never disagree about what was applied, what was
     // received, and what is left on account.
-    const { submittedApply, submittedCredits, appliedTotal, received, unapplied } =
-      await prepareApplication(conn, { applyLines, creditLines, paymentAmount });
+    const { submittedApply, submittedCredits, submittedRefunds, appliedTotal, received, unapplied } =
+      await prepareApplication(conn, { applyLines, creditLines, refundLines, paymentAmount, customerId });
 
     await conn.beginTransaction();
 
@@ -720,6 +794,11 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
         'INSERT INTO customer_payment_lines (customer_payment_id, credit_memo_id, applied_amount) VALUES (?, ?, ?)',
         [paymentId, l.credit_memo_id, l.applied_amount]
       );
+    }
+    for (const l of submittedRefunds) {
+      await conn.query(
+        'INSERT INTO customer_payment_lines (customer_payment_id, customer_refund_id, applied_amount) VALUES (?, ?, ?)',
+        [paymentId, l.customer_refund_id, l.applied_amount]);
     }
 
     await logAudit(conn, { paymentId, userId: req.user.id, eventType: 'Created', fieldName: 'customer_payment_no', newValue: paymentNo });
@@ -827,11 +906,20 @@ router.put('/:id/apply', requireAuth, requirePermission(ROUTE, 'can_edit'), asyn
     if (!cp) return res.status(404).json({ error: 'Not found' });
     if (cp.status === 'voided') return res.status(409).json({ error: 'A voided Customer Payment cannot be applied.' });
 
-    const lines = (Array.isArray(req.body?.lines) ? req.body.lines : [])
-      .map((l) => ({ sales_invoice_id: Number(l.sales_invoice_id), amount: Number(Number(l.applied_amount).toFixed(2)) }))
+    const raw = Array.isArray(req.body?.lines) ? req.body.lines : [];
+    const lines = raw
+      .map((l) => ({ sales_invoice_id: Number(l.sales_invoice_id) || 0, amount: Number(Number(l.applied_amount).toFixed(2)) }))
       .filter((l) => l.sales_invoice_id && l.amount > 0);
-    if (!lines.length) return res.status(400).json({ error: 'Enter an amount to apply on at least one invoice.' });
-    const total = Number(lines.reduce((t, l) => t + l.amount, 0).toFixed(2));
+    // Customer Refunds too (2026-11-05): a line with customer_refund_id instead of an invoice.
+    const refundById = new Map();
+    for (const l of raw) {
+      const rid = Number(l.customer_refund_id) || 0;
+      const amt = Number(Number(l.applied_amount).toFixed(2));
+      if (rid && amt > 0) refundById.set(rid, Number(((refundById.get(rid) || 0) + amt).toFixed(2)));
+    }
+    const refundLines = [...refundById].map(([rid, amt]) => ({ customer_refund_id: rid, applied_amount: amt }));
+    if (!lines.length && !refundLines.length) return res.status(400).json({ error: 'Enter an amount to apply on at least one invoice or refund.' });
+    const total = Number((lines.reduce((t, l) => t + l.amount, 0) + refundLines.reduce((t, l) => t + l.applied_amount, 0)).toFixed(2));
     const unapplied = Number(cp.unapplied_amount || 0);
     if (total > unapplied + 0.005) {
       return res.status(409).json({ error: `Applying ${total.toFixed(2)} is more than this payment's unapplied ${unapplied.toFixed(2)}.` });
@@ -840,18 +928,27 @@ router.put('/:id/apply', requireAuth, requirePermission(ROUTE, 'can_edit'), asyn
 
     // Only this customer's invoices -- or those of a customer on its Relationships tab
     // (lib/customerRelations.js).
-    const [owned] = await conn.query(
-      `SELECT si.id FROM sales_invoices si
-         LEFT JOIN sales_orders so ON so.id = si.sales_order_id
-         LEFT JOIN estimates e ON e.id = si.estimate_id
-         LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
-        WHERE si.id IN (?) AND COALESCE(si.customer_id, so.customer_id, e.customer_id, ns.customer_id) IN (?)`,
-      [lines.map((l) => l.sales_invoice_id), await payableCustomerIds(cp.customer_id, conn)]);
-    if (owned.length !== new Set(lines.map((l) => l.sales_invoice_id)).size) {
-      return res.status(400).json({ error: 'Every invoice must belong to this payment’s customer, or a customer on its Relationships.' });
+    if (lines.length) {
+      const [owned] = await conn.query(
+        `SELECT si.id FROM sales_invoices si
+           LEFT JOIN sales_orders so ON so.id = si.sales_order_id
+           LEFT JOIN estimates e ON e.id = si.estimate_id
+           LEFT JOIN non_standard_sales_orders ns ON ns.id = si.nsso_id
+          WHERE si.id IN (?) AND COALESCE(si.customer_id, so.customer_id, e.customer_id, ns.customer_id) IN (?)`,
+        [lines.map((l) => l.sales_invoice_id), await payableCustomerIds(cp.customer_id, conn)]);
+      if (owned.length !== new Set(lines.map((l) => l.sales_invoice_id)).size) {
+        return res.status(400).json({ error: 'Every invoice must belong to this payment’s customer, or a customer on its Relationships.' });
+      }
     }
+    await checkRefundLines(conn, refundLines, cp.customer_id);
 
     await conn.beginTransaction();
+    for (const l of refundLines) {
+      const [[mine]] = await conn.query(
+        'SELECT id FROM customer_payment_lines WHERE customer_payment_id = ? AND customer_refund_id = ? LIMIT 1', [cp.id, l.customer_refund_id]);
+      if (mine) await conn.query('UPDATE customer_payment_lines SET applied_amount = applied_amount + ? WHERE id = ?', [l.applied_amount, mine.id]);
+      else await conn.query('INSERT INTO customer_payment_lines (customer_payment_id, customer_refund_id, applied_amount) VALUES (?, ?, ?)', [cp.id, l.customer_refund_id, l.applied_amount]);
+    }
     for (const l of lines) {
       await applyToInvoice(conn, l.sales_invoice_id, l.amount);
       const [[mine]] = await conn.query(
@@ -864,7 +961,8 @@ router.put('/:id/apply', requireAuth, requirePermission(ROUTE, 'can_edit'), asyn
       [total, total, cp.id]);
     await logAudit(conn, {
       paymentId: cp.id, userId: req.user.id, eventType: 'Updated', fieldName: 'applied to invoice',
-      oldValue: unapplied.toFixed(2), newValue: `applied ${total.toFixed(2)} to ${lines.length} invoice(s)`,
+      oldValue: unapplied.toFixed(2),
+      newValue: `applied ${total.toFixed(2)} to ${[lines.length && `${lines.length} invoice(s)`, refundLines.length && `${refundLines.length} refund(s)`].filter(Boolean).join(' and ')}`,
     });
     await conn.commit();
     const [[row]] = await pool.query('SELECT * FROM customer_payments WHERE id = ?', [cp.id]);
@@ -892,6 +990,49 @@ router.put('/:id/unapply', requireAuth, requirePermission(ROUTE, 'can_edit'), as
       [req.params.id]);
     if (!cp) return res.status(404).json({ error: 'Not found' });
     if (cp.status === 'voided') return res.status(409).json({ error: 'A voided Customer Payment cannot be unapplied.' });
+
+    // A Customer Refund (2026-11-05): only this payment's line for it changes -- the refund's amount
+    // due is derived from the lines, so it comes back on its own.
+    const refundUn = (Array.isArray(req.body?.lines) ? req.body.lines : [])
+      .map((l) => ({ customer_refund_id: Number(l.customer_refund_id) || 0, amount: Number(Number(l.amount).toFixed(2)) }))
+      .filter((l) => l.customer_refund_id && l.amount > 0);
+    if (refundUn.length) {
+      if (!(await refundsReady(conn))) return res.status(409).json({ error: 'Applying to Customer Refunds is not set up yet.' });
+      const [rmine] = await conn.query(
+        'SELECT id, customer_refund_id, applied_amount FROM customer_payment_lines WHERE customer_payment_id = ? AND customer_refund_id IN (?)',
+        [cp.id, refundUn.map((l) => l.customer_refund_id)]);
+      for (const l of refundUn) {
+        const applied = rmine.filter((m) => Number(m.customer_refund_id) === l.customer_refund_id).reduce((t, m) => t + Number(m.applied_amount), 0);
+        if (l.amount > applied + 0.005) return res.status(409).json({ error: `Only ${applied.toFixed(2)} of this payment is applied to that refund.` });
+      }
+      if (cp.created_by_user_id || cp.deposit_account_id) await assertPeriodOpen(cp.date_created, 'ar', conn);
+      await conn.beginTransaction();
+      let rtotal = 0;
+      for (const l of refundUn) {
+        let left = l.amount;
+        for (const m of rmine.filter((x) => Number(x.customer_refund_id) === l.customer_refund_id)) {
+          if (left <= 0.005) break;
+          const cut = Math.min(Number(m.applied_amount), left);
+          const rest = Number((Number(m.applied_amount) - cut).toFixed(2));
+          if (rest <= 0.005) await conn.query('DELETE FROM customer_payment_lines WHERE id = ?', [m.id]);
+          else await conn.query('UPDATE customer_payment_lines SET applied_amount = ? WHERE id = ?', [rest, m.id]);
+          left = Number((left - cut).toFixed(2));
+        }
+        rtotal += l.amount;
+      }
+      rtotal = Number(rtotal.toFixed(2));
+      await conn.query(
+        'UPDATE customer_payments SET applied_amount = GREATEST(applied_amount - ?, 0), unapplied_amount = unapplied_amount + ? WHERE id = ?',
+        [rtotal, rtotal, cp.id]);
+      const [rnos] = await conn.query('SELECT customer_refund_no FROM customer_refunds WHERE id IN (?)', [refundUn.map((l) => l.customer_refund_id)]);
+      await logAudit(conn, {
+        paymentId: cp.id, userId: req.user.id, eventType: 'Updated', fieldName: 'unapplied from refund',
+        oldValue: Number(cp.unapplied_amount || 0).toFixed(2), newValue: `unapplied ${rtotal.toFixed(2)} from ${rnos.map((x) => x.customer_refund_no).join(', ')}`,
+      });
+      await conn.commit();
+      const [[rrow]] = await pool.query('SELECT * FROM customer_payments WHERE id = ?', [cp.id]);
+      return res.json(rrow);
+    }
 
     const lines = (Array.isArray(req.body?.lines) ? req.body.lines : [])
       .map((l) => ({ sales_invoice_id: Number(l.sales_invoice_id), amount: Number(Number(l.amount).toFixed(2)) }))
@@ -966,7 +1107,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
   const conn = await pool.getConnection();
   try {
     const [[cp]] = await conn.query(
-      'SELECT id, status, date_created FROM customer_payments WHERE id = ?', [req.params.id],
+      'SELECT id, status, date_created, customer_id FROM customer_payments WHERE id = ?', [req.params.id],
     );
     if (!cp) return res.status(404).json({ error: 'Not found' });
     if (cp.status === 'voided') {
@@ -984,7 +1125,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       or_no: orNo, si_bs_no: siBsNo, payment_type: paymentType, issued_by_user_id: issuedByUserId,
       payment_method_id: paymentMethodId, payment_amount: paymentAmount, memo,
       reference_no: referenceNo, bank_name: bankName, cheque_no: chequeNo, cheque_date: chequeDate,
-      apply_lines: applyLines, credit_lines: creditLines,
+      apply_lines: applyLines, credit_lines: creditLines, refund_lines: refundLines,
     } = req.body;
     const deptError = headerDepartmentError(departmentId);
     if (deptError) return res.status(400).json({ error: deptError });
@@ -1017,9 +1158,14 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     }
     await conn.query('DELETE FROM customer_payment_lines WHERE customer_payment_id = ?', [req.params.id]);
 
-    const { submittedApply, submittedCredits, appliedTotal, received, unapplied } =
-      await prepareApplication(conn, { applyLines, creditLines, paymentAmount });
+    const { submittedApply, submittedCredits, submittedRefunds, appliedTotal, received, unapplied } =
+      await prepareApplication(conn, { applyLines, creditLines, refundLines, paymentAmount, customerId: cp.customer_id });
 
+    for (const l of submittedRefunds) {
+      await conn.query(
+        'INSERT INTO customer_payment_lines (customer_payment_id, customer_refund_id, applied_amount) VALUES (?, ?, ?)',
+        [req.params.id, l.customer_refund_id, l.applied_amount]);
+    }
     for (const l of submittedApply) {
       await applyToInvoice(conn, l.sales_invoice_id, Number(l.applied_amount));
       await conn.query(

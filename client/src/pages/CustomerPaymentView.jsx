@@ -70,14 +70,16 @@ export default function CustomerPaymentView() {
   // received and the deposit are untouched (PUT /customer-payments/:id/unapply).
   async function handleUnapply(l) {
     const applied = Number(l.applied_amount).toFixed(2);
-    const typed = window.prompt(`Unapply how much from ${l.invoice_no}? (applied: ${applied})`, applied);
+    const typed = window.prompt(`Unapply how much from ${l.invoice_no || l.customer_refund_no}? (applied: ${applied})`, applied);
     if (typed === null) return;
     const amount = Number(String(typed).replace(/,/g, ''));
     if (!Number.isFinite(amount) || amount <= 0) { setError('Enter an amount more than 0 to unapply.'); return; }
     setBusy(true);
     setError('');
     try {
-      await api.put(`/customer-payments/${id}/unapply`, { lines: [{ sales_invoice_id: l.sales_invoice_id, amount }] });
+      await api.put(`/customer-payments/${id}/unapply`, {
+        lines: [l.customer_refund_id ? { customer_refund_id: l.customer_refund_id, amount } : { sales_invoice_id: l.sales_invoice_id, amount }],
+      });
       await load();
     } catch (err) {
       setError(err.response?.data?.error || 'Unapply failed');
@@ -112,6 +114,7 @@ export default function CustomerPaymentView() {
   const isOpen = cp.status !== 'voided';
   const invoiceLines = cp.lines.filter((l) => l.sales_invoice_id);
   const creditLines = cp.lines.filter((l) => l.credit_memo_id);
+  const refundLines = cp.lines.filter((l) => l.customer_refund_id);
 
   return (
     <div>
@@ -213,7 +216,7 @@ export default function CustomerPaymentView() {
             <table>
               <thead><tr><th>Invoice #</th><th>Date Created</th><th>Original Amount</th><th>Applied Amount</th><th></th></tr></thead>
               <tbody>
-                {invoiceLines.length === 0 && (
+                {invoiceLines.length === 0 && refundLines.length === 0 && (
                   <tr><td colSpan={5} className="muted" style={{ textAlign: 'center', padding: 20 }}>Nothing applied to an invoice.</td></tr>
                 )}
                 {invoiceLines.map((l) => (
@@ -226,6 +229,24 @@ export default function CustomerPaymentView() {
                       {canEdit && isOpen && (
                         <button type="button" className="btn btn-sm" disabled={busy}
                           title="Take this invoice off the payment; the amount goes back to Unapplied"
+                          onClick={() => handleUnapply(l)}>Unapply</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+                {refundLines.map((l) => (
+                  <tr key={l.id}>
+                    <td>
+                      <Link className="link-btn" to={`/customer-refunds/${l.customer_refund_id}`}>{l.customer_refund_no}</Link>
+                      <span className="muted" style={{ fontSize: 12 }}> (Customer Refund)</span>
+                    </td>
+                    <td>{formatDate(l.refund_date)}</td>
+                    <td>{money(l.refund_amount)}</td>
+                    <td>{money(l.applied_amount)}</td>
+                    <td>
+                      {canEdit && isOpen && (
+                        <button type="button" className="btn btn-sm" disabled={busy}
+                          title="Take this refund off the payment; the amount goes back to Unapplied"
                           onClick={() => handleUnapply(l)}>Unapply</button>
                       )}
                     </td>
