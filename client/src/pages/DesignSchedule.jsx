@@ -1003,13 +1003,16 @@ function BatchModal({ id, meta, onClose, onChanged }) {
                       searchKeys={['display_name']}
                       onSelect={(p) => { if (!busy && p && String(p.id) !== String(s.plan_layout_job_type_id || '')) saveLayout(s, { layout_job_type_id: p.id }); }}
                     />
-                  ) : (s.plan_layout_job_type_name || '--')}
+                  ) : (s.plan_layout_job_type_name || (handledOutside(s) && s.order_layout_job_type_name
+                    ? <>{s.order_layout_job_type_name}<div className="muted" style={{ fontSize: 11 }}>set on the order</div></>
+                    : '--'))}
                 </td>
                 <td>
                   {edit ? (
                     <input type="number" min="0.0001" step="any" style={{ width: '100%', minWidth: 0 }} defaultValue={s.plan_layout_qty ? Number(s.plan_layout_qty) : ''}
                       onBlur={(e) => { if (String(Number(e.target.value || 0)) !== String(Number(s.plan_layout_qty || 0))) saveLayout(s, { layout_qty: e.target.value || null }); }} />
-                  ) : (s.plan_layout_qty ? Number(s.plan_layout_qty) : '--')}
+                  ) : (s.plan_layout_qty ? Number(s.plan_layout_qty)
+                    : (handledOutside(s) && Number(s.layout_qty) > 0 ? Number(s.layout_qty) : '--'))}
                 </td>
                 <td>
                   {s.proposed_by_side === 'DESIGN' ? (

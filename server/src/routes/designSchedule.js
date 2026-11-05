@@ -153,6 +153,9 @@ const BASE_SELECT = `
          ${person('qe')} AS proposed_artist_name,
          COALESCE(${person('ae')}, ${person('pe')}) AS artist_name,
          pj.display_name AS plan_layout_job_type_name,
+         -- The order's own Layout - Job Type: set there when it was assigned from the order rather
+         -- than through the calendar (2026-11-05: those showed "--" though the layout was done).
+         oj.display_name AS order_layout_job_type_name,
          b.status AS batch_status,
          cu.display_name AS created_by_name,
          cf.display_name AS confirmed_by_name,
@@ -174,6 +177,7 @@ const BASE_SELECT = `
     LEFT JOIN employees pe ON pe.id = ds.preferred_artist_id
     LEFT JOIN employees qe ON qe.id = ds.proposed_artist_id
     LEFT JOIN pms_job_types pj ON pj.id = ds.plan_layout_job_type_id
+    LEFT JOIN pms_job_types oj ON oj.id = COALESCE(jo.layout_job_type_id, n.layout_job_type_id)
     LEFT JOIN design_schedule_batches b ON b.id = ds.batch_id
     LEFT JOIN users cu ON cu.id = ds.created_by_user_id
     LEFT JOIN users cf ON cf.id = ds.confirmed_by_user_id
