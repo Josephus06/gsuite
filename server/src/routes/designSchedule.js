@@ -211,6 +211,24 @@ function decorate(r, today = manilaToday()) {
   return { ...r, phase, display_date: carried ? today : day, carried_over_from: carried ? day : null };
 }
 
+// 2026-11-05: an order cancelled after it was put on the calendar (from the Sales Order, RFQC, the
+// order itself -- many places) comes off the calendar on its own: its slot is set Cancelled, with an
+// audit row, the next time the calendar is read or acted on. It used to stay in its calendar and
+// block the approval ("... is Cancelled -- it can no longer be assigned").
+async function dropCancelledOrders(conn, userId) {
+  const [rows] = await conn.query(
+    `SELECT ds.id, ds.status FROM design_schedules ds
+       LEFT JOIN job_orders jo ON ds.order_type = 'JO' AND jo.id = ds.order_id
+       LEFT JOIN non_standard_job_orders n ON ds.order_type = 'NSTDJO' AND n.id = ds.order_id
+      WHERE ds.status <> 'Cancelled' AND COALESCE(jo.status, n.status) = 'Cancelled'`);
+  for (const r of rows) {
+    const [u] = await conn.query(
+      `UPDATE design_schedules SET status = 'Cancelled', proposed_start = NULL, proposed_end = NULL, proposed_artist_id = NULL,
+              proposed_by_side = NULL WHERE id = ? AND status <> 'Cancelled'`, [r.id]);
+    if (u.affectedRows) await logAudit(conn, { id: r.id, userId, eventType: 'Status Change', fieldName: 'status', oldValue: r.status, newValue: 'Cancelled (order cancelled)' });
+  }
+}
+
 async function loadSchedule(conn, id, lock = false) {
   const [[row]] = await conn.query(`${BASE_SELECT} WHERE ds.id = ?${lock ? ' FOR UPDATE' : ''}`, [id]);
   return row ? decorate(row) : null;
@@ -415,6 +433,7 @@ function withBatch(handler) {
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();
+      await dropCancelledOrders(conn, req.user.id);
       const batch = await loadBatch(conn, req.params.id, true);
       if (!batch) { await conn.rollback(); return res.status(404).json({ error: 'Calendar not found.' }); }
       const side = await sideOf(req.user.id);
@@ -471,6 +490,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const today = manilaToday();
     const side = await sideOf(req.user.id);
     const vis = visibilitySql(side);
+    await dropCancelledOrders(pool, req.user.id);
 
     const conditions = [`(DATE(ds.scheduled_start) BETWEEN ? AND ?
       OR DATE(ds.proposed_start) BETWEEN ? AND ?
@@ -494,6 +514,7 @@ router.get('/batches', requireAuth, requirePermission(ROUTE, 'can_view'), async 
   try {
     const side = await sideOf(req.user.id);
     if (!side.design && !side.sales) return res.json([]);
+    await dropCancelledOrders(pool, req.user.id);
     const [rows] = await pool.query(
       `SELECT b.id FROM design_schedule_batches b WHERE b.status IN (?, ?)
         ${side.design || side.sbu ? '' : 'AND b.forwarded_by_user_id = ?'} ORDER BY b.id`,
@@ -505,6 +526,7 @@ router.get('/batches', requireAuth, requirePermission(ROUTE, 'can_view'), async 
 
 router.get('/batches/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
+    await dropCancelledOrders(pool, req.user.id);
     const batch = await loadBatch(pool, req.params.id);
     if (!batch) return res.status(404).json({ error: 'Calendar not found.' });
     res.json(batch);
