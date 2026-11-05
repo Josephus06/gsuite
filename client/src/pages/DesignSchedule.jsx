@@ -992,10 +992,17 @@ function BatchModal({ id, meta, onClose, onChanged }) {
                 <td>{s.assigned_artist_name || s.preferred_artist_name}</td>
                 <td>
                   {edit ? (
-                    <select value={s.plan_layout_job_type_id || ''} disabled={busy} onChange={(e) => saveLayout(s, { layout_job_type_id: e.target.value || null })}>
-                      <option value="">-- choose --</option>
-                      {jobTypesFor(s).map((p) => <option key={p.id} value={p.id}>{p.display_name} ({p.minutes_consume} min)</option>)}
-                    </select>
+                    // A picker with search (asked 2026-11-05) -- the job type list is long.
+                    <EntityPicker
+                      label="Layout - Job Type" items={jobTypesFor(s)} value={s.plan_layout_job_type_id || ''}
+                      getLabel={(p) => (p ? p.display_name : '')} placeholder="-- choose --" disabled={busy}
+                      columns={[
+                        { key: 'display_name', label: 'Layout - Job Type' },
+                        { key: 'minutes_consume', label: 'Minutes', render: (p) => (p.minutes_consume ? Number(p.minutes_consume) : '') },
+                      ]}
+                      searchKeys={['display_name']}
+                      onSelect={(p) => { if (!busy && p && String(p.id) !== String(s.plan_layout_job_type_id || '')) saveLayout(s, { layout_job_type_id: p.id }); }}
+                    />
                   ) : (s.plan_layout_job_type_name || '--')}
                 </td>
                 <td>
