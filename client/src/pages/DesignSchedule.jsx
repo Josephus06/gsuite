@@ -21,7 +21,7 @@ const PHASE_BADGE = {
   'For Approval': 'badge-warning',
   Revised: 'badge-danger',
   Confirmed: 'badge-info',
-  Assigned: 'badge-success',
+  Assigned: 'badge-assigned',
   Done: 'badge-done',
   Cancelled: 'badge-muted',
 };
