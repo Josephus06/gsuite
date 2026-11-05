@@ -961,8 +961,15 @@ function BatchModal({ id, meta, onClose, onChanged }) {
         </p>
       )}
 
-      <div style={{ overflowX: 'auto' }}>
-        <table>
+      {/* Fixed columns that wrap (2026-11-05): the window's width, never wider -- the app's global
+          th/td nowrap ran the booking line and the job type list past the edge. */}
+      <style>{'.dcal-t { width: 100%; table-layout: fixed; } .dcal-t th, .dcal-t td { white-space: normal; overflow-wrap: anywhere; vertical-align: top; } .dcal-t select { width: 100%; min-width: 0; }'}</style>
+      <div>
+        <table className="dcal-t">
+          <colgroup>
+            <col style={{ width: '14%' }} /><col style={{ width: '15%' }} /><col style={{ width: '22%' }} /><col style={{ width: '12%' }} />
+            <col style={{ width: '19%' }} /><col style={{ width: '8%' }} /><col style={{ width: '10%' }} />
+          </colgroup>
           <thead>
             <tr><th>Order</th><th>Customer / AO</th><th>Schedule</th><th>Artist</th><th>Layout - Job Type</th><th>Qty</th><th>Revision</th></tr>
           </thead>
@@ -976,14 +983,14 @@ function BatchModal({ id, meta, onClose, onChanged }) {
                     </span></div>
                   )}
                 </td>
-                <td style={{ whiteSpace: 'normal', minWidth: 160 }}>{s.customer_name}<div className="muted" style={{ fontSize: 12 }}>{s.sales_rep_name}</div></td>
-                <td style={{ whiteSpace: 'nowrap' }}>{slotText(s.scheduled_start, s.scheduled_end)}
+                <td>{s.customer_name}<div className="muted" style={{ fontSize: 12 }}>{s.sales_rep_name}</div></td>
+                <td>{slotText(s.scheduled_start, s.scheduled_end)}
                   <div className="muted" style={{ fontSize: 12, fontWeight: sharesTime(s) ? 600 : undefined }}>
                     {sharesTime(s) ? `${ordinal(Number(s.booked_rank))} of ${Number(s.same_time_count)} booked · ` : 'Booked '}by {s.created_by_name}, {displayAuditTime(s.created_at)}
                   </div>
                 </td>
                 <td>{s.assigned_artist_name || s.preferred_artist_name}</td>
-                <td style={{ minWidth: 200 }}>
+                <td>
                   {edit ? (
                     <select value={s.plan_layout_job_type_id || ''} disabled={busy} onChange={(e) => saveLayout(s, { layout_job_type_id: e.target.value || null })}>
                       <option value="">-- choose --</option>
@@ -993,11 +1000,11 @@ function BatchModal({ id, meta, onClose, onChanged }) {
                 </td>
                 <td>
                   {edit ? (
-                    <input type="number" min="0.0001" step="any" style={{ width: 70 }} defaultValue={s.plan_layout_qty ? Number(s.plan_layout_qty) : ''}
+                    <input type="number" min="0.0001" step="any" style={{ width: '100%', minWidth: 0 }} defaultValue={s.plan_layout_qty ? Number(s.plan_layout_qty) : ''}
                       onBlur={(e) => { if (String(Number(e.target.value || 0)) !== String(Number(s.plan_layout_qty || 0))) saveLayout(s, { layout_qty: e.target.value || null }); }} />
                   ) : (s.plan_layout_qty ? Number(s.plan_layout_qty) : '--')}
                 </td>
-                <td style={{ minWidth: 180 }}>
+                <td>
                   {s.proposed_by_side === 'DESIGN' ? (
                     <span className="badge badge-danger" style={{ whiteSpace: 'normal' }}>
                       ⇄ {slotText(s.proposed_start, s.proposed_end)}{s.proposed_artist_name ? ` · ${s.proposed_artist_name}` : ''}
@@ -1005,7 +1012,7 @@ function BatchModal({ id, meta, onClose, onChanged }) {
                     </span>
                   ) : <span className="muted">--</span>}
                   {edit && (
-                    <div style={{ marginTop: 4, display: 'flex', gap: 4 }}>
+                    <div style={{ marginTop: 4, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                       <button type="button" className="btn btn-sm" onClick={() => setRevising(s)}>Revise</button>
                       {s.proposed_by_side === 'DESIGN' && <button type="button" className="btn btn-sm" disabled={busy} onClick={() => call('post', `/${s.id}/revise/withdraw`)}>Undo</button>}
                     </div>
