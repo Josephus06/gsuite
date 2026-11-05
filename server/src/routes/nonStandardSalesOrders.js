@@ -48,6 +48,8 @@ async function linesLocked(conn, nssoId) {
   return `Job orders were already created from this NSSO's items (${jos.map((j) => j.job_order_no).join(', ')}), so the items can no longer be replaced.`;
 }
 
+const { relinkNsso } = require('../lib/nssoRelink');
+
 const TYPE_ABBR = { rma: 'RMA', rma_installation: 'INST', sample: 'SAM', internal: 'INT' };
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const decOrNull = (v) => { if (v === null || v === undefined || v === '') return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
@@ -378,6 +380,8 @@ router.get('/filter-options', requireAuth, requirePermission(ROUTE, 'can_view'),
 
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
+    // Items cut off from their job orders by an earlier re-save get them back on open (lib/nssoRelink.js).
+    await relinkNsso(pool, req.params.id);
     const [[n]] = await pool.query(
       `SELECT n.*, c.name AS customer_name, c.tin AS customer_tin, cp.contact_name AS contact_person_name,
               d.name AS sales_division_name, loc.location_name AS office_location_name,
