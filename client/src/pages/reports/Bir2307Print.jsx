@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
+import Pagination from '../../components/Pagination';
 import { useAuth } from '../../context/useAuth';
 
 // BIR Form No. 2307, January 2018 (ENCS) -- Certificate of Creditable Tax Withheld at Source -- for
@@ -46,6 +47,7 @@ function DateBoxes({ iso }) {
 // A source document's key: "Vendor Bill-123". ?doc= takes one or more (comma-separated) to open
 // the 2307 for just those documents -- the Vendor Bill page links here that way.
 const docKey = (d) => `${d.doc_type}-${d.id}`;
+const DOCS_PER_PAGE = 10; // the document list is paged (asked 2026-11-05: 48 bills ran far down the page)
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const monthBounds = (iso) => {
   const y = Number(iso.slice(0, 4)); const m = Number(iso.slice(5, 7));
@@ -66,6 +68,7 @@ export default function Bir2307Print() {
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [printing, setPrinting] = useState(false);
+  const [docPage, setDocPage] = useState(1);
 
   useEffect(() => {
     api.get('/reports/bir/2307/form', { params: { quarter, payee: payeeKey } })
@@ -75,6 +78,7 @@ export default function Bir2307Print() {
         const keys = wanted.length ? wanted : data.docs.map(docKey);
         // One document: the period is that document's month. Otherwise the quarter. Either can be changed.
         const one = wanted.length === 1 ? data.docs.find((d) => docKey(d) === wanted[0]) : null;
+        if (one) setDocPage(Math.floor(data.docs.indexOf(one) / DOCS_PER_PAGE) + 1);
         setSel(keys);
         setF({
           ...(one ? monthBounds(one.date_created) : { from: data.from, to: data.to }),
@@ -166,6 +170,8 @@ export default function Bir2307Print() {
         .f-panel input, .f-panel select { width: 100%; box-sizing: border-box; padding: 4px 6px; font: inherit; border: 1px solid #cbd5e1; border-radius: 4px; }
         .f-panel table { width: 100%; border-collapse: collapse; margin-top: 6px; }
         .f-panel td, .f-panel th { padding: 4px; border-bottom: 1px solid #e2e8f0; text-align: left; vertical-align: top; font-size: 12px; }
+        /* the app's global th/td nowrap ran long document references past the panel's edge */
+        .f-panel td { white-space: normal; overflow-wrap: anywhere; }
         .f-warn { color: #b45309; }
         .f-bar { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 
@@ -251,7 +257,7 @@ export default function Bir2307Print() {
         <table>
           <thead><tr><th style={{ width: 28 }} /><th>Document</th><th>Date</th><th>ATC</th><th style={{ textAlign: 'right' }}>Tax base</th><th style={{ textAlign: 'right' }}>Withheld</th><th /></tr></thead>
           <tbody>
-            {src.docs.map((d) => (
+            {src.docs.slice((docPage - 1) * DOCS_PER_PAGE, docPage * DOCS_PER_PAGE).map((d) => (
               <tr key={docKey(d)} style={{ opacity: sel.includes(docKey(d)) ? 1 : 0.5 }}>
                 <td><input type="checkbox" style={{ width: 'auto' }} checked={sel.includes(docKey(d))} onChange={() => toggle(docKey(d))} aria-label={`Include ${d.doc_no}`} /></td>
                 <td>{d.doc_type} {d.doc_no}{d.reference_no ? ` · ${d.reference_no}` : ''}</td>
@@ -264,6 +270,7 @@ export default function Bir2307Print() {
             ))}
           </tbody>
         </table>
+        <Pagination page={docPage} totalPages={Math.ceil(src.docs.length / DOCS_PER_PAGE)} onChange={setDocPage} />
         {!chosen.length && <div className="f-warn" style={{ fontSize: 12, marginTop: 4 }}>Tick at least one document.</div>}
 
         {(unconfirmed > 0 || noAtc > 0 || !f.payee.tin || !p.tin || !p.name) && (
