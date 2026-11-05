@@ -905,6 +905,10 @@ function BatchModal({ id, meta, onClose, onChanged }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [revising, setRevising] = useState(null); // the slot being revised
+  // Paged, 10 orders a page, in the wide window (asked 2026-11-05: a 21-order calendar scrolled
+  // both ways). Approve / Send back still act on the whole calendar, every page.
+  const [itemPage, setItemPage] = useState(1);
+  const ITEMS_PER_PAGE = 10;
   const [returning, setReturning] = useState(false);
   const [note, setNote] = useState('');
 
@@ -942,7 +946,7 @@ function BatchModal({ id, meta, onClose, onChanged }) {
   });
 
   return (
-    <Modal title={`Design calendar #${batch.id}`} onClose={onClose} large>
+    <Modal title={`Design calendar #${batch.id}`} onClose={onClose} xl>
       {error && <div className="error-banner">{error}</div>}
       <p className="muted" style={{ marginTop: 0 }}>
         Forwarded by {batch.forwarded_by_name} on {displayAuditTime(batch.forwarded_at)} · {batch.items.length} order(s) ·{' '}
@@ -963,7 +967,7 @@ function BatchModal({ id, meta, onClose, onChanged }) {
             <tr><th>Order</th><th>Customer / AO</th><th>Schedule</th><th>Artist</th><th>Layout - Job Type</th><th>Qty</th><th>Revision</th></tr>
           </thead>
           <tbody>
-            {batch.items.map((s) => { const edit = reviewing && !handledOutside(s); return (
+            {batch.items.slice((Math.min(itemPage, Math.max(1, Math.ceil(batch.items.length / ITEMS_PER_PAGE))) - 1) * ITEMS_PER_PAGE).slice(0, ITEMS_PER_PAGE).map((s) => { const edit = reviewing && !handledOutside(s); return (
               <tr key={s.id}>
                 <td><Link to={orderLink(s)}>{s.order_no}</Link> <span className="muted">({s.order_type})</span>
                   {handledOutside(s) && (
@@ -972,7 +976,7 @@ function BatchModal({ id, meta, onClose, onChanged }) {
                     </span></div>
                   )}
                 </td>
-                <td>{s.customer_name}<div className="muted" style={{ fontSize: 12 }}>{s.sales_rep_name}</div></td>
+                <td style={{ whiteSpace: 'normal', minWidth: 160 }}>{s.customer_name}<div className="muted" style={{ fontSize: 12 }}>{s.sales_rep_name}</div></td>
                 <td style={{ whiteSpace: 'nowrap' }}>{slotText(s.scheduled_start, s.scheduled_end)}
                   <div className="muted" style={{ fontSize: 12, fontWeight: sharesTime(s) ? 600 : undefined }}>
                     {sharesTime(s) ? `${ordinal(Number(s.booked_rank))} of ${Number(s.same_time_count)} booked · ` : 'Booked '}by {s.created_by_name}, {displayAuditTime(s.created_at)}
@@ -1012,6 +1016,8 @@ function BatchModal({ id, meta, onClose, onChanged }) {
           </tbody>
         </table>
       </div>
+      <Pagination page={Math.min(itemPage, Math.max(1, Math.ceil(batch.items.length / ITEMS_PER_PAGE)))}
+        totalPages={Math.ceil(batch.items.length / ITEMS_PER_PAGE)} onChange={setItemPage} />
 
       {revising && (
         <ReviseForm s={revising} artists={meta.artists} busy={busy} error={error} onCancel={() => setRevising(null)}
