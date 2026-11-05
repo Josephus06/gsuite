@@ -1014,7 +1014,7 @@ function BatchModal({ id, meta, onClose, onChanged }) {
       </div>
 
       {revising && (
-        <ReviseForm s={revising} artists={meta.artists} busy={busy} onCancel={() => setRevising(null)}
+        <ReviseForm s={revising} artists={meta.artists} busy={busy} error={error} onCancel={() => setRevising(null)}
           onSave={async (body) => { if (await call('post', `/${revising.id}/revise`, body)) setRevising(null); }} />
       )}
 
@@ -1059,15 +1059,20 @@ function BatchModal({ id, meta, onClose, onChanged }) {
   );
 }
 
-function ReviseForm({ s, artists, busy, onCancel, onSave }) {
+// Its own window over the calendar (asked 2026-11-05) -- inline under a long calendar it opened out of sight.
+function ReviseForm({ s, artists, busy, error, onCancel, onSave }) {
   const [form, setForm] = useState({
     date: String(s.proposed_start || s.scheduled_start).slice(0, 10),
     start: hhmm(s.proposed_start || s.scheduled_start), end: hhmm(s.proposed_end || s.scheduled_end),
     preferred_artist_id: s.proposed_artist_id || s.preferred_artist_id, note: s.proposal_note || '',
   });
   return (
-    <div className="card" style={{ marginTop: 12 }}>
-      <h3 style={{ marginTop: 0 }}>Revise {s.order_no}</h3>
+    <Modal title={`Revise ${s.order_no}`} onClose={onCancel}>
+      {error && <div className="error-banner">{error}</div>}
+      <p className="muted" style={{ marginTop: 0 }}>
+        Now: {slotText(s.scheduled_start, s.scheduled_end)} · {s.preferred_artist_name || 'no artist'}
+        {s.customer_name ? ` · ${s.customer_name}` : ''}
+      </p>
       <div className="field">
         <label>Artist</label>
         <ArtistPicker artists={artists} value={form.preferred_artist_id} onSelect={(id) => setForm({ ...form, preferred_artist_id: id })} />
@@ -1085,6 +1090,6 @@ function ReviseForm({ s, artists, busy, onCancel, onSave }) {
             preferred_artist_id: form.preferred_artist_id, note: form.note,
           })}>Save revision</button>
       </div>
-    </div>
+    </Modal>
   );
 }
