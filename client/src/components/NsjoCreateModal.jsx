@@ -62,7 +62,16 @@ export default function NsjoCreateModal({ nssoId, lineId, nssoType, onClose, onS
         reason_code_id: reasonCode?.id || null, reason: reason || null, action_to_be_taken: action || null, processes,
       });
       onSaved(data);
-    } catch (e) { setError(e.response?.data?.error || 'Save failed.'); setSaving(false); }
+    } catch (e) {
+      // Already created for this item, and linked back to it by the server (the item had been
+      // re-saved since): carry on as if just created, so the list shows it.
+      if (e.response?.data?.relinked) {
+        window.alert(e.response.data.error);
+        onSaved({ job_order_id: e.response.data.job_order_id, job_order_no: e.response.data.job_order_no });
+        return;
+      }
+      setError(e.response?.data?.error || 'Save failed.'); setSaving(false);
+    }
   }
 
   return (

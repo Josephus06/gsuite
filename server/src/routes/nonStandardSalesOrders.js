@@ -38,6 +38,16 @@ function requireEditOrOwnDraft(req, res, next) {
   })().catch(next);
 }
 
+// An NSSO's items are saved by deleting and re-inserting them all, which cuts an item off from the
+// job order already created from it -- Create JO then makes the same NSJO number again and fails on
+// the duplicate (NSJO-INT-2050-1-2, 2026-11-05). So once any job order exists for the NSSO, its
+// items can no longer be replaced. Returns the refusal message, or null.
+async function linesLocked(conn, nssoId) {
+  const [jos] = await conn.query('SELECT job_order_no FROM job_orders WHERE nsso_id = ? ORDER BY id', [nssoId]);
+  if (!jos.length) return null;
+  return `Job orders were already created from this NSSO's items (${jos.map((j) => j.job_order_no).join(', ')}), so the items can no longer be replaced.`;
+}
+
 const TYPE_ABBR = { rma: 'RMA', rma_installation: 'INST', sample: 'SAM', internal: 'INT' };
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const decOrNull = (v) => { if (v === null || v === undefined || v === '') return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
@@ -230,6 +240,8 @@ router.post('/:id/lines/from-estimate', requireAuth, requireOpenPeriod('non_stan
   const conn = await pool.getConnection();
   try {
     const ids = Array.isArray(req.body?.estimate_job_order_ids) ? req.body.estimate_job_order_ids : [];
+    const locked = await linesLocked(conn, req.params.id);
+    if (locked) return res.status(409).json({ error: locked });
     await conn.beginTransaction();
     await conn.query('DELETE FROM non_standard_sales_order_lines WHERE nsso_id = ?', [req.params.id]);
     let lineNo = 0;
@@ -523,6 +535,8 @@ router.post('/:id/lines/from-source', requireAuth, requireOpenPeriod('non_standa
   const conn = await pool.getConnection();
   try {
     const ids = Array.isArray(req.body?.source_job_order_ids) ? req.body.source_job_order_ids : [];
+    const locked = await linesLocked(conn, req.params.id);
+    if (locked) return res.status(409).json({ error: locked });
     await conn.beginTransaction();
     await conn.query('DELETE FROM non_standard_sales_order_lines WHERE nsso_id = ?', [req.params.id]);
     let lineNo = 0;
@@ -578,6 +592,8 @@ router.put('/:id/lines', requireAuth, requireOpenPeriod('non_standard_sales_orde
   const conn = await pool.getConnection();
   try {
     const rows = Array.isArray(req.body?.lines) ? req.body.lines : [];
+    const locked = await linesLocked(conn, req.params.id);
+    if (locked) return res.status(409).json({ error: locked });
     await conn.beginTransaction();
     await conn.query('DELETE FROM non_standard_sales_order_lines WHERE nsso_id = ?', [req.params.id]);
     let lineNo = 0;
@@ -893,6 +909,23 @@ router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE
     const nssoNum = numParts.join('-');
     const [[cnt]] = await conn.query('SELECT COUNT(*) AS n FROM non_standard_sales_order_lines WHERE nsso_id = ?', [nsso.id]);
     const jobOrderNo = `NSJO-${abbr}-${nssoNum}-${line.line_no}-${cnt.n}`;
+    // Already there: a job order of THIS NSSO with this number lost its item when the items were
+    // re-saved (see linesLocked). Link it back to the item instead of failing on the duplicate.
+    const [[taken]] = await conn.query('SELECT id, nsso_id FROM job_orders WHERE job_order_no = ?', [jobOrderNo]);
+    if (taken) {
+      if (Number(taken.nsso_id) === Number(nsso.id)) {
+        await conn.query('UPDATE non_standard_sales_order_lines SET created_job_order_id = ? WHERE id = ?', [taken.id, line.id]);
+        await conn.query('UPDATE job_orders SET nsso_line_id = ? WHERE id = ?', [line.id, taken.id]);
+        await logAudit(conn, { id: nsso.id, userId: req.user.id, eventType: 'Updated', fieldName: `line ${line.line_no} job order`, newValue: `${jobOrderNo} (re-linked)` });
+        await conn.commit();
+        return res.status(409).json({
+          error: `${jobOrderNo} was already created for this item -- it has been linked back to it. Close this and open it from the item.`,
+          job_order_id: taken.id, job_order_no: jobOrderNo, relinked: true,
+        });
+      }
+      await conn.rollback();
+      return res.status(409).json({ error: `${jobOrderNo} already belongs to another order -- tell IT (the NSSO number repeats).` });
+    }
     // The JO carries the NSSO's Sales Rep (else the source JO's). Sales users only see job orders
     // whose sales_rep_id is in their team, so a JO created without one was invisible -- a 404 --
     // to the very rep who raised it (NSJO-INT-51-1-1).
