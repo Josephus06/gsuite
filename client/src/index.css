@@ -744,6 +744,7 @@ tbody tr:hover { background: var(--accent-bg); }
 .badge-danger { background: var(--color-danger-bg); color: var(--color-danger-text); }
 .badge-info { background: var(--color-primary-bg); color: var(--color-primary-text); }
 .badge-warning { background: var(--color-warning-bg); color: var(--color-warning-text); }
+.badge-done { background: #15803d; color: #fff; } /* Design Schedule: layout finished */
 
 /* METRIC BLOCK — a 13px muted label over a 24px number. There was no such component: the
    dashboard rolled its own and every other screen reached for a bare <div>. */

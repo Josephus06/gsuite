@@ -22,7 +22,7 @@ const PHASE_BADGE = {
   Revised: 'badge-danger',
   Confirmed: 'badge-info',
   Assigned: 'badge-success',
-  Done: 'badge-muted',
+  Done: 'badge-done',
   Cancelled: 'badge-muted',
 };
 const PHASE_LABEL = {
