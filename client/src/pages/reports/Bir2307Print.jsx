@@ -145,11 +145,15 @@ export default function Bir2307Print() {
         .f-box + .f-box { border-left: 0.15mm solid #999; }
         .f-tin { display: inline-flex; align-items: center; gap: 1.2mm; }
         .f-dash { font-weight: 700; background: #bfbfbf; padding: 0 0.6mm; }
-        .f-t { width: 100%; border-collapse: collapse; table-layout: fixed; }
-        .f-t th, .f-t td { border: 0.3mm solid #000; padding: 0.2mm 1mm; }
+        /* The app's global table rules (index.css: th, td { white-space: nowrap; padding: 9px 12px; ... },
+           tbody tr:hover) would run the long BIR labels across the columns -- every one restated here. */
+        .f-t { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 7.5pt; color: #000; }
+        .f-t th, .f-t td { border: 0.3mm solid #000; padding: 0.2mm 1mm; white-space: normal; overflow-wrap: break-word;
+          text-align: left; vertical-align: middle; line-height: 1.15; color: #000; background: #fff; }
+        .f-t tbody tr:hover { background: none; }
         .f-t th { font-weight: 700; text-align: center; background: #d9d9d9; font-size: 7pt; }
         .f-t td { height: 3.1mm; font-size: 7.5pt; }
-        .f-t td.amt { text-align: right; font-weight: 700; }
+        .f-t td.amt { text-align: right; font-weight: 700; white-space: nowrap; }
         .f-t td.nat { font-size: 5.6pt; line-height: 1.1; }
         .f-t td.atc { text-align: center; font-weight: 700; }
         .f-t tr.tot td { font-weight: 700; background: #d9d9d9; }
