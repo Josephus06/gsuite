@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
@@ -10,6 +10,8 @@ import { useAuth } from '../../context/useAuth';
 // Above it (not printed) everything on it can be checked and corrected first: the supplier's TIN /
 // address as typed in Master Lists, the Payor, and the ATC of each line -- imported bills carry no
 // withholding tax, so their ATC is suggested from the rate and must be confirmed here.
+// A 2307 can cover every document of the quarter or only the ticked ones -- "2307 for this one"
+// makes it a single document's, its period that document's month; the period is editable either way.
 // Print needs can_print on /reports/bir-2307, and each print is logged as the 2307 issued.
 
 const money = (v) => (Number(v) ? Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '');
@@ -41,14 +43,26 @@ function DateBoxes({ iso }) {
   return <span className="f-tin"><Boxes value={v.slice(0, 2)} n={2} /><Boxes value={v.slice(2, 4)} n={2} /><Boxes value={v.slice(4)} n={4} /></span>;
 }
 
+// A source document's key: "Vendor Bill-123". ?doc= takes one or more (comma-separated) to open
+// the 2307 for just those documents -- the Vendor Bill page links here that way.
+const docKey = (d) => `${d.doc_type}-${d.id}`;
+const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+const monthBounds = (iso) => {
+  const y = Number(iso.slice(0, 4)); const m = Number(iso.slice(5, 7));
+  return { from: `${iso.slice(0, 7)}-01`, to: `${iso.slice(0, 7)}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, '0')}` };
+};
+
 export default function Bir2307Print() {
   const { can } = useAuth();
   const mayPrint = can('/reports/bir-2307', 'can_print');
   const [params] = useSearchParams();
   const quarter = params.get('quarter');
   const payeeKey = params.get('payee');
+  const onlyDocs = params.get('doc');
   const [src, setSrc] = useState(null);
-  const [f, setF] = useState(null); // what prints
+  const [f, setF] = useState(null); // what prints: period, payee, payor
+  const [sel, setSel] = useState([]); // keys of the documents on this certificate
+  const [over, setOver] = useState({}); // a line's ATC / nature as changed here, by line key
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [printing, setPrinting] = useState(false);
@@ -57,16 +71,46 @@ export default function Bir2307Print() {
     api.get('/reports/bir/2307/form', { params: { quarter, payee: payeeKey } })
       .then(({ data }) => {
         setSrc(data);
+        const wanted = onlyDocs ? onlyDocs.split(',').filter((k) => data.docs.some((d) => docKey(d) === k)) : [];
+        const keys = wanted.length ? wanted : data.docs.map(docKey);
+        // One document: the period is that document's month. Otherwise the quarter. Either can be changed.
+        const one = wanted.length === 1 ? data.docs.find((d) => docKey(d) === wanted[0]) : null;
+        setSel(keys);
         setF({
-          from: data.from, to: data.to,
+          ...(one ? monthBounds(one.date_created) : { from: data.from, to: data.to }),
           payee: { ...data.payee, foreign: '' },
           payor: { ...data.payor },
-          lines: data.lines.map((l) => ({ ...l })),
         });
         document.title = `BIR 2307 ${data.quarter} - ${data.payee.name}`;
       })
       .catch((e) => setError(e.response?.data?.error || 'Could not load this 2307.'));
-  }, [quarter, payeeKey]);
+  }, [quarter, payeeKey, onlyDocs]);
+
+  // Part III from the ticked documents: one line per ATC (no ATC even suggested: per rate), each
+  // document's tax base under its month of the quarter.
+  const lines = useMemo(() => {
+    if (!src) return [];
+    const map = new Map();
+    for (const d of src.docs) {
+      if (!sel.includes(docKey(d))) continue;
+      const k = d.atc || `?${d.eff_rate}`;
+      if (!map.has(k)) map.set(k, { key: k, atc: d.atc, nature: d.nature || '', rate: d.rate != null ? d.rate : d.eff_rate, suggested: false, months: [0, 0, 0], tax: 0 });
+      const l = map.get(k);
+      if (!l.nature && d.nature) l.nature = d.nature;
+      if (d.atc_suggested) l.suggested = true;
+      const mi = src.months.indexOf(d.date_created.slice(0, 7));
+      if (mi >= 0) l.months[mi] += d.tax_base;
+      l.tax += d.wtax_amount;
+    }
+    return [...map.values()]
+      .map((l) => ({ ...l, ...(over[l.key] || {}), months: l.months.map(r2), total: r2(l.months.reduce((s, v) => s + v, 0)), tax: r2(l.tax) }))
+      .sort((a, b) => (a.atc ? 0 : 1) - (b.atc ? 0 : 1) || String(a.atc).localeCompare(String(b.atc)));
+  }, [src, sel, over]);
+  const totals = useMemo(() => ({
+    months: [0, 1, 2].map((i) => r2(lines.reduce((s, l) => s + l.months[i], 0))),
+    total: r2(lines.reduce((s, l) => s + l.total, 0)),
+    tax: r2(lines.reduce((s, l) => s + l.tax, 0)),
+  }), [lines]);
 
   if (error) {
     return (
@@ -79,24 +123,29 @@ export default function Bir2307Print() {
   if (!f) return <LoadingSpinner />;
 
   const set = (part, k, v) => setF((x) => ({ ...x, [part]: { ...x[part], [k]: v } }));
-  const setLine = (i, patch) => setF((x) => ({ ...x, lines: x.lines.map((l, j) => (j === i ? { ...l, ...patch } : l)) }));
-  const pickAtc = (i, atc) => {
+  const setLine = (key, patch) => setOver((o) => ({ ...o, [key]: { ...(o[key] || {}), ...patch } }));
+  const pickAtc = (l, atc) => {
     const o = src.atc_options.find((a) => a.atc === atc);
-    setLine(i, { atc, nature: o ? o.nature : f.lines[i].nature, suggested: false });
+    setLine(l.key, { atc, nature: o ? o.nature : l.nature, suggested: false });
   };
-  const totals = src.totals;
-  const unconfirmed = f.lines.filter((l) => l.suggested).length;
-  const noAtc = f.lines.filter((l) => !l.atc).length;
-  const rows = Math.max(10, f.lines.length);
+  const toggle = (k) => setSel((s) => (s.includes(k) ? s.filter((x) => x !== k) : [...s, k]));
+  const onlyThis = (d) => { setSel([docKey(d)]); setF((x) => ({ ...x, ...monthBounds(d.date_created) })); };
+  const allDocs = () => { setSel(src.docs.map(docKey)); setF((x) => ({ ...x, from: src.from, to: src.to })); };
+  const chosen = src.docs.filter((d) => sel.includes(docKey(d)));
+  const unconfirmed = lines.filter((l) => l.suggested).length;
+  const noAtc = lines.filter((l) => !l.atc).length;
+  const rows = Math.max(10, lines.length);
   const p = f.payor;
   const signLine = [p.signatory, p.signatory_title, p.signatory_tin ? `TIN ${p.signatory_tin}` : ''].filter(Boolean).join(' / ');
+  const badPeriod = !f.from || !f.to || f.from > f.to;
 
   async function print() {
     setPrinting(true); setNote('');
     try {
       await api.post('/reports/bir/2307/issued', {
         quarter: src.quarter, payee_key: src.payee_key, supplier_id: src.supplier_id, payee_name: f.payee.name,
-        income_total: totals.total, tax_total: totals.tax,
+        income_total: totals.total, tax_total: totals.tax, period_from: f.from, period_to: f.to,
+        doc_refs: chosen.length === src.docs.length ? null : chosen.map((d) => d.doc_no).join(', '),
       });
     } catch (e) {
       setNote(e.response?.data?.error || 'Printed, but it could not be recorded as issued.');
@@ -183,10 +232,40 @@ export default function Bir2307Print() {
             <div style={{ fontSize: 12, color: '#64748b' }}>Check the details below. Changes here apply to this printout only.</div>
           </div>
           {mayPrint
-            ? <button className="btn btn-primary" disabled={printing} onClick={print}>{printing ? 'Recording…' : 'Print 2307'}</button>
+            ? <button className="btn btn-primary" disabled={printing || !chosen.length || badPeriod} onClick={print}>{printing ? 'Recording…' : 'Print 2307'}</button>
             : <span className="f-warn">You can view this 2307 but not print it.</span>}
         </div>
         {note && <div className="f-warn" style={{ marginTop: 6 }}>{note}</div>}
+
+        <h3 style={{ marginTop: 12 }}>Period &amp; documents</h3>
+        <div className="grid">
+          <div><label>Period from</label><input type="date" value={f.from} onChange={(e) => setF((x) => ({ ...x, from: e.target.value }))} /></div>
+          <div><label>Period to</label><input type="date" value={f.to} onChange={(e) => setF((x) => ({ ...x, to: e.target.value }))} /></div>
+          <div style={{ alignSelf: 'end', fontSize: 12 }}>
+            {chosen.length === src.docs.length
+              ? <>All {src.docs.length} document{src.docs.length === 1 ? '' : 's'} of {src.label}.</>
+              : <>{chosen.length} of {src.docs.length} documents. <a href="#all" onClick={(e) => { e.preventDefault(); allDocs(); }}>Use all</a></>}
+          </div>
+        </div>
+        {badPeriod && <div className="f-warn" style={{ fontSize: 12, marginTop: 4 }}>The period needs a From date on or before its To date.</div>}
+        <table>
+          <thead><tr><th style={{ width: 28 }} /><th>Document</th><th>Date</th><th>ATC</th><th style={{ textAlign: 'right' }}>Tax base</th><th style={{ textAlign: 'right' }}>Withheld</th><th /></tr></thead>
+          <tbody>
+            {src.docs.map((d) => (
+              <tr key={docKey(d)} style={{ opacity: sel.includes(docKey(d)) ? 1 : 0.5 }}>
+                <td><input type="checkbox" style={{ width: 'auto' }} checked={sel.includes(docKey(d))} onChange={() => toggle(docKey(d))} aria-label={`Include ${d.doc_no}`} /></td>
+                <td>{d.doc_type} {d.doc_no}{d.reference_no ? ` · ${d.reference_no}` : ''}</td>
+                <td style={{ whiteSpace: 'nowrap' }}>{d.date_created}</td>
+                <td>{d.atc || '—'}{d.atc_suggested ? ' (suggested)' : ''}</td>
+                <td style={{ textAlign: 'right' }}>{money(d.tax_base)}</td>
+                <td style={{ textAlign: 'right' }}>{money(d.wtax_amount)}</td>
+                <td style={{ whiteSpace: 'nowrap' }}><button type="button" className="btn btn-sm" onClick={() => onlyThis(d)}>2307 for this one</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {!chosen.length && <div className="f-warn" style={{ fontSize: 12, marginTop: 4 }}>Tick at least one document.</div>}
+
         {(unconfirmed > 0 || noAtc > 0 || !f.payee.tin || !p.tin || !p.name) && (
           <ul className="f-warn" style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 12 }}>
             {unconfirmed > 0 && <li>{unconfirmed} line{unconfirmed === 1 ? '' : 's'} with an ATC suggested from the withholding rate. Confirm or change it below.</li>}
@@ -220,10 +299,10 @@ export default function Bir2307Print() {
         <table>
           <thead><tr><th style={{ width: 170 }}>ATC</th><th>Nature of income payment</th><th style={{ textAlign: 'right' }}>Income</th><th style={{ textAlign: 'right' }}>Tax</th></tr></thead>
           <tbody>
-            {f.lines.map((l, i) => (
-              <tr key={i}>
+            {lines.map((l) => (
+              <tr key={l.key}>
                 <td>
-                  <select value={l.atc} onChange={(e) => pickAtc(i, e.target.value)}>
+                  <select value={l.atc} onChange={(e) => pickAtc(l, e.target.value)}>
                     <option value="">— choose —</option>
                     {src.atc_options.map((o) => <option key={o.id} value={o.atc}>{o.atc} · {o.rate}%</option>)}
                     {l.atc && !src.atc_options.some((o) => o.atc === l.atc) && <option value={l.atc}>{l.atc}</option>}
@@ -232,7 +311,7 @@ export default function Bir2307Print() {
                     Withheld at {l.rate != null ? `${Number(l.rate)}%` : '?'}{l.suggested && <span className="f-warn"> · suggested</span>}
                   </div>
                 </td>
-                <td><input value={l.nature} onChange={(e) => setLine(i, { nature: e.target.value })} /></td>
+                <td><input value={l.nature} onChange={(e) => setLine(l.key, { nature: e.target.value })} /></td>
                 <td style={{ textAlign: 'right' }}>{money(l.total)}</td>
                 <td style={{ textAlign: 'right' }}>{money(l.tax)}</td>
               </tr>
@@ -240,23 +319,6 @@ export default function Bir2307Print() {
           </tbody>
         </table>
 
-        <details style={{ marginTop: 10 }}>
-          <summary style={{ cursor: 'pointer' }}>Source documents ({src.docs.length})</summary>
-          <table>
-            <thead><tr><th>Document</th><th>Date</th><th>ATC</th><th style={{ textAlign: 'right' }}>Tax base</th><th style={{ textAlign: 'right' }}>Withheld</th></tr></thead>
-            <tbody>
-              {src.docs.map((d) => (
-                <tr key={`${d.doc_type}-${d.id}`}>
-                  <td>{d.doc_type} {d.doc_no}{d.reference_no ? ` · ${d.reference_no}` : ''}</td>
-                  <td>{d.date_created}</td>
-                  <td>{d.atc || '—'}{d.atc_suggested ? ' (suggested)' : ''}</td>
-                  <td style={{ textAlign: 'right' }}>{money(d.tax_base)}</td>
-                  <td style={{ textAlign: 'right' }}>{money(d.wtax_amount)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </details>
       </div>
 
       <div className="f-sheet">
@@ -313,7 +375,7 @@ export default function Bir2307Print() {
             </thead>
             <tbody>
               {Array.from({ length: rows }, (_, i) => {
-                const l = f.lines[i];
+                const l = lines[i];
                 return (
                   <tr key={i}>
                     <td className="nat">{l ? l.nature : ''}</td>
@@ -332,7 +394,7 @@ export default function Bir2307Print() {
                 <td className="amt">{money(totals.months[2])}</td><td className="amt">{money(totals.total)}</td><td className="amt">{money(totals.tax)}</td>
               </tr>
               <tr className="sec"><td>Money Payments Subject to Withholding of Business Tax (Government &amp; Private)</td><td colSpan={6} className="shade" /></tr>
-              {Array.from({ length: Math.max(3, 10 - Math.max(0, f.lines.length - 10)) }, (_, i) => <tr key={`b${i}`}><td /><td /><td /><td /><td /><td /><td /></tr>)}
+              {Array.from({ length: Math.max(3, 10 - Math.max(0, lines.length - 10)) }, (_, i) => <tr key={`b${i}`}><td /><td /><td /><td /><td /><td /><td /></tr>)}
               <tr className="tot"><td>Total</td><td /><td /><td /><td /><td /><td /></tr>
             </tbody>
           </table>

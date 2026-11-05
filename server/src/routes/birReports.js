@@ -705,11 +705,21 @@ router.post('/2307/issued', requireAuth, requirePermission(ISSUE_ROUTE, 'can_pri
     const q = quarterOf({ query: { quarter: req.body.quarter } });
     const key = String(req.body.payee_key || '').slice(0, 220);
     if (!key) return res.status(400).json({ error: 'payee_key is required.' });
+    const day = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : null);
+    const row = {
+      payee_key: key, supplier_id: Number(req.body.supplier_id) || null, payee_name: String(req.body.payee_name || '').slice(0, 200) || null,
+      quarter: q.quarter, income_total: r2(req.body.income_total), tax_total: r2(req.body.tax_total), issued_by_user_id: req.user.id,
+      // The period printed and, when not every document of the quarter, which ones (nos.) -- columns
+      // added by a later run of add-bir-2307-issue.js, so only written once they exist.
+      period_from: day(req.body.period_from), period_to: day(req.body.period_to),
+      doc_refs: req.body.doc_refs ? String(req.body.doc_refs).slice(0, 1000) : null,
+    };
+    const [cols] = await pool.query('SHOW COLUMNS FROM supplier_2307_issuances');
+    const have = new Set(cols.map((c) => c.Field));
+    const keys = Object.keys(row).filter((k) => have.has(k));
     await pool.query(
-      `INSERT INTO supplier_2307_issuances (payee_key, supplier_id, payee_name, quarter, income_total, tax_total, issued_by_user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      [key, Number(req.body.supplier_id) || null, String(req.body.payee_name || '').slice(0, 200) || null, q.quarter,
-        r2(req.body.income_total), r2(req.body.tax_total), req.user.id]);
+      `INSERT INTO supplier_2307_issuances (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`,
+      keys.map((k) => row[k]));
     return res.json({ ok: true });
   } catch (err) { return fail(res, next, err); }
 });

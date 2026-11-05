@@ -98,6 +98,17 @@ export default function VendorBillView() {
             <button className="btn btn-sm" disabled title={`Raised from ${vb.po_no || 'a Purchase Order'} -- bill that order again from the Purchase Order's Bill button, so its billed qty keeps up`}>Replicate</button>
           )}
           <button className="btn btn-sm" disabled title="Print formats aren't implemented in this build">Print</button>
+          {/* BIR 2307 for just this bill (2026-11-05): the supplier's certificate for the bill's quarter, this bill only. */}
+          {can('/reports/bir-2307') && Number(vb.wtax_amount) > 0 && vb.status !== 'cancelled' && vb.vendor_id && (() => {
+            const ymd = String(vb.date_created).slice(0, 10);
+            const q = `${ymd.slice(0, 4)}-Q${Math.floor((Number(ymd.slice(5, 7)) - 1) / 3) + 1}`;
+            return (
+              <button className="btn btn-sm" title="Generate the supplier's BIR 2307 for this bill"
+                onClick={() => window.open(`/reports/bir-2307/form?quarter=${q}&payee=s${vb.vendor_id}&doc=${encodeURIComponent(`Vendor Bill-${vb.id}`)}`, '_blank')}>
+                BIR 2307
+              </button>
+            );
+          })()}
           {canVoid && isOpen && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleCancel}>Cancel</button>}
         </div>
       </div>

@@ -78,6 +78,19 @@ async function main() {
     console.log('\n+ created supplier_2307_issuances');
   }
 
+  // 2026-11-05 (later): a 2307 can be for chosen documents (one bill) and for a period other than
+  // the quarter -- the log keeps both. Added to a table created by the first version too.
+  if (t || !DRY) {
+    const [ic] = await pool.query('SHOW COLUMNS FROM supplier_2307_issuances');
+    const have = new Set(ic.map((c) => c.Field));
+    for (const [col, def] of [['period_from', 'DATE NULL AFTER quarter'], ['period_to', 'DATE NULL AFTER period_from'], ['doc_refs', 'VARCHAR(1000) NULL AFTER period_to']]) {
+      if (have.has(col)) continue;
+      if (DRY) { console.log(`~ would add supplier_2307_issuances.${col}`); continue; }
+      await pool.query(`ALTER TABLE supplier_2307_issuances ADD COLUMN ${col} ${def}`);
+      console.log(`+ supplier_2307_issuances.${col}`);
+    }
+  }
+
   for (const k of SETTINGS) {
     const [[s]] = await pool.query('SELECT name FROM app_settings WHERE name = ?', [k]);
     if (s) continue;
