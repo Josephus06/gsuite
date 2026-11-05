@@ -138,7 +138,7 @@ function ItemsTable({ doc, withDate }) {
   const banks = doc.type === 'fund_transfer';
   const d = doc.detail || {};
   return (
-    <table className="rf-table">
+    <table className="rf-table rf-fixed">
       <thead>
         <tr>
           {withDate && <th style={{ width: '18%' }}>Date</th>}
@@ -220,10 +220,16 @@ export default function FormPrint() {
         .rf-field { display: flex; gap: 6px; align-items: baseline; flex: 1; min-width: 180px; margin-bottom: 8px; }
         .rf-label { font-size: 10px; text-transform: uppercase; color: #444; white-space: nowrap; }
         .rf-value { flex: 1; border-bottom: 1px solid #333; padding: 0 4px 1px; min-height: 15px; }
+        /* The app's global th, td (index.css: white-space: nowrap; th color: var(--text)) ran a long
+           Particulars line past the sheet's edge and greyed the headings out in dark mode -- both
+           restated here. rf-fixed (the Particulars table) holds the table to the sheet's width. */
         .rf-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        .rf-table th, .rf-table td { border: 1px solid #333; padding: 4px 6px; font-size: 11px; }
-        .rf-table th { background: #eef2ff; text-transform: uppercase; font-size: 10px; }
-        .rf-num { text-align: right; }
+        .rf-fixed { table-layout: fixed; }
+        .rf-table th, .rf-table td { border: 1px solid #333; padding: 4px 6px; font-size: 11px; color: #111;
+          text-align: left; vertical-align: top; white-space: normal; overflow-wrap: anywhere; }
+        .rf-table tbody tr:hover { background: none; }
+        .rf-table th { background: #eef2ff; text-transform: uppercase; font-size: 10px; font-weight: 700; }
+        .rf-num { text-align: right !important; white-space: nowrap !important; }
         .rf-total-label { text-align: right; font-weight: 700; }
         .rf-total { font-weight: 700; }
         .rf-box { border: 1px solid #333; padding: 8px; margin-top: 12px; }
