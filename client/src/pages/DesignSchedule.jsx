@@ -52,6 +52,10 @@ const runLink = (s) => (s.order_type === 'JO' ? `/assigned-jo/${s.order_id}` : `
 const errorOf = (err) => err.response?.data?.error || err.message;
 const artistLabel = (a) => (a ? `${a.first_name} ${a.last_name}` : '');
 
+// Not yet approved, but its order already has its artist or finished layout from outside the calendar
+// (same rule as the server's handledOutside): approving the calendar leaves it as it is.
+const handledOutside = (s) => s.status !== 'Confirmed' && ['Assigned', 'Done'].includes(s.phase);
+
 // A pending reschedule on an approved slot waits on the side that did not make it.
 function awaitingMe(s, side) {
   if (s.status !== 'Confirmed' || !s.proposed_by_side) return false;
@@ -959,9 +963,15 @@ function BatchModal({ id, meta, onClose, onChanged }) {
             <tr><th>Order</th><th>Customer / AO</th><th>Schedule</th><th>Artist</th><th>Layout - Job Type</th><th>Qty</th><th>Revision</th></tr>
           </thead>
           <tbody>
-            {batch.items.map((s) => (
+            {batch.items.map((s) => { const edit = reviewing && !handledOutside(s); return (
               <tr key={s.id}>
-                <td><Link to={orderLink(s)}>{s.order_no}</Link> <span className="muted">({s.order_type})</span></td>
+                <td><Link to={orderLink(s)}>{s.order_no}</Link> <span className="muted">({s.order_type})</span>
+                  {handledOutside(s) && (
+                    <div><span className={`badge ${PHASE_BADGE[s.phase]}`} title="Assigned from the order itself -- approving the calendar leaves it as it is">
+                      {PHASE_LABEL[s.phase]}
+                    </span></div>
+                  )}
+                </td>
                 <td>{s.customer_name}<div className="muted" style={{ fontSize: 12 }}>{s.sales_rep_name}</div></td>
                 <td style={{ whiteSpace: 'nowrap' }}>{slotText(s.scheduled_start, s.scheduled_end)}
                   <div className="muted" style={{ fontSize: 12, fontWeight: sharesTime(s) ? 600 : undefined }}>
@@ -970,7 +980,7 @@ function BatchModal({ id, meta, onClose, onChanged }) {
                 </td>
                 <td>{s.assigned_artist_name || s.preferred_artist_name}</td>
                 <td style={{ minWidth: 200 }}>
-                  {reviewing ? (
+                  {edit ? (
                     <select value={s.plan_layout_job_type_id || ''} disabled={busy} onChange={(e) => saveLayout(s, { layout_job_type_id: e.target.value || null })}>
                       <option value="">-- choose --</option>
                       {jobTypesFor(s).map((p) => <option key={p.id} value={p.id}>{p.display_name} ({p.minutes_consume} min)</option>)}
@@ -978,7 +988,7 @@ function BatchModal({ id, meta, onClose, onChanged }) {
                   ) : (s.plan_layout_job_type_name || '--')}
                 </td>
                 <td>
-                  {reviewing ? (
+                  {edit ? (
                     <input type="number" min="0.0001" step="any" style={{ width: 70 }} defaultValue={s.plan_layout_qty ? Number(s.plan_layout_qty) : ''}
                       onBlur={(e) => { if (String(Number(e.target.value || 0)) !== String(Number(s.plan_layout_qty || 0))) saveLayout(s, { layout_qty: e.target.value || null }); }} />
                   ) : (s.plan_layout_qty ? Number(s.plan_layout_qty) : '--')}
@@ -990,7 +1000,7 @@ function BatchModal({ id, meta, onClose, onChanged }) {
                       {s.proposal_note && <div style={{ opacity: 0.8 }}>{s.proposal_note}</div>}
                     </span>
                   ) : <span className="muted">--</span>}
-                  {reviewing && (
+                  {edit && (
                     <div style={{ marginTop: 4, display: 'flex', gap: 4 }}>
                       <button type="button" className="btn btn-sm" onClick={() => setRevising(s)}>Revise</button>
                       {s.proposed_by_side === 'DESIGN' && <button type="button" className="btn btn-sm" disabled={busy} onClick={() => call('post', `/${s.id}/revise/withdraw`)}>Undo</button>}
@@ -998,7 +1008,7 @@ function BatchModal({ id, meta, onClose, onChanged }) {
                   )}
                 </td>
               </tr>
-            ))}
+            ); })}
           </tbody>
         </table>
       </div>

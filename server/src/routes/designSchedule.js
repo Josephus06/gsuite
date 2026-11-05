@@ -181,14 +181,21 @@ const BASE_SELECT = `
 
 // Where a slot stands. Before approval: Draft, with Design, or revised and back with the SBU. After:
 // read off the order -- the artist and the finished layout live there, and a copy here could drift.
+// 2026-11-05: the order is read first at every step. An order assigned straight from its own page
+// (Assign Design) and finished while its calendar was still with Design or the SBU showed "With
+// Design" for good -- now it shows Artist assigned / Layout done like an approved one.
 function phaseOf(r) {
   if (r.status === 'Cancelled' || r.order_status === 'Cancelled') return 'Cancelled';
-  if (r.status === 'For Approval') return r.batch_status === BATCH_WITH_SBU ? 'Revised' : 'For Approval';
-  if (r.status !== 'Confirmed') return r.status;
   if (r.layout_ended_at) return 'Done';
   if (r.artist_id && ARTIST_SUB_STATUSES.includes(r.order_sub_status)) return 'Assigned';
+  if (r.status === 'For Approval') return r.batch_status === BATCH_WITH_SBU ? 'Revised' : 'For Approval';
+  if (r.status !== 'Confirmed') return r.status;
   return 'Confirmed';
 }
+
+// A slot not yet approved whose order already has its artist, or its finished layout, from outside the
+// calendar. Approving the calendar must not assign it again -- that would reset the artist's work.
+const handledOutside = (s) => s.status !== 'Confirmed' && ['Assigned', 'Done'].includes(s.phase);
 
 // CARRY-OVER. A slot whose layout is not finished by the end of its day shows at the top of the next
 // day -- today -- on the calendar, marked with the day it was meant for, and keeps rolling forward one
@@ -365,8 +372,10 @@ async function loadBatch(conn, id, lock = false) {
 // Approves the calendar: every slot in it assigned to its artist, all or nothing.
 async function approveBatch(conn, batch, userId) {
   for (const s of batch.items.filter((x) => x.status === 'For Approval')) {
-    const fail = await assignOrder(conn, s, userId);
-    if (fail) return fail;
+    if (!handledOutside(s)) {
+      const fail = await assignOrder(conn, s, userId);
+      if (fail) return fail;
+    }
     await conn.query(
       "UPDATE design_schedules SET status = 'Confirmed', confirmed_by_user_id = ?, confirmed_at = NOW() WHERE id = ?", [userId, s.id]);
     await logAudit(conn, { id: s.id, userId, eventType: 'Status Change', fieldName: 'status', oldValue: 'For Approval', newValue: 'Approved' });
@@ -758,7 +767,7 @@ function designDecisionGate(batch, side) {
   if (!side.design) return [403, 'Only a Design Supervisor decides on the calendar.'];
   if (batch.status !== BATCH_WITH_DESIGN) return [409, `This calendar is ${batch.status}.`];
   if (!batch.items.length) return [409, 'This calendar has nothing left on it.'];
-  const missing = batch.items.find((s) => !s.plan_layout_job_type_id || !(Number(s.plan_layout_qty) > 0));
+  const missing = batch.items.find((s) => !handledOutside(s) && (!s.plan_layout_job_type_id || !(Number(s.plan_layout_qty) > 0)));
   if (missing) return [400, `Set the Layout - Job Type and Qty of ${missing.order_no} first.`];
   return null;
 }
