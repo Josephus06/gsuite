@@ -191,6 +191,8 @@ import BirPurchaseReport from './pages/reports/BirPurchaseReport';
 import BirEwtReport from './pages/reports/BirEwtReport';
 import BirCwtReport from './pages/reports/BirCwtReport';
 import BirVatReport from './pages/reports/BirVatReport';
+import BirSupplier2307 from './pages/reports/BirSupplier2307';
+import Bir2307Print from './pages/reports/Bir2307Print';
 import CollectionForecast from './pages/treasury/CollectionForecast';
 import CollectionAgingReport from './pages/treasury/CollectionAgingReport';
 import CollectionIncentive from './pages/treasury/CollectionIncentive';
@@ -297,6 +299,7 @@ function App() {
       <Route path="/purchase-orders/:id/print" element={<ProtectedRoute><PurchaseOrderPrint /></ProtectedRoute>} />
       <Route path="/bill-payments/:id/print" element={<ProtectedRoute><BillPaymentPrint /></ProtectedRoute>} />
       <Route path="/cheques/:id/print" element={<ProtectedRoute><BillPaymentPrint kind="cheque" /></ProtectedRoute>} />
+      <Route path="/reports/bir-2307/form" element={<ProtectedRoute><Bir2307Print /></ProtectedRoute>} />
       <Route path="/fund-transfers/:id/print" element={<ProtectedRoute><FundTransferPrint /></ProtectedRoute>} />
       <Route path="/commission-vouchers/:id/print" element={<ProtectedRoute><CommissionVoucherPrint /></ProtectedRoute>} />
       <Route path="/hrd/coe/:id/print" element={<ProtectedRoute><HrCoePrint /></ProtectedRoute>} />
@@ -544,6 +547,7 @@ function App() {
         <Route path="/reports/bir-purchase" element={<BirPurchaseReport />} />
         <Route path="/reports/bir-ewt" element={<BirEwtReport />} />
         <Route path="/reports/bir-cwt" element={<BirCwtReport />} />
+        <Route path="/reports/bir-2307" element={<BirSupplier2307 />} />
         <Route path="/reports/bir-vat" element={<BirVatReport />} />
         {/* Treasury -- when the money is expected in. */}
         <Route path="/treasury/collection-forecast" element={<CollectionForecast />} />

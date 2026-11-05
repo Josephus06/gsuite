@@ -266,7 +266,7 @@ router.get('/ewt', requireAuth, requirePermission(EWT_ROUTE, 'can_view'), async 
               s.id AS supplier_id, COALESCE(s.name, ch.payee_name) AS supplier_name, s.tin AS supplier_tin, s.address AS supplier_address,
               NULL AS atc, NULL AS nature, NULL AS rate, ch.net_of_tax AS tax_base, ch.withholding_tax_amount AS wtax_amount
          FROM cheques ch
-         LEFT JOIN suppliers s ON ch.payee_type = 'supplier' AND s.id = ch.payee_id
+         LEFT JOIN suppliers s ON ch.payee_type IN ('VENDOR', 'supplier') AND s.id = ch.payee_id
         WHERE ch.date_created BETWEEN ? AND ? AND ch.status <> 'void' AND ch.withholding_tax_amount > 0`, [m.from, m.to]);
     const rows = [...bills, ...credits, ...cheques]
       .map((r) => ({ ...r, atc: r.atc || 'Not set', tax_base: r2(r.tax_base), wtax_amount: r2(r.wtax_amount) }))
@@ -507,6 +507,228 @@ router.get('/vat', requireAuth, requirePermission(VAT_ROUTE, 'can_view'), async 
       purchases_not_subject_to_vat: { count: Number(vb.n) - Number(vb.taxed_n), net: r2(vb.untaxed_net) },
       totals: { output_tax: outputTax, input_tax: inputTax, vat_payable: r2(outputTax - inputTax) },
     });
+  } catch (err) { return fail(res, next, err); }
+});
+
+/* ========================================================================================== */
+/* BIR 2307 to Suppliers (asked 2026-11-05): the Certificate of Creditable Tax Withheld at      */
+/* Source we owe each supplier we withheld EWT from, one per supplier per quarter -- the same    */
+/* documents as the Expanded Withholding Tax report (vendor bills, bill credits taken back,      */
+/* direct cheques), dated by the document, grouped by ATC with the three months of the quarter.  */
+/* View lists and opens a form, Print prints it (logged), Edit changes the Payor details.        */
+/* ========================================================================================== */
+const ISSUE_ROUTE = '/reports/bir-2307';
+const PAYOR_KEYS = {
+  tin: 'bir_payor_tin', name: 'bir_payor_name', address: 'bir_payor_address', zip: 'bir_payor_zip',
+  signatory: 'bir_payor_signatory', signatory_title: 'bir_payor_signatory_title', signatory_tin: 'bir_payor_signatory_tin',
+};
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+// "2026-Q3" -> { quarter, from, to, label, months: ['2026-07', '2026-08', '2026-09'] }. Default: last quarter.
+function quarterOf(req) {
+  let q = String(req.query.quarter || '');
+  if (!q) {
+    const t = manilaToday(); let y = Number(t.slice(0, 4)); let n = Math.floor((Number(t.slice(5, 7)) - 1) / 3);
+    if (n === 0) { n = 4; y -= 1; }
+    q = `${y}-Q${n}`;
+  }
+  const mm = /^(\d{4})-Q([1-4])$/.exec(q);
+  if (!mm) { const e = new Error('quarter must be YYYY-Q1..Q4.'); e.status = 400; throw e; }
+  const y = Number(mm[1]); const n = Number(mm[2]);
+  const months = [0, 1, 2].map((i) => `${y}-${String((n - 1) * 3 + 1 + i).padStart(2, '0')}`);
+  const last = monthRange(months[2]);
+  return {
+    quarter: q, from: `${months[0]}-01`, to: last.to, months,
+    label: `Q${n} ${y} (${MONTH_NAMES[(n - 1) * 3]} – ${MONTH_NAMES[(n - 1) * 3 + 2]})`,
+  };
+}
+
+const payeeKey = (r) => (r.supplier_id ? `s${r.supplier_id}` : `n:${String(r.supplier_name || '').trim().toUpperCase()}`);
+
+// Every document of the period we withheld on, one row each, with the payee's identity.
+async function withheldDocs(from, to) {
+  const [bills] = await pool.query(
+    `SELECT 'Vendor Bill' AS doc_type, vb.id, vb.bill_no AS doc_no, vb.date_created, vb.reference_no,
+            s.id AS supplier_id, s.name AS supplier_name, s.tin AS supplier_tin, s.address AS supplier_address,
+            COALESCE(w.atc_code, w.code) AS atc, COALESCE(w.name, vb.wtax_description) AS nature, w.rate,
+            COALESCE(wl.base, vb.net_of_tax) AS tax_base, vb.wtax_amount
+       FROM vendor_bills vb
+       LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id
+       LEFT JOIN suppliers s ON s.id = COALESCE(po.supplier_id, vb.supplier_id)
+       LEFT JOIN withholding_taxes w ON w.id = vb.wtax_id
+       LEFT JOIN (SELECT vendor_bill_id, SUM(net_of_tax) AS base FROM vendor_bill_lines WHERE is_withhold = 1 GROUP BY vendor_bill_id) wl
+              ON wl.vendor_bill_id = vb.id
+      WHERE vb.date_created BETWEEN ? AND ? AND vb.status <> 'cancelled' AND vb.wtax_amount > 0`, [from, to]);
+  const [credits] = await pool.query(
+    `SELECT 'Bill Credit' AS doc_type, bc.id, bc.bill_credit_no AS doc_no, bc.date_created, NULL AS reference_no,
+            s.id AS supplier_id, s.name AS supplier_name, s.tin AS supplier_tin, s.address AS supplier_address,
+            COALESCE(w.atc_code, w.code) AS atc, COALESCE(w.name, bc.wtax_description) AS nature, w.rate,
+            -bc.subtotal AS tax_base, -bc.wtax_amount AS wtax_amount
+       FROM bill_credits bc
+       LEFT JOIN suppliers s ON s.id = bc.supplier_id
+       LEFT JOIN withholding_taxes w ON w.id = bc.wtax_id
+      WHERE bc.date_created BETWEEN ? AND ? AND bc.status <> 'void' AND bc.wtax_amount > 0`, [from, to]);
+  const [cheques] = await pool.query(
+    `SELECT 'Cheque' AS doc_type, ch.id, ch.cheque_no AS doc_no, ch.date_created, ch.cheque_number AS reference_no,
+            s.id AS supplier_id, COALESCE(s.name, ch.payee_name) AS supplier_name, s.tin AS supplier_tin, s.address AS supplier_address,
+            NULL AS atc, NULL AS nature, NULL AS rate, ch.net_of_tax AS tax_base, ch.withholding_tax_amount AS wtax_amount
+       FROM cheques ch
+       LEFT JOIN suppliers s ON ch.payee_type IN ('VENDOR', 'supplier') AND s.id = ch.payee_id
+      WHERE ch.date_created BETWEEN ? AND ? AND ch.status <> 'void' AND ch.withholding_tax_amount > 0`, [from, to]);
+  // Documents with no withholding tax chosen (every imported bill, every cheque) get an ATC
+  // SUGGESTED from their effective rate: the Lookups withholding tax of that rate (the first by id
+  // when two share it, e.g. WC160 / WI120 at 2%). Accounting confirms or changes it on the form.
+  const options = await atcOptions();
+  return [...bills, ...credits, ...cheques].map((r) => {
+    const base = r2(r.tax_base); const tax = r2(r.wtax_amount);
+    const atc = r.atc ? String(r.atc).replace(/\s+/g, '') : '';
+    const effRate = base ? Math.round((tax / base) * 10000) / 100 : null;
+    const guess = !atc && effRate != null ? options.find((o) => Math.abs(o.rate - effRate) <= 0.05) : null;
+    return {
+      ...r, atc: atc || (guess ? guess.atc : ''), atc_suggested: !atc && !!guess, eff_rate: effRate,
+      nature: r.nature || (guess ? guess.nature : ''), rate: r.rate != null ? r.rate : (guess ? guess.rate : null),
+      date_created: String(r.date_created instanceof Date ? r.date_created.toISOString() : r.date_created).slice(0, 10),
+      tax_base: base, wtax_amount: tax, payee_key: payeeKey(r),
+    };
+  });
+}
+
+// Lookups > Withholding Taxes, as ATC choices for the form.
+async function atcOptions() {
+  const [rows] = await pool.query(
+    `SELECT id, COALESCE(atc_code, code) AS atc, name AS nature, rate FROM withholding_taxes
+      WHERE COALESCE(is_active, 1) = 1 AND COALESCE(atc_code, code) IS NOT NULL ORDER BY id`);
+  return rows.map((r) => ({ ...r, atc: String(r.atc).replace(/\s+/g, ''), rate: Number(r.rate) }));
+}
+
+// Supplier addresses are stored as typed on the old system: the name again on the first line,
+// "Philippines" on the last, the ZIP somewhere in between. The form wants one line plus the ZIP.
+function splitAddress(address, name) {
+  const lines = String(address || '').split(/\r?\n/).map((l) => l.replace(/\s+/g, ' ').trim()).filter(Boolean)
+    .filter((l, i) => !(i === 0 && name && l.toUpperCase() === String(name).trim().toUpperCase()))
+    .filter((l) => !/^philippines$/i.test(l));
+  const text = lines.join(', ');
+  const zips = text.match(/\b\d{4}\b/g);
+  return { address: text, zip: zips ? zips[zips.length - 1] : '' };
+}
+
+async function loadPayor() {
+  const [rows] = await pool.query('SELECT name, value FROM app_settings WHERE name IN (?)', [Object.values(PAYOR_KEYS)]);
+  const byName = Object.fromEntries(rows.map((r) => [r.name, r.value || '']));
+  return Object.fromEntries(Object.entries(PAYOR_KEYS).map(([k, n]) => [k, byName[n] || '']));
+}
+
+// The quarter's payees: what was withheld from each, what is missing for the form, and whether
+// its 2307 has been printed.
+router.get('/2307', requireAuth, requirePermission(ISSUE_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const q = quarterOf(req);
+    const docs = await withheldDocs(q.from, q.to);
+    const map = new Map();
+    for (const d of docs) {
+      if (!map.has(d.payee_key)) {
+        map.set(d.payee_key, { key: d.payee_key, supplier_id: d.supplier_id, name: d.supplier_name, tin: d.supplier_tin, docs: 0, income: 0, tax: 0, no_atc: 0, suggested_atc: 0 });
+      }
+      const p = map.get(d.payee_key);
+      p.docs += 1; p.income += d.tax_base; p.tax += d.wtax_amount;
+      if (!d.atc) p.no_atc += 1; else if (d.atc_suggested) p.suggested_atc += 1;
+    }
+    const [issued] = await pool.query(
+      `SELECT i.payee_key, COUNT(*) AS n, MAX(i.issued_at) AS last_at,
+              (SELECT u.display_name FROM supplier_2307_issuances i2 LEFT JOIN users u ON u.id = i2.issued_by_user_id
+                WHERE i2.quarter = i.quarter AND i2.payee_key = i.payee_key ORDER BY i2.issued_at DESC, i2.id DESC LIMIT 1) AS last_by
+         FROM supplier_2307_issuances i WHERE i.quarter = ? GROUP BY i.quarter, i.payee_key`, [q.quarter]);
+    const issuedBy = new Map(issued.map((i) => [i.payee_key, i]));
+    const payees = [...map.values()]
+      .map((p) => {
+        const i = issuedBy.get(p.key);
+        return { ...p, income: r2(p.income), tax: r2(p.tax), issued_count: i ? Number(i.n) : 0, last_issued_at: i ? i.last_at : null, last_issued_by: i ? i.last_by : null };
+      })
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')));
+    return res.json({
+      ...q, payees,
+      totals: { payees: payees.length, issued: payees.filter((p) => p.issued_count).length, tax: r2(payees.reduce((s, p) => s + p.tax, 0)), income: r2(payees.reduce((s, p) => s + p.income, 0)) },
+      payor: await loadPayor(),
+    });
+  } catch (err) { return fail(res, next, err); }
+});
+
+// One payee's form: Part I from the supplier, Part II from the Payor settings, Part III by ATC
+// with the income payments of each month of the quarter and the tax withheld.
+router.get('/2307/form', requireAuth, requirePermission(ISSUE_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const q = quarterOf(req);
+    const key = String(req.query.payee || '');
+    const docs = (await withheldDocs(q.from, q.to)).filter((d) => d.payee_key === key)
+      .sort((a, b) => a.date_created.localeCompare(b.date_created));
+    if (!docs.length) return res.status(404).json({ error: 'Nothing was withheld from this payee in the quarter.' });
+
+    let payee = { name: docs[0].supplier_name || '', tin: docs[0].supplier_tin || '', address: docs[0].supplier_address || '' };
+    if (docs[0].supplier_id) {
+      const [[s]] = await pool.query('SELECT name, company_name, tin, address FROM suppliers WHERE id = ?', [docs[0].supplier_id]);
+      if (s) payee = { name: s.company_name || s.name, tin: s.tin || '', address: s.address || '' };
+    }
+    const addr = splitAddress(payee.address, payee.name);
+
+    const lines = new Map();
+    for (const d of docs) {
+      // No ATC even suggested: kept apart by effective rate so different rates never share a line.
+      const k = d.atc || `?${d.eff_rate}`;
+      if (!lines.has(k)) lines.set(k, { atc: d.atc, nature: d.nature || '', rate: d.rate != null ? d.rate : d.eff_rate, suggested: false, months: [0, 0, 0], tax: 0 });
+      const l = lines.get(k);
+      if (!l.nature && d.nature) l.nature = d.nature;
+      if (d.atc_suggested) l.suggested = true;
+      const mi = q.months.indexOf(d.date_created.slice(0, 7));
+      if (mi >= 0) l.months[mi] += d.tax_base;
+      l.tax += d.wtax_amount;
+    }
+    const out = [...lines.values()].map((l) => ({
+      ...l, months: l.months.map(r2), total: r2(l.months.reduce((s, v) => s + v, 0)), tax: r2(l.tax),
+    })).sort((a, b) => (a.atc ? 0 : 1) - (b.atc ? 0 : 1) || String(a.atc).localeCompare(String(b.atc)));
+
+    return res.json({
+      ...q,
+      payee_key: key, supplier_id: docs[0].supplier_id || null,
+      payee: { tin: payee.tin, name: payee.name, address: addr.address, zip: addr.zip },
+      payor: await loadPayor(),
+      lines: out,
+      atc_options: await atcOptions(),
+      totals: { months: [0, 1, 2].map((i) => r2(out.reduce((s, l) => s + l.months[i], 0))), total: r2(out.reduce((s, l) => s + l.total, 0)), tax: r2(out.reduce((s, l) => s + l.tax, 0)) },
+      docs,
+    });
+  } catch (err) { return fail(res, next, err); }
+});
+
+// Printing a certificate is logged, so the list shows whose 2307 has gone out.
+router.post('/2307/issued', requireAuth, requirePermission(ISSUE_ROUTE, 'can_print'), async (req, res, next) => {
+  try {
+    const q = quarterOf({ query: { quarter: req.body.quarter } });
+    const key = String(req.body.payee_key || '').slice(0, 220);
+    if (!key) return res.status(400).json({ error: 'payee_key is required.' });
+    await pool.query(
+      `INSERT INTO supplier_2307_issuances (payee_key, supplier_id, payee_name, quarter, income_total, tax_total, issued_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [key, Number(req.body.supplier_id) || null, String(req.body.payee_name || '').slice(0, 200) || null, q.quarter,
+        r2(req.body.income_total), r2(req.body.tax_total), req.user.id]);
+    return res.json({ ok: true });
+  } catch (err) { return fail(res, next, err); }
+});
+
+// The Payor details printed in Part II and on the signature line.
+router.put('/2307/payor', requireAuth, requirePermission(ISSUE_ROUTE, 'can_edit'), async (req, res, next) => {
+  try {
+    const before = await loadPayor();
+    for (const [k, name] of Object.entries(PAYOR_KEYS)) {
+      if (req.body[k] === undefined) continue;
+      const v = String(req.body[k] || '').replace(/\s+/g, ' ').trim().slice(0, 255);
+      await pool.query('INSERT INTO app_settings (name, value) VALUES (?, ?) ON DUPLICATE KEY UPDATE value = VALUES(value)', [name, v]);
+      if (v !== before[k]) {
+        await pool.query(
+          `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+           VALUES ('AppSetting', 0, 'Updated', ?, ?, ?, ?)`, [name, before[k], v, req.user.id]);
+      }
+    }
+    return res.json(await loadPayor());
   } catch (err) { return fail(res, next, err); }
 });
 

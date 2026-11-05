@@ -324,6 +324,8 @@ const NAV_STRUCTURE = [
       // Tax reports (2026-10-21), each with its filing deadline: EWT the 5th, 2307s by month end, VAT the 15th.
       { route: '/reports/bir-ewt', label: 'Expanded Withholding Tax' },
       { route: '/reports/bir-cwt', label: 'Creditable Withholding Tax (2307)' },
+      // The payor's side (2026-11-05): the 2307 we issue each supplier we withheld from, per quarter.
+      { route: '/reports/bir-2307', label: 'BIR 2307 to Suppliers' },
       { route: '/reports/bir-vat', label: 'VAT Computation' },
     ],
   },
