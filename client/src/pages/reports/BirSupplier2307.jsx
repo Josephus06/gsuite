@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom';
 import api from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import SearchInput from '../../components/SearchInput';
+import Pagination from '../../components/Pagination';
 import { SupplierLink } from '../../components/PartyLink';
 import { useAuth } from '../../context/useAuth';
 import { Stat, money } from './BirTaxCommon';
@@ -63,6 +64,13 @@ export default function BirSupplier2307() {
     return (data?.payees || []).filter((p) => (!s || `${p.name} ${p.tin || ''}`.toLowerCase().includes(s))
       && (!show || (show === 'issued' ? p.issued_count > 0 : p.issued_count === 0)));
   }, [data, search, show]);
+
+  const PAGE_SIZE = 10;
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [quarter, search, show]);
+  const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const curPage = Math.min(page, totalPages);
+  const pageRows = rows.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE);
 
   const payorMissing = data && (!data.payor.name || !data.payor.tin || !data.payor.address);
 
@@ -175,7 +183,7 @@ export default function BirSupplier2307() {
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.map((p) => (
+                  {pageRows.map((p) => (
                     <tr key={p.key}>
                       <td>
                         <SupplierLink id={p.supplier_id} name={p.name || '—'} />
@@ -201,6 +209,12 @@ export default function BirSupplier2307() {
                 </tbody>
               </table>
             </div>
+            {rows.length > PAGE_SIZE && (
+              <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+                Showing {(curPage - 1) * PAGE_SIZE + 1}–{Math.min(curPage * PAGE_SIZE, rows.length)} of {rows.length} suppliers
+              </div>
+            )}
+            <Pagination page={curPage} totalPages={totalPages} onChange={setPage} />
             <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
               From the vendor bills, bill credits and cheques of the quarter with withholding tax, as on the Expanded Withholding Tax report.
               Give each supplier its 2307 within 20 days after the quarter ends, or when the supplier asks for it.

@@ -138,6 +138,14 @@ async function main() {
     // The account the money actually left, by name, falling back to the default only when live
     // names one this build does not have.
     const payBankId = coaByName.get(norm(bp.Title_COA)) || bankId;
+    // get_bill_payments does not carry the check no., so every payment used to come in without
+    // one. The full header from get_transactions has it (see backfill-bill-payment-check-no.js).
+    if (bp.CheckNo_TransH == null) {
+      try {
+        const full = listRows(await apiRetry(token, 'get_transactions', { where: { UserPK_TransH: bp.user_pk } }))[0];
+        if (full) { bp.CheckNo_TransH = full.CheckNo_TransH; bp.CheckDate_TransH = bp.CheckDate_TransH || full.CheckDate_TransH; }
+      } catch { /* left blank; the backfill fills it later */ }
+    }
     const conn = await pool.getConnection();
     try {
       await conn.beginTransaction();

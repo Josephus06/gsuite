@@ -385,7 +385,7 @@ async function adminMetrics(userId) {
   };
 }
 
-// The General Manager's three rings (asked 2026-10-05), over the last 30 days:
+// The General Manager's three rings (asked 2026-10-05), over the current month to date:
 //   Purchase Index        (named Sales Index until 2026-10-21) Sales Invoices net of VAT / Vendor Bills net of VAT -- pesos of sales
 //                         per peso of purchases. Shown as "3.2x"; the ring is full at 5x.
 //   Gross Profit          (Revenue - Cost of Goods Sold - Cost of Services) / Revenue, from the
@@ -393,14 +393,14 @@ async function adminMetrics(userId) {
 //   Collection Efficiency customer payments received / invoice Amount (Gross - EWT) falling due.
 // A ring whose base is zero shows a dash rather than a made-up 0% or 100%.
 //
-// Over the LAST 30 DAYS, rolling -- not the calendar month. Month to date read 16.4x / 98% / 6% on
-// Oct 5 against 2.5x / 62% / 83% for all of September: early in a month the bills and cost of sales
-// are not booked yet, and collections were weighed against invoices not yet due.
+// Over the CURRENT MONTH TO DATE (asked 2026-11-06: "don't 30 days, just make it for 1 month"; it
+// was a rolling last 30 days before). Expect swings early in a month -- on Oct 5 month to date read
+// 16.4x / 98% / 6% against 2.5x / 62% / 83% for all of September, since bills and cost of sales are
+// not booked yet and few invoices have fallen due.
 const RING_INDEX_FULL = 5;
-const RING_WINDOW_DAYS = 30;
 async function generalManagerRings() {
   const today = businessToday();
-  const from = new Date(Date.parse(`${today}T00:00:00Z`) - (RING_WINDOW_DAYS - 1) * 86400000).toISOString().slice(0, 10);
+  const from = `${today.slice(0, 7)}-01`;
   const [[[si]], [[vb]], [[paid]], [[due]], is] = await Promise.all([
     pool.query(`SELECT COALESCE(SUM(net_of_tax), 0) AS amount FROM sales_invoices
                 WHERE status <> 'cancelled' AND date_created BETWEEN ? AND ?`, [from, today]),
@@ -430,11 +430,11 @@ async function generalManagerRings() {
   return [
     { label: 'Purchase Index', value: index == null ? 0 : Math.min(100, Math.round((index / RING_INDEX_FULL) * 100)),
       display: index == null ? '—' : `${index.toFixed(1)}×`, color: '#7c6fe8',
-      hint: `Last 30 days: ₱${index == null ? '—' : index.toFixed(2)} of sales per ₱1 of purchases (invoiced ${peso(sales)} / billed ${peso(purchases)}, net of VAT)` },
+      hint: `This month to date: ₱${index == null ? '—' : index.toFixed(2)} of sales per ₱1 of purchases (invoiced ${peso(sales)} / billed ${peso(purchases)}, net of VAT)` },
     { label: 'Gross Profit', value: gp == null ? 0 : Math.max(0, Math.min(100, gp)), display: pct(gp), color: '#4f8cf7',
-      hint: `Last 30 days: revenue less cost of goods sold and cost of services, as a share of revenue (Income Statement)` },
+      hint: `This month to date: revenue less cost of goods sold and cost of services, as a share of revenue (Income Statement)` },
     { label: 'Collection Efficiency', value: collection == null ? 0 : Math.min(100, collection), display: pct(collection), color: '#22c39e',
-      hint: `Last 30 days: collected ${peso(collected)} of ${peso(dueAmt)} invoiced amount that fell due` },
+      hint: `This month to date: collected ${peso(collected)} of ${peso(dueAmt)} invoiced amount that fell due` },
   ];
 }
 
