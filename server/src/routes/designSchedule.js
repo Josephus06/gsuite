@@ -200,6 +200,9 @@ function phaseOf(r) {
 // A slot not yet approved whose order already has its artist, or its finished layout, from outside the
 // calendar. Approving the calendar must not assign it again -- that would reset the artist's work.
 const handledOutside = (s) => s.status !== 'Confirmed' && ['Assigned', 'Done'].includes(s.phase);
+// Rescheduled like an approved slot (2026-11-06): approved, or its order already assigned from outside
+// the calendar -- NSTDJO-15771 sat in a calendar still with Design and its time could not be changed.
+const approvedLike = (s) => s.status === 'Confirmed' || handledOutside(s);
 
 // CARRY-OVER. A slot whose layout is not finished by the end of its day shows at the top of the next
 // day -- today -- on the calendar, marked with the day it was meant for, and keeps rolling forward one
@@ -899,7 +902,7 @@ const sbuRecipients = (s) => [s.created_by_user_id, s.forwarded_by_user_id];
 // waits on the SBU, the SBU's on Design.
 router.post('/:id/reschedule', requireAuth, requirePermission(ROUTE, 'can_edit'), withSchedule(async ({ conn, schedule, side, req }) => {
   if (!side.sbu && !side.design) return [403, 'Only the SBU or a Design Supervisor can reschedule.'];
-  if (schedule.status !== 'Confirmed') return [409, `Only an approved slot is rescheduled -- this one is ${schedule.status}.`];
+  if (!approvedLike(schedule)) return [409, `Only an approved slot is rescheduled -- this one is ${schedule.status}.`];
   if (schedule.phase === 'Done') return [409, 'The layout is already finished.'];
   const slot = readSlot(req.body);
   if (slot.error) return [400, slot.error];
@@ -928,7 +931,7 @@ router.post('/:id/reschedule', requireAuth, requirePermission(ROUTE, 'can_edit')
 
 // The other side answers a proposal on an approved slot; the proposer may withdraw their own.
 function proposalGate(schedule, side, { proposer }) {
-  if (schedule.status !== 'Confirmed' || !schedule.proposed_by_side) return [409, 'There is no pending reschedule on this slot.'];
+  if (!approvedLike(schedule) || !schedule.proposed_by_side) return [409, 'There is no pending reschedule on this slot.'];
   if (side.both) return null;
   const mine = (schedule.proposed_by_side === 'DESIGN' && side.design) || (schedule.proposed_by_side === 'SBU' && side.sbu);
   if (proposer && !mine) return [403, 'Only the side that proposed the new time can withdraw it.'];

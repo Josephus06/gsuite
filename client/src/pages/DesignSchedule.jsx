@@ -55,10 +55,12 @@ const artistLabel = (a) => (a ? `${a.first_name} ${a.last_name}` : '');
 // Not yet approved, but its order already has its artist or finished layout from outside the calendar
 // (same rule as the server's handledOutside): approving the calendar leaves it as it is.
 const handledOutside = (s) => s.status !== 'Confirmed' && ['Assigned', 'Done'].includes(s.phase);
+// Rescheduled like an approved slot: approved, or its order assigned from outside the calendar.
+const approvedLike = (s) => s.status === 'Confirmed' || handledOutside(s);
 
 // A pending reschedule on an approved slot waits on the side that did not make it.
 function awaitingMe(s, side) {
-  if (s.status !== 'Confirmed' || !s.proposed_by_side) return false;
+  if (!approvedLike(s) || !s.proposed_by_side) return false;
   if (side.both) return true;
   return s.proposed_by_side === 'DESIGN' ? side.sbu : side.design;
 }
@@ -190,7 +192,7 @@ export default function DesignSchedule() {
   function canMove(e) {
     if (e.ghost || e.missed) return false;
     if (e.status === 'Draft') return side.sales;
-    return e.status === 'Confirmed' && e.phase !== 'Done' && (side.sbu || side.design);
+    return approvedLike(e) && e.phase !== 'Done' && (side.sbu || side.design);
   }
 
   function onDrop(ev, date) {
@@ -212,7 +214,7 @@ export default function DesignSchedule() {
   // A Design Supervisor clicking a slot that is waiting on them gets its whole calendar -- that is where
   // the job types, revisions and the Approve / Send back buttons are.
   function openSlot(e, back) {
-    if (side.design && e.status === 'For Approval' && e.batch_id) setModal({ kind: 'batch', id: e.batch_id });
+    if (side.design && e.status === 'For Approval' && e.batch_id && !handledOutside(e)) setModal({ kind: 'batch', id: e.batch_id });
     else setModal({ kind: 'detail', id: e.id, ...(back ? { back } : {}) });
   }
 
@@ -388,7 +390,8 @@ export default function DesignSchedule() {
           onOpenBatch={(batchId) => setModal({ kind: 'batch', id: batchId })} />
       )}
       {modal?.kind === 'batch' && (
-        <BatchModal id={modal.id} meta={meta} onClose={closeModal} onChanged={refresh} />
+        <BatchModal id={modal.id} meta={meta} onClose={closeModal} onChanged={refresh}
+          onOpenSlot={(slotId) => setModal({ kind: 'detail', id: slotId })} />
       )}
     </div>
   );
@@ -713,7 +716,7 @@ function SlotFields({ form, setForm }) {
 // Moving a slot: a plain edit while it is a draft (time, artist, delivery date), a reschedule proposal
 // once approved.
 function MoveModal({ schedule, date, side, artists, onClose, onSaved }) {
-  const confirmed = schedule.status === 'Confirmed';
+  const confirmed = approvedLike(schedule);
   const [form, setForm] = useState({
     date, start: hhmm(schedule.scheduled_start), end: hhmm(schedule.scheduled_end), note: '',
     delivery_date: schedule.delivery_date ? String(schedule.delivery_date).slice(0, 10) : '',
@@ -808,8 +811,8 @@ function DetailModal({ id, meta, onClose, onChanged, onMove, onOpenBatch }) {
     return <Modal title="Design Schedule" onClose={onClose}>{error ? <div className="error-banner">{error}</div> : <LoadingSpinner />}</Modal>;
   }
 
-  const movable = s.status === 'Confirmed' && s.phase !== 'Done';
-  const mineProposal = s.status === 'Confirmed' && s.proposed_by_side && !side.both
+  const movable = approvedLike(s) && s.phase !== 'Done';
+  const mineProposal = approvedLike(s) && s.proposed_by_side && !side.both
     && ((s.proposed_by_side === 'DESIGN' && side.design) || (s.proposed_by_side === 'SBU' && side.sbu));
 
   return (
@@ -899,7 +902,7 @@ function DetailModal({ id, meta, onClose, onChanged, onMove, onOpenBatch }) {
 
 // One forwarded calendar. Design sets each slot's Layout Job Type + Qty and may revise its time or
 // artist, then approves; with revisions it goes to the SBU, who approves them or returns the calendar.
-function BatchModal({ id, meta, onClose, onChanged }) {
+function BatchModal({ id, meta, onClose, onChanged, onOpenSlot }) {
   const { side } = meta;
   const [batch, setBatch] = useState(null);
   const [error, setError] = useState('');
@@ -1021,6 +1024,12 @@ function BatchModal({ id, meta, onClose, onChanged }) {
                       {s.proposal_note && <div style={{ opacity: 0.8 }}>{s.proposal_note}</div>}
                     </span>
                   ) : <span className="muted">--</span>}
+                  {/* Assigned from the order itself: its time is changed with Reschedule, from the slot. */}
+                  {handledOutside(s) && s.phase === 'Assigned' && onOpenSlot && (
+                    <div style={{ marginTop: 4 }}>
+                      <button type="button" className="btn btn-sm" onClick={() => onOpenSlot(s.id)}>Reschedule</button>
+                    </div>
+                  )}
                   {edit && (
                     <div style={{ marginTop: 4, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                       <button type="button" className="btn btn-sm" onClick={() => setRevising(s)}>Revise</button>
