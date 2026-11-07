@@ -100,11 +100,9 @@ async function sideOf(userId) {
   // "no flag" as no restriction at all.
   const sales = flagged || u?.account_type === 'Sales';
   const design = !!u?.is_design_supervisor || admin;
-  let scope = [];
-  // Every SBU has the same view: all sales groups' slots (asked 2026-11-03), not just their own tree.
-  if (admin || sbu) scope = null;
-  else if (flagged) scope = await getSalesRepEmployeeScope(userId, ROUTE);
-  else if (sales) scope = (await userCan(userId, ROUTE, 'can_view_all')) ? null : [u.employee_id].filter(Boolean);
+  // Every Sales account SEES every slot (asked 2026-11-07: "account officer can see all schedule"),
+  // so the calendar shows who is booked when; what they may change is editScope below.
+  const scope = admin || sales ? null : [];
   // What they may CHANGE is narrower than what they see (asked 2026-11-07: an Account Officer with
   // View All sees every schedule but must not edit other people's): View All never widens it. Admin
   // and SBU plan every slot; a Supervisor their people's; an Account Officer their own.
