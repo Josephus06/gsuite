@@ -6,6 +6,7 @@ const { DESIGN_QUEUE_STATUS } = require('../lib/designSupervisorVisibility');
 const { isPlannerUser } = require('../lib/plannerRoles');
 const { businessToday } = require('../lib/crmCadence');
 const { pendingBillingSummary } = require('./pendingBillingReport');
+const { buildReport: buildCollectionIncentive } = require('./collectionIncentive');
 const { buildIncomeStatement } = require('../lib/reportsEngine');
 // Shared with the Artist Incentive report and the Assigned JO list, so the calendar cannot
 // quote a different figure for the same job than the other two do.
@@ -922,7 +923,7 @@ async function generalManagerCards() {
   const today = businessToday();
   const monthStart = `${today.slice(0, 7)}-01`;
   // Pending Billing is the Sales > Pending Billing report's own figure, all offices and reps.
-  const [billing, [[sales]], [[tickets]], [[collection]]] = await Promise.all([
+  const [billing, [[sales]], [[tickets]], [[collection]], incentive] = await Promise.all([
     pendingBillingSummary(),
     pool.query(
       `SELECT COUNT(*) AS count, COALESCE(SUM(net_of_tax), 0) AS amount
@@ -941,13 +942,35 @@ async function generalManagerCards() {
           AND cp.customer_payment_no NOT LIKE 'CPAY-INV-%'
           AND (l.id IS NULL OR LOWER(TRIM(l.location_name)) LIKE 'head office%')`, [monthStart],
     ),
+    headOfficeIncentive(today.slice(0, 7)),
   ]);
   return {
     pendingBilling: { count: Number(billing.count), amount: Number(billing.amount) },
     weightedSales: { count: Number(sales.count), amount: Number(sales.amount) },
     pendingTicketApproval: Number(tickets.count),
-    headOfficeCollection: { count: Number(collection.count), amount: Number(collection.amount) },
+    headOfficeCollection: { count: Number(collection.count), amount: Number(collection.amount), incentive },
   };
+}
+
+// The Actual Collection card's breakdown (asked 2026-11-07): Treasury > Collection Incentive's own
+// monthly figures for Head Office -- each aging bucket's target % against its actual share of the
+// total, and the monthly target -- from that report's buildReport, so the card and the page can
+// never disagree. A failure leaves the card without the breakdown rather than breaking the dashboard.
+async function headOfficeIncentive(month) {
+  try {
+    const [[loc]] = await pool.query(
+      "SELECT id FROM locations WHERE LOWER(TRIM(location_name)) LIKE 'head office%' ORDER BY id LIMIT 1");
+    const r = await buildCollectionIncentive({ mode: 'monthly', month, ...(loc ? { location_id: loc.id } : {}) });
+    return {
+      month: r.month, collected: r.result.total_collected,
+      monthly_target: r.settings.monthly_target, pct_of_target: r.result.pct_of_target,
+      qualify_at: r.result.qualify_at, qualified: r.result.qualified,
+      lines: r.result.lines.map((l) => ({ key: l.key, label: l.label, target_pct: l.target_pct, actual_pct: l.actual_pct })),
+    };
+  } catch (e) {
+    console.error('dashboard: collection incentive breakdown failed:', e.message);
+    return null;
+  }
 }
 
 // The General Manager's calendar switch: one month of Weighted Sales (sales orders by date

@@ -147,7 +147,34 @@ function last6MonthLabels() {
 // animated count-up on mount/update; omit them and pass a pre-formatted `value` for the
 // old static behavior. `tone` picks one of the 4 solid-color card backgrounds (cycled
 // automatically by <StatRow> below) -- text/icon/sparkline all render in white on top.
-function StatCard({ label, value, numericValue, format, icon, tone = 'purple', trend, detail }) {
+// Under the Actual Collection card's headline (asked 2026-11-07): Treasury > Collection Incentive's
+// month for Head Office -- each aging bucket's target % against its actual share, and the monthly
+// target. Same numbers as that page, which the server takes from the report itself.
+const pct1 = (v) => `${(Number(v || 0) * 100).toFixed(1)}%`;
+function CollectionIncentiveBreakdown({ inc }) {
+  return (
+    <div className="holo-stat-breakdown">
+      <table>
+        <thead><tr><th>Aging</th><th>Target %</th><th>Actual %</th></tr></thead>
+        <tbody>
+          {inc.lines.map((l) => (
+            <tr key={l.key}>
+              <td>{l.label}</td>
+              <td>{pct1(l.target_pct)}</td>
+              <td className={l.actual_pct < l.target_pct ? 'under' : undefined}>{pct1(l.actual_pct)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <div className="holo-stat-breakdown-foot">
+        Monthly target <strong>₱{money(inc.monthly_target)}</strong> · {pct1(inc.pct_of_target)} reached
+        {inc.qualified ? ' · qualified' : ` · qualifies at ₱${money(inc.qualify_at)}`}
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ label, value, numericValue, format, icon, tone = 'purple', trend, detail, extra }) {
   const animated = useCountUp(numericValue ?? 0);
   const displayValue = numericValue !== undefined ? (format ? format(animated) : Math.round(animated)) : value;
   return (
@@ -162,6 +189,7 @@ function StatCard({ label, value, numericValue, format, icon, tone = 'purple', t
         </div>
         {icon && <div className="holo-stat-icon">{icon}</div>}
       </div>
+      {extra}
       {trend && <Sparkline data={trend} color="rgba(255,255,255,0.85)" id={label.replace(/\s+/g, '-')} />}
     </div>
   );
@@ -335,6 +363,8 @@ function AdminDashboard({ data, user, navigate }) {
           {
             label: 'Actual Collection Head Office', value: `₱${money(data.gmCards.headOfficeCollection.amount)}`, icon: '💰',
             detail: `${data.gmCards.headOfficeCollection.count.toLocaleString('en-US')} payments this month`,
+            extra: data.gmCards.headOfficeCollection.incentive
+              ? <CollectionIncentiveBreakdown inc={data.gmCards.headOfficeCollection.incentive} /> : null,
           },
         ]} />
       ) : (
