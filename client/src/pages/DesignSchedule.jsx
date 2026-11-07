@@ -191,7 +191,7 @@ export default function DesignSchedule() {
   // Which slots this user may drag to another day (the server checks whose they are).
   function canMove(e) {
     if (e.ghost || e.missed) return false;
-    if (e.status === 'Draft') return side.sales;
+    if (e.status === 'Draft') return side.sales && e.can_plan !== false;
     return approvedLike(e) && e.phase !== 'Done' && (side.sbu || side.design);
   }
 
@@ -861,8 +861,8 @@ function DetailModal({ id, meta, onClose, onChanged, onMove, onOpenBatch }) {
         </div>
       ) : (
         <div className="modal-actions" style={{ flexWrap: 'wrap' }}>
-          {side.sales && s.status === 'Draft' && <button type="button" className="btn" onClick={() => onMove(s)}>Edit</button>}
-          {s.status !== 'Cancelled' && !['Assigned', 'Done'].includes(s.phase) && (s.status === 'Draft' ? side.sales : side.sbu) && (
+          {side.sales && s.can_plan !== false && s.status === 'Draft' && <button type="button" className="btn" onClick={() => onMove(s)}>Edit</button>}
+          {s.status !== 'Cancelled' && !['Assigned', 'Done'].includes(s.phase) && (s.status === 'Draft' ? side.sales && s.can_plan !== false : side.sbu) && (
             <button type="button" className="btn btn-danger" disabled={busy} onClick={() => window.confirm('Take this slot off the calendar?') && act('cancel')}>Cancel slot</button>
           )}
           {s.batch_id && s.status === 'For Approval' && (

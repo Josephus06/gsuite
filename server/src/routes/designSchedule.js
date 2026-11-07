@@ -105,8 +105,16 @@ async function sideOf(userId) {
   if (admin || sbu) scope = null;
   else if (flagged) scope = await getSalesRepEmployeeScope(userId, ROUTE);
   else if (sales) scope = (await userCan(userId, ROUTE, 'can_view_all')) ? null : [u.employee_id].filter(Boolean);
+  // What they may CHANGE is narrower than what they see (asked 2026-11-07: an Account Officer with
+  // View All sees every schedule but must not edit other people's): View All never widens it. Admin
+  // and SBU plan every slot; a Supervisor their people's; an Account Officer their own.
+  let editScope = null;
+  if (!admin && !sbu) {
+    editScope = flagged ? await getSalesRepEmployeeScope(userId) : null;
+    if (!editScope) editScope = [u?.employee_id].filter(Boolean);
+  }
   return {
-    userId: Number(userId), admin, sales, sbu, design, both: sbu && design, scope,
+    userId: Number(userId), admin, sales, sbu, design, both: sbu && design, scope, editScope,
     artistEmployeeId: !sales && !design && u?.account_type === 'Artist' ? u.employee_id : null,
   };
 }
@@ -114,10 +122,12 @@ async function sideOf(userId) {
 // May this user plan this slot / order? Their own slot, or an order whose sales rep is in their scope.
 function covers(side, repId, createdBy = null) {
   if (!side.sales) return false;
-  if (side.scope === null) return true;
+  if (side.editScope === null) return true;
   if (createdBy && Number(createdBy) === side.userId) return true;
-  return !!repId && side.scope.map(Number).includes(Number(repId));
+  return !!repId && side.editScope.map(Number).includes(Number(repId));
 }
+// Each slot says whether this user may plan it, so the page offers Edit / Cancel / drag only on those.
+const withCanPlan = (side, row) => ({ ...row, can_plan: covers(side, row.sales_rep_id, row.created_by_user_id) });
 
 // Delivery Date: optional, a plain YYYY-MM-DD.
 function readDeliveryDate(body) {
@@ -483,7 +493,7 @@ router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
         `SELECT COUNT(*) AS n FROM (${BASE_SELECT} WHERE ds.status = 'Draft' AND ${vis.sql}) x`, vis.params);
       unsent = Number(r.n);
     }
-    const { scope, ...sideOut } = side;
+    const { scope, editScope, ...sideOut } = side;
     res.json({ side: sideOut, artists, pmsJobTypes, today: manilaToday(), unsent });
   } catch (err) { next(err); }
 });
@@ -511,7 +521,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       params.push(req.query.artist_id);
     }
     const [rows] = await pool.query(`${BASE_SELECT} WHERE ${conditions.join(' AND ')} ORDER BY ds.scheduled_start, ds.created_at, ds.id`, params);
-    res.json(rows.map((r) => decorate(r, today)));
+    res.json(rows.map((r) => withCanPlan(side, decorate(r, today))));
   } catch (err) { next(err); }
 });
 
@@ -546,8 +556,8 @@ router.get('/eligible', requireAuth, requirePermission(ROUTE, 'can_add'), async 
   try {
     const side = await sideOf(req.user.id);
     if (!side.sales) return res.json([]);
-    const scopeSql = (col) => (side.scope === null ? '' : `AND ${col} IN (?)`);
-    const scopeParams = side.scope === null ? [] : [side.scope.length ? side.scope : [0]];
+    const scopeSql = (col) => (side.editScope === null ? '' : `AND ${col} IN (?)`);
+    const scopeParams = side.editScope === null ? [] : [side.editScope.length ? side.editScope : [0]];
     const notScheduled = (type, col) => `NOT EXISTS (SELECT 1 FROM design_schedules ds
       WHERE ds.order_type = '${type}' AND ds.order_id = ${col} AND ds.status <> 'Cancelled')`;
     if (req.query.type === 'NSTDJO') {
@@ -588,7 +598,7 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
          FROM audit_logs a LEFT JOIN users u ON u.id = a.set_by_user_id
         WHERE a.auditable_type = 'DesignSchedule' AND a.auditable_id = ? ORDER BY a.id DESC`, [req.params.id],
     );
-    res.json({ ...decorate(row), history });
+    res.json({ ...withCanPlan(side, decorate(row)), history });
   } catch (err) { next(err); }
 });
 
