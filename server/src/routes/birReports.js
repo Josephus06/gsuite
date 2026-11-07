@@ -68,7 +68,7 @@ const today = () => new Date().toISOString().slice(0, 10);
 router.get('/sales', requireAuth, requirePermission(SALES_ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const { search, customer_id: customerId, location_id: locationId, status } = req.query;
-    const where = ['(drp.dr_amount IS NULL OR cp.payment_amount - drp.dr_amount > 0.005)'];
+    const where = ['bp.bir_amount > 0.005'];
     const params = [];
 
     if (customerId) { where.push('cp.customer_id = ?'); params.push(customerId); }
@@ -82,27 +82,48 @@ router.get('/sales', requireAuth, requirePermission(SALES_ROUTE, 'can_view'), as
     const st = statusClause(status);
     const dt = dateClause(req.query, 'cp.date_created');
     const whereSql = `WHERE ${where.join(' AND ')}${st.sql}${dt.sql}`;
-    const whereParams = [...params, ...st.params, ...dt.params];
+    // The same date window inside the join, so only the period's payments' invoices are weighed
+    // (all ~120k invoice lines took 2.5s a page). A derived list of invoice ids, not IN (...): MySQL
+    // ran the IN form slower still (7s); the derived one is ~15ms.
+    const inner = dateClause(req.query, 'cp2.date_created');
+    const whereParams = [...inner.params, ...inner.params, ...params, ...st.params, ...dt.params];
 
-    // Delivery Receipts are not BIR sales invoices. This report lists payments, so the part of a
-    // payment applied to DR invoices comes off its amount, and a payment applied wholly to DRs
-    // is not listed. An unapplied balance stays -- nothing yet says it is for a DR.
+    // ONLY VAT 12% AND ZERO-RATED SALES (asked 2026-11-07). The tax code is on the invoice LINES
+    // (VAT_PH:VATIN-12, VAT_PH:ZRATE, VAT_PH:0-VAT, VAT_PH:EXEMPT -- customers carry none), so a
+    // payment counts for what it applied to invoices, each invoice weighted by the share of its
+    // lines' gross that is VAT12 / ZRATE: an all-VAT12 invoice counts in full, an all-EXEMPT or 0-VAT
+    // one not at all. An unapplied balance (an advance) has no tax code and is not listed, nor is a
+    // payment none of whose applications qualify. Delivery Receipts are not BIR sales invoices: the
+    // part applied to DR invoices is left out, as before.
+    const QUALIFIES = "(sil.tax_code LIKE '%ZRATE%' OR sil.tax_code LIKE '%12%')";
     const baseFrom = `FROM customer_payments cp
        JOIN customers c ON c.id = cp.customer_id
-       LEFT JOIN (SELECT cpl.customer_payment_id, SUM(cpl.applied_amount) AS dr_amount
-                    FROM customer_payment_lines cpl
-                    JOIN sales_invoices si ON si.id = cpl.sales_invoice_id
-                   WHERE si.invoice_type = 'DR'
-                   GROUP BY cpl.customer_payment_id) drp ON drp.customer_payment_id = cp.id
+       JOIN (SELECT cpl.customer_payment_id, SUM(cpl.applied_amount * sh.share) AS bir_amount,
+                    MAX(sh.has_vat12) AS has_vat12, MAX(sh.has_zrate) AS has_zrate
+               FROM customer_payment_lines cpl
+               JOIN customer_payments cp2 ON cp2.id = cpl.customer_payment_id${inner.sql}
+               JOIN sales_invoices si ON si.id = cpl.sales_invoice_id AND COALESCE(si.invoice_type, '') <> 'DR'
+               JOIN (SELECT sil.sales_invoice_id,
+                            SUM(IF(${QUALIFIES}, COALESCE(sil.gross_amount, sil.net_of_tax + sil.tax_amount, 0), 0))
+                              / NULLIF(SUM(COALESCE(sil.gross_amount, sil.net_of_tax + sil.tax_amount, 0)), 0) AS share,
+                            MAX(sil.tax_code LIKE '%12%' AND sil.tax_code NOT LIKE '%ZRATE%') AS has_vat12,
+                            MAX(sil.tax_code LIKE '%ZRATE%') AS has_zrate
+                       FROM (SELECT DISTINCT cpl2.sales_invoice_id FROM customer_payment_lines cpl2
+                               JOIN customer_payments cp2 ON cp2.id = cpl2.customer_payment_id WHERE 1 = 1${inner.sql}) ids
+                       JOIN sales_invoice_lines sil ON sil.sales_invoice_id = ids.sales_invoice_id
+                      GROUP BY sil.sales_invoice_id) sh
+                 ON sh.sales_invoice_id = si.id AND sh.share > 0
+              GROUP BY cpl.customer_payment_id) bp ON bp.customer_payment_id = cp.id
        LEFT JOIN locations loc ON loc.id = cp.office_location_id
        LEFT JOIN taxes t ON t.id = c.tax_id
        LEFT JOIN customer_addresses ca
               ON ca.customer_id = c.id AND ca.address_type = 'Billing'`;
 
     const select = `SELECT cp.id, cp.customer_payment_no, cp.date_created, cp.or_no,
-              cp.payment_amount - COALESCE(drp.dr_amount, 0) AS total_amount, cp.status, cp.voided_at,
+              ROUND(bp.bir_amount, 2) AS total_amount, cp.status, cp.voided_at,
               c.id AS customer_id, c.name AS customer_name, c.tin AS customer_tin,
-              t.code AS customer_tax_code,
+              -- What the listed amount is: the invoices' own codes (the customer's, if one is ever set).
+              COALESCE(t.code, CONCAT_WS(', ', IF(bp.has_vat12, 'VAT12', NULL), IF(bp.has_zrate, 'ZRATE', NULL))) AS customer_tax_code,
               COALESCE(NULLIF(c.address, ''), ca.address_line) AS customer_address,
               loc.location_name`;
 
@@ -143,8 +164,14 @@ router.get('/sales', requireAuth, requirePermission(SALES_ROUTE, 'can_view'), as
 router.get('/purchase', requireAuth, requirePermission(PURCHASE_ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const { search, supplier_id: supplierId } = req.query;
-    const where = ['1 = 1'];
+    // VAT12 and 0-VAT purchases WITH THE SUPPLIER'S TIN only (asked 2026-11-07): a purchase the BIR
+    // cannot match to a TIN is not claimable, so a bill whose supplier has none -- or a placeholder of
+    // zeros and dashes -- is left out. Bills carry no line tax codes, only their tax, so a bill with
+    // VAT is VAT12 and one without is 0-VAT (the Tax Code column says which).
+    const where = [`REPLACE(REPLACE(REPLACE(TRIM(COALESCE(s.tin, '')), '-', ''), ' ', ''), '0', '') <> ''`];
     const params = [];
+    if (req.query.vat === 'VAT12') where.push('vb.tax_amount > 0.005');
+    if (req.query.vat === '0-VAT') where.push('COALESCE(vb.tax_amount, 0) <= 0.005');
 
     if (supplierId) { where.push('COALESCE(po.supplier_id, vb.supplier_id) = ?'); params.push(supplierId); }
     if (search) {
@@ -164,6 +191,7 @@ router.get('/purchase', requireAuth, requirePermission(PURCHASE_ROUTE, 'can_view
     const select = `SELECT vb.id, vb.bill_no, po.po_no AS created_from, vb.reference_no,
               vb.date_created, s.id AS supplier_id, s.name AS supplier_name,
               vb.net_of_tax, vb.tax_amount, vb.gross_amount AS total_amount,
+              IF(vb.tax_amount > 0.005, 'VAT12', '0-VAT') AS tax_code,
               vb.wtax_amount,
               -- Net Amount is COMPUTED, not read from vendor_bills.amount_due. That column does hold
               -- gross minus withholding for bills raised here, but it is 0 on the 18,762 imported
@@ -177,11 +205,11 @@ router.get('/purchase', requireAuth, requirePermission(PURCHASE_ROUTE, 'can_view
         `${select} ${baseFrom} ${whereSql} ORDER BY vb.date_created DESC, vb.id DESC`, whereParams,
       );
       const csv = csvBody(
-        ['Vendor Bill No', 'Created From', 'Reference No', 'Date Created', 'Vendor', 'Net of Tax',
+        ['Vendor Bill No', 'Created From', 'Reference No', 'Date Created', 'Vendor', 'Tax Code', 'Net of Tax',
           'Tax Amount', 'Total Amount', 'Withholding Tax Amount', 'Net Amount', 'Supplier TIN',
           'Supplier Address'],
         rows,
-        (r) => [r.bill_no, r.created_from, r.reference_no, r.date_created, r.supplier_name,
+        (r) => [r.bill_no, r.created_from, r.reference_no, r.date_created, r.supplier_name, r.tax_code,
           r.net_of_tax, r.tax_amount, r.total_amount, r.wtax_amount, r.net_amount,
           r.supplier_tin, r.supplier_address],
       );
@@ -739,6 +767,104 @@ router.put('/2307/payor', requireAuth, requirePermission(ISSUE_ROUTE, 'can_edit'
       }
     }
     return res.json(await loadPayor());
+  } catch (err) { return fail(res, next, err); }
+});
+
+/* ========================================================================================== */
+/* Income Tax Return -- BIR Form 1702Q (asked 2026-11-07). The quarterly corporate income tax  */
+/* return, computed CUMULATIVELY from January 1 to the quarter's end, as the form is:          */
+/*   Sales / revenues (REVENUES) less cost of sales and services = gross income from operation */
+/*   + other taxable income (OTHER INCOME)                       = total gross income          */
+/*   less deductions (every other expense section, provision for income tax left out)          */
+/*   = taxable income to date; tax due = the higher of RCIT 25% and MCIT 2% of gross income    */
+/*   less credits: tax paid in prior quarters, CWT (2307s from customers), prior-year excess.  */
+/* Everything comes from the Income Statement (lib/reportsEngine.js) so the two cannot disagree. */
+/* The credits are defaults the page lets Accounting replace with what was actually filed/paid. */
+/* Due 60 days after the quarter; Q4 is the annual 1702-RT instead (April 15).                 */
+/* ========================================================================================== */
+const ITR_ROUTE = '/reports/bir-itr';
+const RCIT_RATE = 0.25;
+const MCIT_RATE = 0.02; // 2% again from July 1, 2023 (CREATE's 1% ran July 2020 - June 2023)
+const { buildIncomeStatement } = require('../lib/reportsEngine');
+const daysBetween = (a, b) => Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / 86400000);
+
+const sumSections = (sections, pick) => sections.filter((s) => pick(s.sub_type)).reduce((t, s) => t + Number(s.subtotals[0] || 0), 0);
+// Income tax expense is not a deduction: find those accounts (by name) in the expense tree, the
+// highest match only so a parent and its child are not both taken.
+function incomeTaxAccounts(sections) {
+  const out = [];
+  const walk = (a) => {
+    if (/income\s*tax/i.test(a.account_name || '') && !/withh/i.test(a.account_name || '')) { out.push({ code: a.account_code, name: a.account_name, amount: r2(a.amounts[0]) }); return; }
+    (a.children || []).forEach(walk);
+  };
+  sections.forEach((s) => s.accounts.forEach(walk));
+  return out;
+}
+const COST_SECTIONS = ['COST OF GOOD SOLDS', 'COST OF SERVICES'];
+
+// One cumulative computation, Jan 1 .. `to`.
+async function itrFigures(year, to) {
+  const is = await buildIncomeStatement(to, `${year}-01-01`);
+  const sales = r2(sumSections(is.revenue_sections, (t) => t === 'REVENUES'));
+  const otherIncome = r2(sumSections(is.revenue_sections, (t) => t !== 'REVENUES'));
+  const cost = r2(sumSections(is.expense_sections, (t) => COST_SECTIONS.includes(t)));
+  const taxAccounts = incomeTaxAccounts(is.expense_sections.filter((s) => !COST_SECTIONS.includes(s.sub_type)));
+  const deductionSections = is.expense_sections.filter((s) => !COST_SECTIONS.includes(s.sub_type))
+    .map((s) => ({ label: s.sub_type, amount: r2(s.subtotals[0]) }));
+  const excluded = r2(taxAccounts.reduce((t, a) => t + a.amount, 0));
+  const deductions = r2(deductionSections.reduce((t, s) => t + s.amount, 0) - excluded);
+  const grossFromOperation = r2(sales - cost);
+  const grossIncome = r2(grossFromOperation + otherIncome);
+  const taxable = r2(grossIncome - deductions);
+  const rcit = r2(Math.max(0, taxable) * RCIT_RATE);
+  const mcit = r2(Math.max(0, grossIncome) * MCIT_RATE);
+  const [[cwt]] = await pool.query(
+    `SELECT COUNT(*) AS n, COALESCE(SUM(ewt_amount), 0) AS amount FROM sales_invoices
+      WHERE status <> 'cancelled' AND ewt_amount > 0 AND date_created BETWEEN ? AND ?`, [`${year}-01-01`, to]);
+  return {
+    to, sales, cost, gross_from_operation: grossFromOperation, other_income: otherIncome, gross_income: grossIncome,
+    deduction_sections: deductionSections, income_tax_excluded: taxAccounts, deductions, taxable_income: taxable,
+    rcit, mcit, tax_due: Math.max(rcit, mcit), mcit_applies: mcit > rcit,
+    cwt: { count: Number(cwt.n), amount: r2(cwt.amount) },
+  };
+}
+
+router.get('/itr', requireAuth, requirePermission(ITR_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    // Default: the last quarter that has ended, as the 2307 page does.
+    const q = quarterOf(req);
+    const year = Number(q.quarter.slice(0, 4)); const n = Number(q.quarter.slice(-1));
+    const prevTo = n > 1 ? monthRange(`${year}-${String((n - 1) * 3).padStart(2, '0')}`).to : null;
+    const [now, prev] = await Promise.all([itrFigures(year, q.to), prevTo ? itrFigures(year, prevTo) : null]);
+    const zero = { sales: 0, cost: 0, gross_from_operation: 0, other_income: 0, gross_income: 0, deductions: 0, taxable_income: 0, tax_due: 0, cwt: { count: 0, amount: 0 } };
+    const p = prev || zero;
+    const qtr = (k) => r2(now[k] - p[k]);
+    // 60 days after the quarter's end; the 4th quarter goes on the annual return.
+    const due = n < 4
+      ? new Date(Date.parse(`${q.to}T00:00:00Z`) + 60 * 86400000).toISOString().slice(0, 10)
+      : `${year + 1}-04-15`;
+    return res.json({
+      quarter: q.quarter, label: q.label, year, n, from: `${year}-01-01`, to: q.to,
+      rates: { rcit: RCIT_RATE, mcit: MCIT_RATE },
+      deadline: (() => {
+        const left = daysBetween(manilaToday(), due);
+        // The shape the pages' DeadlineBanner reads (lib/birDeadlines.js deadlineInfo).
+        return { due, due_date: due, form: n < 4 ? '1702Q' : '1702-RT (annual)', days_left: left, state: left < 0 ? 'overdue' : left <= 7 ? 'due' : 'upcoming' };
+      })(),
+      ytd: now, prior: prev,
+      this_quarter: {
+        sales: qtr('sales'), cost: qtr('cost'), gross_from_operation: qtr('gross_from_operation'), other_income: qtr('other_income'),
+        gross_income: qtr('gross_income'), deductions: qtr('deductions'), taxable_income: qtr('taxable_income'),
+        cwt: r2(now.cwt.amount - p.cwt.amount),
+      },
+      // Defaults for the credits; the page lets Accounting replace each with the filed figure.
+      credits: {
+        prior_year_excess: 0,
+        prior_quarter_payments: r2(p.tax_due),
+        cwt_prior_quarters: r2(p.cwt.amount),
+        cwt_this_quarter: r2(now.cwt.amount - p.cwt.amount),
+      },
+    });
   } catch (err) { return fail(res, next, err); }
 });
 

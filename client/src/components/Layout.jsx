@@ -330,6 +330,8 @@ const NAV_STRUCTURE = [
       // The payor's side (2026-11-05): the 2307 we issue each supplier we withheld from, per quarter.
       { route: '/reports/bir-2307', label: 'BIR 2307 to Suppliers' },
       { route: '/reports/bir-vat', label: 'VAT Computation' },
+      // Quarterly corporate income tax return (2026-11-07), from the Income Statement.
+      { route: '/reports/bir-itr', label: 'Income Tax Return (1702Q)' },
     ],
   },
   {

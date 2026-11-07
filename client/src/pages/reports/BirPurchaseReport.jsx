@@ -7,7 +7,7 @@ import EntityPicker from '../../components/EntityPicker';
 import SearchInput from '../../components/SearchInput';
 
 const PAGE_SIZE = 25;
-const NO_FILTERS = { search: '', supplierId: '', dateFilter: 'period from', from: '', to: '' };
+const NO_FILTERS = { search: '', supplierId: '', vat: '', dateFilter: 'period from', from: '', to: '' };
 
 function money(v) {
   const n = Number(v);
@@ -19,6 +19,7 @@ const day = (v) => (v ? String(v).slice(0, 10) : '');
 // BIR Reports > Purchase Report -- one row per vendor bill, carrying the VAT split the filing
 // needs. The live page offers only Supplier and a date range; there is no status or location
 // filter there, and adding one here would make the two disagree about what a period contains.
+// Only VAT12 and 0-VAT bills of suppliers with a TIN (2026-11-07) -- the server leaves the rest out.
 export default function BirPurchaseReport() {
   const [rows, setRows] = useState([]);
   const [total, setTotal] = useState(0);
@@ -42,6 +43,7 @@ export default function BirPurchaseReport() {
     return {
       search: f.search || undefined,
       supplier_id: f.supplierId || undefined,
+      vat: f.vat || undefined,
       date_filter: f.dateFilter || undefined,
       from: f.from || undefined,
       to: f.to || undefined,
@@ -126,6 +128,14 @@ export default function BirPurchaseReport() {
             />
           </div>
           <div className="field">
+            <label>Tax Code</label>
+            <select value={form.vat} onChange={(e) => setField('vat', e.target.value)}>
+              <option value="">VAT12 and 0-VAT</option>
+              <option value="VAT12">VAT12</option>
+              <option value="0-VAT">0-VAT</option>
+            </select>
+          </div>
+          <div className="field">
             <label>Date Created</label>
             <select value={form.dateFilter} onChange={(e) => setField('dateFilter', e.target.value)}>
               <option value="as of">As of</option>
@@ -146,6 +156,9 @@ export default function BirPurchaseReport() {
             <button className="btn btn-primary" onClick={search}>Search</button>
           </div>
         </div>
+        <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+          VAT12 and 0-VAT purchases from suppliers with a TIN only. A supplier with no TIN is left out -- add it on the supplier to include their bills.
+        </div>
       </div>
 
       <div className="card">
@@ -160,6 +173,7 @@ export default function BirPurchaseReport() {
                     <th>Reference No</th>
                     <th>Date Created</th>
                     <th>Vendor</th>
+                    <th>Tax Code</th>
                     <th className="text-right">Net of Tax</th>
                     <th className="text-right">Tax Amount</th>
                     <th className="text-right">Total Amount</th>
@@ -172,7 +186,7 @@ export default function BirPurchaseReport() {
                 <tbody>
                   {rows.length === 0 && (
                     <tr>
-                      <td colSpan={12} className="muted" style={{ textAlign: 'center', padding: 20 }}>
+                      <td colSpan={13} className="muted" style={{ textAlign: 'center', padding: 20 }}>
                         No vendor bills match this filter.
                       </td>
                     </tr>
@@ -184,6 +198,7 @@ export default function BirPurchaseReport() {
                       <td>{r.reference_no}</td>
                       <td>{day(r.date_created)}</td>
                       <td><SupplierLink id={r.supplier_id} name={r.supplier_name} /></td>
+                      <td>{r.tax_code}</td>
                       <td className="text-right">{money(r.net_of_tax)}</td>
                       <td className="text-right">{money(r.tax_amount)}</td>
                       <td className="text-right">{money(r.total_amount)}</td>

@@ -190,6 +190,11 @@ export default function BirSalesReport() {
             <button className="btn btn-primary" onClick={search}>Search</button>
           </div>
         </div>
+        {/* 2026-11-07: the server lists only VAT12 / zero-rated receipts (routes/birReports.js /sales). */}
+        <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+          VAT12 and zero-rated (ZRATE) sales only: each payment at the part applied to VAT12 / ZRATE invoices.
+          0-VAT, VAT-exempt, Delivery Receipts and unapplied balances are left out.
+        </div>
       </div>
 
       <div className="card">

@@ -191,6 +191,7 @@ import BirPurchaseReport from './pages/reports/BirPurchaseReport';
 import BirEwtReport from './pages/reports/BirEwtReport';
 import BirCwtReport from './pages/reports/BirCwtReport';
 import BirVatReport from './pages/reports/BirVatReport';
+import BirItrReport from './pages/reports/BirItrReport';
 import BirSupplier2307 from './pages/reports/BirSupplier2307';
 import Bir2307Print from './pages/reports/Bir2307Print';
 import CollectionForecast from './pages/treasury/CollectionForecast';
@@ -555,6 +556,7 @@ function App() {
         <Route path="/reports/bir-cwt" element={<BirCwtReport />} />
         <Route path="/reports/bir-2307" element={<BirSupplier2307 />} />
         <Route path="/reports/bir-vat" element={<BirVatReport />} />
+        <Route path="/reports/bir-itr" element={<BirItrReport />} />
         {/* Treasury -- when the money is expected in. */}
         <Route path="/treasury/collection-forecast" element={<CollectionForecast />} />
         <Route path="/treasury/collection-aging" element={<CollectionAgingReport />} />
