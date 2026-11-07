@@ -869,3 +869,6 @@ router.get('/itr', requireAuth, requirePermission(ITR_ROUTE, 'can_view'), async 
 });
 
 module.exports = router;
+// Shared with routes/birTaxReturn.js (the Tax Return page), so its alphalists and VAT lines are the
+// same documents, classified the same way, as these reports.
+module.exports.helpers = { withheldDocs, atcOptions, VAT_CLASS, RETURN_LINE, r2 };

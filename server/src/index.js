@@ -402,6 +402,8 @@ app.use('/api/budgets', budgetRoutes);
 // BIR Reports > Sales Report / Purchase Report -- mounted under its own prefix so each page
 // keeps its own permission row rather than borrowing the Accounting reports'.
 app.use('/api/reports/bir', birReportRoutes);
+// BIR Reports > Tax Return (2026-11-07): 2550Q, SAWT & QAP, tax by account, generic tax report.
+app.use('/api/reports/bir-tax-return', require('./routes/birTaxReturn'));
 // Treasury > Collection Forecast -- when Treasury expects to collect each open invoice.
 app.use('/api/collection-forecast', collectionForecastRoutes);
 app.use('/api/manager', managerDashboardRoutes);

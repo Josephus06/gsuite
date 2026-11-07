@@ -332,6 +332,8 @@ const NAV_STRUCTURE = [
       { route: '/reports/bir-vat', label: 'VAT Computation' },
       // Quarterly corporate income tax return (2026-11-07), from the Income Statement.
       { route: '/reports/bir-itr', label: 'Income Tax Return (1702Q)' },
+      // Tax Return (2026-11-07), after Odoo's: 2550Q, SAWT & QAP, tax by account, generic -- one page, a Report switcher.
+      { route: '/reports/bir-tax-return', label: 'Tax Return' },
     ],
   },
   {

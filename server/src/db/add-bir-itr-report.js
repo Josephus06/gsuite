@@ -1,7 +1,9 @@
 // BIR Reports > Income Tax Return (asked 2026-11-07): the quarterly corporate income tax return,
 // BIR Form 1702Q, computed from the Income Statement (routes/birReports.js GET /itr).
 //
-//   /reports/bir-itr  "Income Tax Return (1702Q)"
+//   /reports/bir-itr         "Income Tax Return (1702Q)"
+//   /reports/bir-tax-return  "Tax Return" (added the same day, after Odoo's Tax Return page: 2550Q, SAWT & QAP,
+//                            tax by account, generic tax report -- routes/birTaxReturn.js)
 //
 // System Admins get View and Print; so does everyone who can already view VAT Computation -- the
 // people preparing the VAT return prepare this one too. Grant others from Users & Permissions.
@@ -13,8 +15,7 @@ require('dotenv').config();
 const pool = require('../db');
 
 const DRY = process.argv.includes('--dry-run');
-const ROUTE = '/reports/bir-itr';
-const NAME = 'Income Tax Return (1702Q)';
+const PAGES = [['/reports/bir-itr', 'Income Tax Return (1702Q)'], ['/reports/bir-tax-return', 'Tax Return']];
 
 (async () => {
   console.log(`Database: ${process.env.DB_NAME} on ${process.env.DB_HOST}${DRY ? ' -- DRY RUN' : ''}\n`);
@@ -23,6 +24,7 @@ const NAME = 'Income Tax Return (1702Q)';
   const [permCols] = await pool.query('SHOW COLUMNS FROM user_page_permissions');
   const hasPrint = permCols.some((c) => c.Field === 'can_print');
 
+  for (const [ROUTE, NAME] of PAGES) {
   let [[page]] = await pool.query('SELECT id FROM pages WHERE route = ?', [ROUTE]);
   if (page) console.log(`= ${ROUTE} already registered (id ${page.id})`);
   else if (DRY) console.log(`~ would register ${ROUTE} "${NAME}"`);
@@ -51,6 +53,7 @@ const NAME = 'Income Tax Return (1702Q)';
     }
     console.log(`  + ${u.display_name}`);
   }
-  console.log(`\n${users.length} user(s) can view and print the Income Tax Return.`);
+  console.log(`${users.length} user(s) can view and print ${NAME}.\n`);
+  }
   await pool.end();
 })().catch(async (e) => { console.error('Failed:', e.message); await pool.end(); process.exit(1); });
