@@ -1800,10 +1800,13 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 /* The Collection Incentive split under the Actual Collection card (Dashboard.jsx). */
 .holo-stat-breakdown { margin-top: 10px; font-size: 11px; color: rgba(255, 255, 255, 0.9); }
 .holo-stat-breakdown table { width: 100%; border-collapse: collapse; }
-.holo-stat-breakdown th { font-weight: 600; text-align: right; padding: 2px 0; color: rgba(255, 255, 255, 0.75); border-bottom: 1px solid rgba(255, 255, 255, 0.3); }
-.holo-stat-breakdown td { text-align: right; padding: 2px 0; font-variant-numeric: tabular-nums; }
+/* background/colour set explicitly (and !important) because the app's table styles paint th/td
+   white in day mode, which hid the white header text on the green card. */
+.holo-stat-breakdown th, .holo-stat-breakdown td { background: transparent !important; }
+.holo-stat-breakdown th { font-weight: 600; text-align: right; padding: 2px 0; color: rgba(255, 255, 255, 0.85) !important; border-bottom: 1px solid rgba(255, 255, 255, 0.3); text-transform: none; letter-spacing: 0; }
+.holo-stat-breakdown td { text-align: right; padding: 2px 0; font-variant-numeric: tabular-nums; color: rgba(255, 255, 255, 0.92) !important; }
 .holo-stat-breakdown th:first-child, .holo-stat-breakdown td:first-child { text-align: left; }
-.holo-stat-breakdown td.under { font-weight: 700; color: #fff; }
+.holo-stat-breakdown td.under { font-weight: 700; color: #fff !important; }
 .holo-stat-breakdown td.under::before { content: '▼ '; font-size: 9px; opacity: 0.8; }
 .holo-stat-breakdown-foot { margin-top: 6px; font-weight: 600; color: rgba(255, 255, 255, 0.85); }
 .holo-stat-delta { font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
