@@ -239,8 +239,12 @@ export default function PurchaseOrderView() {
   // Receiving and billing are other people's jobs (warehouse, accounting): either right on the PO,
   // or the document's own Add right (Receiving Reports / Vendor Bills), opens them. PO Edit alone
   // hid Bill from accounting staff granted Vendor Bills but not Purchase Orders.
-  const canReceive = canEdit || can('/receiving-reports', 'can_add');
-  const canBill = canEdit || can('/vendor-bills', 'can_add');
+  // NOT gated on this PO's period (asked 2026-11-07): a Receiving Report or Vendor Bill is a document
+  // of its own, dated the day it is made, so a PO from a closed month can still be received and
+  // billed today. The server checks the period against the RR's / bill's own date, never the PO's.
+  const poEditRight = can('/purchase-orders', 'can_edit');
+  const canReceive = poEditRight || can('/receiving-reports', 'can_add');
+  const canBill = poEditRight || can('/vendor-bills', 'can_add');
   // A Landed Cost PO (PO2) is received too, as in the source (922 of its receipts imported): that is
   // what makes it billable. Its charges land no stock (server: isNonStockItem).
   const showReceive = canReceive && isApprovedPo(po.status)
@@ -279,6 +283,7 @@ export default function PurchaseOrderView() {
       {periodLocked && (
         <div className="warning-banner" style={{ marginBottom: 12 }}>
           The accounting period for this transaction is closed ({periodLocked}), so it can no longer be edited, voided or cancelled.
+          It can still be received and billed: the Receiving Report and Vendor Bill are dated the day they are made.
         </div>
       )}
 
