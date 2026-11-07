@@ -86,6 +86,7 @@ const performanceRoutes = require('./routes/performance');
 const hrIncidentReportRoutes = require('./routes/hrIncidentReports');
 const hrCoeRoutes = require('./routes/hrCoe');
 const hrMemoRoutes = require('./routes/hrMemos');
+const { makeRouter: hrPersonnelLetterRouter } = require('./routes/hrPersonnelLetters');
 const hrDaReportRoutes = require('./routes/hrDaReports');
 const formRoutes = require('./routes/forms');
 const bankReconciliationRoutes = require('./routes/bankReconciliation');
@@ -421,6 +422,9 @@ app.use('/api/performance', performanceRoutes);
 app.use('/api/hr-incident-reports', hrIncidentReportRoutes);
 app.use('/api/hr-coe', hrCoeRoutes);
 app.use('/api/hr-memos', hrMemoRoutes);
+// HRD > Regularization / Salary Adjustment letters (2026-11-07): one table, one router each.
+app.use('/api/hr-regularization', hrPersonnelLetterRouter('regularization'));
+app.use('/api/hr-salary-adjustment', hrPersonnelLetterRouter('salary_adjustment'));
 app.use('/api/hr-da-reports', hrDaReportRoutes);
 app.use('/api/forms', formRoutes);
 app.use('/api/bank-reconciliation', bankReconciliationRoutes);

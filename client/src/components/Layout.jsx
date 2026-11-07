@@ -51,6 +51,9 @@ const NAV_STRUCTURE = [
       { route: '/hrd/coe', label: 'Certificate of Employment' },
       // Memo (2026-10-27): HR's memos to employees on the letterhead, approved by a General Manager.
       { route: '/hrd/memo', label: 'Memo' },
+      // Regularization and Salary Adjustment letters (2026-11-07): on the letterhead, approved by a General Manager.
+      { route: '/hrd/regularization', label: 'Regularization' },
+      { route: '/hrd/salary-adjustment', label: 'Salary Adjustment' },
       // DA Report (2026-10-28): the monthly Discipline Management Report.
       { route: '/hrd/da-report', label: 'DA Report' },
     ],

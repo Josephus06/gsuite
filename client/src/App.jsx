@@ -245,6 +245,8 @@ import HrCoe from './pages/HrCoe';
 import HrCoePrint from './pages/HrCoePrint';
 import HrMemos from './pages/HrMemos';
 import HrMemoPrint from './pages/HrMemoPrint';
+import HrPersonnelLetters from './pages/HrPersonnelLetters';
+import HrPersonnelLetterPrint from './pages/HrPersonnelLetterPrint';
 import HrDaReport from './pages/HrDaReport';
 import HrDaReportPrint from './pages/HrDaReportPrint';
 import HrDaReportForm from './pages/HrDaReportForm';
@@ -304,6 +306,8 @@ function App() {
       <Route path="/commission-vouchers/:id/print" element={<ProtectedRoute><CommissionVoucherPrint /></ProtectedRoute>} />
       <Route path="/hrd/coe/:id/print" element={<ProtectedRoute><HrCoePrint /></ProtectedRoute>} />
       <Route path="/hrd/memo/:id/print" element={<ProtectedRoute><HrMemoPrint /></ProtectedRoute>} />
+      <Route path="/hrd/regularization/:id/print" element={<ProtectedRoute><HrPersonnelLetterPrint kind="regularization" /></ProtectedRoute>} />
+      <Route path="/hrd/salary-adjustment/:id/print" element={<ProtectedRoute><HrPersonnelLetterPrint kind="salary_adjustment" /></ProtectedRoute>} />
       <Route path="/hrd/da-report/:id/print" element={<ProtectedRoute><HrDaReportPrint /></ProtectedRoute>} />
       <Route path="/hrd/da-report/:id/present" element={<ProtectedRoute><HrDaReportPresent /></ProtectedRoute>} />
       <Route path="/transfer-orders/:id/print" element={<ProtectedRoute><TransferOrderPrint /></ProtectedRoute>} />
@@ -377,6 +381,8 @@ function App() {
         <Route path="/hrd/incident-reports/:id" element={<HrIncidentReportView />} />
         <Route path="/hrd/coe" element={<HrCoe />} />
         <Route path="/hrd/memo" element={<HrMemos />} />
+        <Route path="/hrd/regularization" element={<HrPersonnelLetters key="regularization" kind="regularization" />} />
+        <Route path="/hrd/salary-adjustment" element={<HrPersonnelLetters key="salary_adjustment" kind="salary_adjustment" />} />
         <Route path="/hrd/da-report" element={<HrDaReport />} />
         <Route path="/hrd/da-report/new" element={<HrDaReportForm />} />
         <Route path="/hrd/da-report/:id" element={<HrDaReportForm />} />
