@@ -128,8 +128,11 @@ export default function FormView() {
 
   // A business trip prints once noted; everything else needs approval. The server enforces this --
   // repeated here only so the button is not offered when it would be refused.
+  // An Overtime Request also prints once ACCEPTED (approved, then its actual hours confirmed) -- the
+  // server's rule; without it the button vanished the moment the hours were confirmed (REQ-1120).
   const printable = ['business_trip', 'attendance_adjustment'].includes(doc.type)
     ? ['noted', 'approved'].includes(doc.status)
+    : doc.type === 'overtime' ? ['approved', 'accepted'].includes(doc.status)
     : doc.status === 'approved';
 
   // Until somebody acts on it: draft, submitted (not yet noted) or rejected. Same list as the server.
