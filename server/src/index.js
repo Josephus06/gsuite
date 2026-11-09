@@ -102,6 +102,8 @@ const commissionReportRoutes = require('./routes/commissionReports');
 const invoicedJobOrderRoutes = require('./routes/invoicedJobOrders');
 // Sales > Installation Orders per Month (routes/installationOrdersReport.js, 2026-11-04).
 const installationOrdersReportRoutes = require('./routes/installationOrdersReport');
+// Production > Installation Planner (routes/installationPlanner.js, 2026-11-09).
+const installationPlannerRoutes = require('./routes/installationPlanner');
 const pendingBillingReportRoutes = require('./routes/pendingBillingReport');
 const disbursementReportRoutes = require('./routes/disbursementReport');
 const forecastReportRoutes = require('./routes/forecastReport');
@@ -269,6 +271,8 @@ app.use((req, res, next) => {
       || /^\/api\/product-flipbook\/?$/.test(req.path)
       // Examinations: a PDF of questions (up to 10MB) for the AI to read into draft questions.
       || /^\/api\/exam-admin\/questions\/import\/?$/.test(req.path)
+      // Installation Planner: a project's picture / permit / BOM PDF, and a progress update's photo (10MB each).
+      || /^\/api\/installation-planner\/projects\/\d+\/(files\/\w+|progress)\/?$/.test(req.path)
       ))
     || isFeedWrite(req)
     ? attachmentUploadJson(req, res, next)
@@ -395,6 +399,7 @@ app.use('/api/reports/delivery-vs-actual', deliveryVsActualReportRoutes);
 app.use('/api/reports/weighted-sales', weightedSalesReportRoutes);
 app.use('/api/reports/top-customers', topCustomersReportRoutes);
 app.use('/api/reports/installation-orders', installationOrdersReportRoutes);
+app.use('/api/installation-planner', installationPlannerRoutes);
 // A large file moved to the office archive drive: the short-lived signed link its download route
 // issued (lib/localArchive.js). No login header -- a browser download carries none; the signature is the permission.
 app.get('/api/archive-link/:token', (req, res, next) => require('./lib/localArchive').serveLink(req, res).catch(next));

@@ -68,6 +68,11 @@ import UnitOfMeasures from './pages/UnitOfMeasures';
 import JobTypeEdit from './pages/JobTypeEdit';
 import AssignedJobOrders from './pages/AssignedJobOrders';
 import DesignSchedule from './pages/DesignSchedule';
+import InstallationPlanner from './pages/InstallationPlanner';
+import InstallationProjects from './pages/InstallationProjects';
+import InstallationProjectForm from './pages/InstallationProjectForm';
+import InstallationProjectView from './pages/InstallationProjectView';
+import InstallationCategories from './pages/InstallationCategories';
 import ArtistIncentiveReport from './pages/reports/ArtistIncentiveReport';
 import AiRenderings from './pages/AiRenderings';
 import DeliverySummary from './pages/reports/DeliverySummary';
@@ -425,6 +430,13 @@ function App() {
         <Route path="/job-types/new" element={<JobTypeEdit />} />
         <Route path="/job-types/:id/edit" element={<JobTypeEdit />} />
         <Route path="/design-schedule" element={<DesignSchedule />} />
+        {/* Production > Installation Planner (2026-11-09): PLANNER's projects and planner calendar. */}
+        <Route path="/installation-planner" element={<InstallationPlanner />} />
+        <Route path="/installation-planner/projects" element={<InstallationProjects />} />
+        <Route path="/installation-planner/projects/new" element={<InstallationProjectForm key="new" />} />
+        <Route path="/installation-planner/projects/:id" element={<InstallationProjectView />} />
+        <Route path="/installation-planner/projects/:id/edit" element={<InstallationProjectForm key="edit" />} />
+        <Route path="/installation-categories" element={<InstallationCategories />} />
         <Route path="/assigned-jo" element={<AssignedJobOrders />} />
         <Route path="/reports/artist-incentive" element={<ArtistIncentiveReport />} />
         <Route path="/ai-renderings" element={<AiRenderings />} />

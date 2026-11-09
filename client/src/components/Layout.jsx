@@ -222,22 +222,45 @@ const NAV_STRUCTURE = [
   },
   {
     label: 'Production',
-    children: [
-      { route: '/production', label: 'Production' },
-      // Every RMA, RFQC and RWIP job order in one list.
-      { route: '/rma-job-orders', label: 'RMA' },
-      { route: '/rwip-job-orders', label: 'RWIP' },
-      { route: '/rfqc-job-orders', label: 'RFQC' },
-      { route: '/scheduled-jo', label: 'Scheduled JO' },
-      { route: '/assembly-builds', label: 'Assembly Build' },
-      // Quality Inspection has its own `pages` row now (add-quality-inspection-page.js), so no
-      // permRoute override here: the nav checks the link's own route, like every other entry.
-      // It used to borrow Production's, which is why this list still carries the mechanism.
-      { route: '/quality-inspections', label: 'Quality Inspection' },
-      { route: '/item-deliveries', label: 'Item Delivery' },
-      { route: '/itineraries', label: 'Itinerary' },
-      { route: '/reports/forecast', label: 'Forecast Report' },
-      { route: '/reports/delivery-vs-actual', label: 'Delivery Date Vs Actual' },
+    // Grouped like Accounting (asked 2026-11-09): Transaction / Setup / Planning / Reports columns.
+    sections: [
+      {
+        title: 'Transaction',
+        items: [
+          { route: '/production', label: 'Production' },
+          // Every RMA, RFQC and RWIP job order in one list.
+          { route: '/rma-job-orders', label: 'RMA' },
+          { route: '/rwip-job-orders', label: 'RWIP' },
+          { route: '/rfqc-job-orders', label: 'RFQC' },
+          { route: '/assembly-builds', label: 'Assembly Build' },
+          // Quality Inspection has its own `pages` row (add-quality-inspection-page.js).
+          { route: '/quality-inspections', label: 'Quality Inspection' },
+          { route: '/item-deliveries', label: 'Item Delivery' },
+          { route: '/itineraries', label: 'Itinerary' },
+        ],
+      },
+      {
+        title: 'Setup',
+        items: [
+          { route: '/installation-categories', label: 'Installation Categories' },
+        ],
+      },
+      {
+        title: 'Planning',
+        items: [
+          { route: '/scheduled-jo', label: 'Scheduled JO' },
+          // Installation Planner (2026-11-09): PLANNER's projects + planner calendar for the installation crews.
+          { route: '/installation-planner', label: 'Installation Planner' },
+          { route: '/installation-planner/projects', permRoute: '/installation-planner', label: 'Installation Projects' },
+        ],
+      },
+      {
+        title: 'Reports',
+        items: [
+          { route: '/reports/forecast', label: 'Forecast Report' },
+          { route: '/reports/delivery-vs-actual', label: 'Delivery Date Vs Actual' },
+        ],
+      },
     ],
   },
   {
