@@ -541,7 +541,10 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
         sig.approved_signature = byEmp.get(String(estimate.approved_by_id)) || null;
       }
     }
-    res.json({ ...estimate, ...sig, created_by_user_id: createdByUserId, is_rep_supervisor: isRepSup, shippingAddresses, jobOrders });
+    // is_replica: the form asks a replica's lines for a new Job Location (as well as the Delivery Date
+    // every estimate needs) before it moves past the job lines.
+    const replica = await isReplica(pool, estimate.id);
+    res.json({ ...estimate, ...sig, created_by_user_id: createdByUserId, is_rep_supervisor: isRepSup, is_replica: replica, shippingAddresses, jobOrders });
   } catch (err) {
     next(err);
   }
@@ -714,6 +717,14 @@ async function replicatorDefaults(conn, userId) {
 // Either way the copy is the REPLICATOR's (asked 2026-10-13 for plain Replicate too): Sales Rep,
 // Office Location and Sales Division are theirs (replicatorDefaults) and Prepared By is them. Where
 // the replicator has nothing to go on for a field, the source's value stands.
+// Made by Replicate / Cancel & Replicate: its 'Created' audit row names the estimate it came from.
+async function isReplica(q, estimateId) {
+  const [[row]] = await q.query(
+    "SELECT 1 AS yes FROM audit_logs WHERE auditable_type = 'Estimate' AND auditable_id = ? AND field_name = 'replicated_from' LIMIT 1",
+    [estimateId]);
+  return !!row;
+}
+
 async function replicateEstimate(userId, sourceId, opts = {}) {
   const conn = await pool.getConnection();
   try {
@@ -765,8 +776,12 @@ async function replicateEstimate(userId, sourceId, opts = {}) {
     // an estimate imported from the source can lack them until back-filled (EST-104541 -> EST-210521,
     // 2026-10-14: copied a minute before its processes were filled in, so the copy had none).
     const linesWithoutProcesses = [];
+    // A replica is a new job: the old one's DELIVERY DATE and JOB LOCATION are not its own (asked
+    // 2026-11-09), so they start blank -- on every line and the processes' dates -- and have to be
+    // filled in again before the estimate goes past the job lines (step 2) or is approved.
+    const NOT_COPIED = new Set(['delivery_date', 'job_location_id']);
     for (const jo of jobOrders) {
-      const joValues = JOB_ORDER_FIELDS.map((f) => jo[f]);
+      const joValues = JOB_ORDER_FIELDS.map((f) => (NOT_COPIED.has(f) ? null : jo[f]));
       const [joResult] = await conn.query(
         `INSERT INTO estimate_job_orders (estimate_id, line_no, ${JOB_ORDER_FIELDS.join(', ')})
          VALUES (?, ?, ${JOB_ORDER_FIELDS.map(() => '?').join(', ')})`,
@@ -775,7 +790,7 @@ async function replicateEstimate(userId, sourceId, opts = {}) {
       const [processes] = await conn.query('SELECT * FROM estimate_job_order_processes WHERE estimate_job_order_id = ? ORDER BY line_no', [jo.id]);
       if (!processes.length) linesWithoutProcesses.push(jo.line_no);
       for (const proc of processes) {
-        const procValues = PROCESS_FIELDS.map((f) => proc[f]);
+        const procValues = PROCESS_FIELDS.map((f) => (f === 'delivery_date' ? null : proc[f]));
         await conn.query(
           `INSERT INTO estimate_job_order_processes (estimate_job_order_id, line_no, ${PROCESS_FIELDS.join(', ')})
            VALUES (?, ?, ${PROCESS_FIELDS.map(() => '?').join(', ')})`,
@@ -1031,6 +1046,21 @@ router.put('/:id/status', requireAuth, requireStatusChange, async (req, res, nex
         return res.status(400).json({
           error: `Delivery Date and Delivery Time are required on every job line before this estimate can be approved. ${detail}${incomplete.length > 5 ? `; and ${incomplete.length - 5} more` : ''}.`,
         });
+      }
+      // A REPLICATED estimate starts with no Job Location on its lines (replicateEstimate) and must
+      // have it filled in again (asked 2026-11-09). Older estimates are not held to it: imported ones
+      // can lack it, and refusing them now would stop approvals already under way.
+      if (await isReplica(conn, req.params.id)) {
+        const [noLoc] = await conn.query(
+          `SELECT line_no, description FROM estimate_job_orders WHERE estimate_id = ? AND job_location_id IS NULL ORDER BY line_no`,
+          [req.params.id]);
+        if (noLoc.length) {
+          await conn.rollback();
+          const detail = noLoc.slice(0, 5).map((l) => `line ${l.line_no}${l.description ? ` (${String(l.description).slice(0, 40)})` : ''}`).join('; ');
+          return res.status(400).json({
+            error: `This estimate is a replica -- put the new Job Location on every job line before it can be approved: ${detail}${noLoc.length > 5 ? `; and ${noLoc.length - 5} more` : ''}.`,
+          });
+        }
       }
       // Tax Code on every job line (asked 2026-10-20): the Sales Order and the invoice take their
       // tax from it, and a line without one bills as untaxed.

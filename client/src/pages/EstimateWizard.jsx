@@ -299,10 +299,15 @@ export default function EstimateWizard() {
     }
   }
 
+  // Made by Replicate: its lines came across with no Delivery Date and no Job Location (asked
+  // 2026-11-09), and both have to be put in again before NEXT on the job lines.
+  const [isReplica, setIsReplica] = useState(false);
+
   async function loadEstimate(estId) {
     const { data } = await api.get(`/estimates/${estId}`);
     setEstimateId(data.id);
     setEstimateNo(data.estimate_no);
+    setIsReplica(!!data.is_replica);
     const h = { ...EMPTY_HEADER };
     Object.keys(h).forEach((k) => { h[k] = typeof h[k] === 'boolean' ? !!data[k] : (data[k] ?? ''); });
     if (h.date_created) h.date_created = String(h.date_created).slice(0, 10);
@@ -1708,6 +1713,14 @@ export default function EstimateWizard() {
                       .join(', ');
                     setError(`Delivery Date and Delivery Time are required on every job line: ${detail}${missing.length > 5 ? `, and ${missing.length - 5} more` : ''}.`);
                     return;
+                  }
+                  // A replica's lines need their new Job Location too -- the old job's was not copied.
+                  if (isReplica) {
+                    const noLoc = jobOrders.map((jo, i) => (jo.job_location_id ? null : i + 1)).filter(Boolean);
+                    if (noLoc.length) {
+                      setError(`This estimate is a replica -- put the new Job Location on every job line: line ${noLoc.slice(0, 8).join(', ')}${noLoc.length > 8 ? ` and ${noLoc.length - 8} more` : ''}.`);
+                      return;
+                    }
                   }
                   // Tax Code is required on every job line too (asked 2026-10-20) -- the server
                   // refuses to approve without it.
