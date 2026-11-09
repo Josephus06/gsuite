@@ -17,6 +17,7 @@ import { useCalendarRange, CalendarRangeSwitch } from '../utils/calendarRange';
 import SystemHealthCard from '../components/SystemHealthCard';
 import SalesBreakdownCard from '../components/SalesBreakdownCard';
 import Feed from './Feed';
+import InstallationPlanner from './InstallationPlanner';
 import '../styles/feed.css';
 
 // "20 August 2026" from a YYYY-MM-DD key. Built from the parts rather than new Date(key):
@@ -303,6 +304,10 @@ function RoleDashboard() {
       .catch(() => setError('Could not load dashboard data.'))
       .finally(() => setLoading(false));
   }, []);
+  const [showInstallCalendar, setShowInstallCalendar] = useState(false);
+  useEffect(() => {
+    api.get('/installation-planner/dashboard-calendar').then(({ data: d }) => setShowInstallCalendar(!!d.show)).catch(() => {});
+  }, []);
 
   if (loading) return <div className="holo-dashboard"><p className="holo-empty">Loading dashboard...</p></div>;
   if (error || !data) return <div className="holo-dashboard"><p className="holo-empty">{error || 'No data.'}</p></div>;
@@ -325,6 +330,13 @@ function RoleDashboard() {
       {data.role === 'design_supervisor' && <DesignSupervisorDashboard data={data} user={user} navigate={navigate} />}
       {data.role === 'artist' && <ArtistDashboard data={data} user={user} navigate={navigate} />}
       {!['admin', 'design_supervisor', 'artist'].includes(data.role) && <SalesDashboard data={data} user={user} navigate={navigate} />}
+      {showInstallCalendar && (
+        // Production > Installation Planner's calendar, read only (asked 2026-11-09), for Account
+        // Officers, SBUs, Marketing, Sales Managers and General Managers -- the server decides who.
+        <div style={{ marginTop: 16 }}>
+          <InstallationPlanner readOnly />
+        </div>
+      )}
     </div>
   );
 }

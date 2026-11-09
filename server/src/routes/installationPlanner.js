@@ -3,6 +3,7 @@ const pool = require('../db');
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 const { sbuCanApproveDepartment } = require('../lib/sbuGroups');
 const { insertFor } = require('../lib/approvalNotifications');
+const { isGeneralManager } = require('../lib/generalManagers');
 const { shrinkFile } = require('../lib/shrinkFile');
 const { todayPh, loadVehicles } = require('../lib/fleet');
 
@@ -100,6 +101,38 @@ const vehicleName = (r) => {
   return r.plate_no ? `${name} (${r.plate_no})` : name;
 };
 
+// The calendar on the Dashboard, read only (asked 2026-11-09): Account Officers, SBUs, Marketing, Sales
+// Managers (and the Sales & Marketing Director) and General Managers read the projects, the crew and
+// the vehicles on it without holding the Installation Planner page. They get the calendar's three
+// reads -- /meta, /events, /crew -- and nothing that opens or changes a project.
+async function isDashboardReader(userId) {
+  const [[u]] = await pool.query(
+    `SELECT u.account_type, u.is_account_officer, u.is_sales_business_unit, u.is_sales_manager, u.is_sales_marketing_director,
+            d.name AS department_name
+       FROM users u LEFT JOIN employees e ON e.id = u.employee_id LEFT JOIN departments d ON d.id = e.department_id
+      WHERE u.id = ? AND u.is_active = 1`, [userId]);
+  if (!u) return false;
+  if (u.is_account_officer || u.is_sales_business_unit || u.is_sales_manager || u.is_sales_marketing_director) return true;
+  if (['Sales Manager', 'General Manager', 'Sales Business Unit', 'Account Officer'].includes(u.account_type)) return true;
+  if (/^\s*marketing\s*$/i.test(u.department_name || '')) return true;
+  return isGeneralManager(userId);
+}
+// The planner's own View right, or one of the dashboard readers above.
+function requireCalendarRead(req, res, next) {
+  userCan(req.user.id, ROUTE, 'can_view')
+    .then(async (ok) => {
+      if (ok || await isDashboardReader(req.user.id)) return next();
+      return errorOut(res, 403, 'You do not have permission to perform this action');
+    })
+    .catch(next);
+}
+
+// The Dashboard asks whether to show the read-only calendar: to the dashboard readers above. (Someone
+// with the planner page itself opens the planner instead, so it is not repeated on their dashboard.)
+router.get('/dashboard-calendar', requireAuth, async (req, res, next) => {
+  try { res.json({ show: await isDashboardReader(req.user.id) }); } catch (err) { next(err); }
+});
+
 // A JO is installation work when its Job Type is one or any of its processes is one -- the same test
 // as Sales > Installation Orders per Month (routes/installationOrdersReport.js).
 const INSTAL_JO = `(jt.display_name LIKE '%INSTAL%' OR EXISTS (
@@ -180,7 +213,7 @@ async function projectOr404(req, res) {
 
 // ---------------------------------------------------------------- lookups
 
-router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+router.get('/meta', requireAuth, requireCalendarRead, async (req, res, next) => {
   try {
     const [categories] = await pool.query('SELECT id, name, is_active FROM installation_categories ORDER BY name');
     const [employees] = await pool.query(
@@ -242,7 +275,7 @@ router.get('/dashboard', requireAuth, requirePermission(ROUTE, 'can_view'), asyn
 });
 
 // Every project whose dates touch [from, to]; one without an end date sits on its start date.
-router.get('/events', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+router.get('/events', requireAuth, requireCalendarRead, async (req, res, next) => {
   try {
     const { from, to } = req.query;
     if (!isDate(from) || !isDate(to)) return errorOut(res, 400, 'from and to (YYYY-MM-DD) are required');
@@ -664,7 +697,7 @@ const CREW_SELECT = `
     LEFT JOIN vehicle_details vd ON vd.asset_id = s.asset_id`;
 
 // Every slot in [from, to] (the Crew calendar), optionally one installer's.
-router.get('/crew', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+router.get('/crew', requireAuth, requireCalendarRead, async (req, res, next) => {
   try {
     const { from, to } = req.query;
     if (!isDate(from) || !isDate(to)) return errorOut(res, 400, 'from and to (YYYY-MM-DD) are required');

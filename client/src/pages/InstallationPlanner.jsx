@@ -18,7 +18,10 @@ const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0
 const parse = (k) => { const [y, m, d] = k.split('-').map(Number); return new Date(y, m - 1, d); };
 const addDays = (d, n) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + n);
 
-export default function InstallationPlanner() {
+// readOnly (2026-11-09): the calendar alone, on the Dashboard of Account Officers, SBUs, Marketing,
+// Sales Managers and General Managers -- every view, filter and search, but no dragging, no project
+// opened and no reschedule panel. The server lets those roles read /meta, /events and /crew only.
+export default function InstallationPlanner({ readOnly = false }) {
   const navigate = useNavigate();
   const [stats, setStats] = useState(null);
   const [rights, setRights] = useState(null);
@@ -55,7 +58,7 @@ export default function InstallationPlanner() {
   const to = ymd(days[days.length - 1]);
 
   useEffect(() => {
-    api.get(`${API}/dashboard`).then(({ data }) => setStats(data)).catch((err) => setError(errorOf(err)));
+    if (!readOnly) api.get(`${API}/dashboard`).then(({ data }) => setStats(data)).catch((err) => setError(errorOf(err)));
     api.get(`${API}/meta`).then(({ data }) => {
       setRights(data.rights);
       setPeople({ employees: data.employees, vehicles: data.vehicles });
@@ -70,7 +73,7 @@ export default function InstallationPlanner() {
   const [dropKey, setDropKey] = useState('');
   const reload = () => setReloadKey((n) => n + 1);
   useEffect(() => {
-    api.get(`${API}/reschedules`, { params: { status: 'for_approval' } }).then(({ data }) => setPending(data)).catch(() => {});
+    if (!readOnly) api.get(`${API}/reschedules`, { params: { status: 'for_approval' } }).then(({ data }) => setPending(data)).catch(() => {});
   }, [reloadKey]);
   // The search box (JO #, customer, project # / title), sent once typing pauses.
   const [search, setSearch] = useState('');
@@ -155,7 +158,7 @@ export default function InstallationPlanner() {
   }, [events, days]);
 
   // A bar can be dragged by whoever may edit projects, unless it is done / cancelled or already waiting.
-  const canDrag = (e) => !!rights?.can_edit && !e.ghost && !e.pending_id && !['done', 'cancelled'].includes(e.status);
+  const canDrag = (e) => !readOnly && !!rights?.can_edit && !e.ghost && !e.pending_id && !['done', 'cancelled'].includes(e.status);
   // Dropped on day k: the start grip moves the start, the end grip the finish, the middle shifts both.
   function onDropDay(ev, k) {
     ev.preventDefault();
@@ -184,6 +187,7 @@ export default function InstallationPlanner() {
     setModal({ kind: 'reschedule', project: e, newFrom, newTo });
   }
   const openGhost = (e) => {
+    if (readOnly) return;
     const r = pending.find((p) => p.id === e.pending_id);
     if (r) setModal({ kind: 'decision', request: r });
   };
@@ -199,7 +203,9 @@ export default function InstallationPlanner() {
     ? `${displayDate(from)} – ${displayDate(to)}`
     : `${MONTHS[anchor.getMonth()]} ${anchor.getFullYear()}`;
 
-  const open = (e) => navigate(`/installation-planner/projects/${e.id}`);
+  // Read only, a bar or a booking opens nothing -- its tooltip says what it is.
+  const openProject = (id) => { if (!readOnly) navigate(`/installation-planner/projects/${id}`); };
+  const open = (e) => openProject(e.id);
   // Clicking a date opens that day, installer by installer, hour by hour.
   const openDay = (k) => { setAnchor(parse(k)); setView('day'); };
 
@@ -212,7 +218,8 @@ export default function InstallationPlanner() {
   ];
 
   return (
-    <div className="page">
+    <div className={readOnly ? undefined : 'page'}>
+      {!readOnly && (<>
       <div className="page-header" style={{ justifyContent: 'flex-start', flexWrap: 'wrap', gap: 16 }}>
         <div>
           <h1>Installation Planner</h1>
@@ -228,8 +235,10 @@ export default function InstallationPlanner() {
           {rights?.can_add && <Link className="btn btn-primary" to="/installation-planner/projects/new">+ New Project</Link>}
         </div>
       </div>
+      </>)}
       {error && <div className="error-banner">{error}</div>}
 
+      {!readOnly && (<>
       <div className="stat-grid">
         {cards.map(([label, value, key]) => (
           <Link key={label} className="stat-card" style={{ textDecoration: 'none' }}
@@ -256,9 +265,10 @@ export default function InstallationPlanner() {
           </div>
         </div>
       )}
+      </>)}
 
       <div className="card">
-        <h3 style={{ marginTop: 0 }}>Project Schedule Calendar</h3>
+        <h3 style={{ marginTop: 0 }}>{readOnly ? 'Installation Schedule' : 'Project Schedule Calendar'}</h3>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
           <button type="button" className="btn btn-sm" onClick={() => step(-1)} aria-label="Previous">‹</button>
           <button type="button" className="btn btn-sm" onClick={() => step(1)} aria-label="Next">›</button>
@@ -304,7 +314,7 @@ export default function InstallationPlanner() {
             </span>
           ))}
           <span className="muted">
-            · dashed = reschedule waiting for the SBU{rights?.can_edit ? ' · drag the end of a bar to move its start or finish, its middle to shift it' : ''}
+            · dashed = reschedule waiting for the SBU{rights?.can_edit && !readOnly ? ' · drag the end of a bar to move its start or finish, its middle to shift it' : ''}
           </span>
         </div>
 
@@ -318,9 +328,9 @@ export default function InstallationPlanner() {
         {loading ? <LoadingSpinner /> : (view === 'crew' || view === 'day') && query && !shownPeople.length ? (
           <div className="empty-state">No {R.one.toLowerCase()} is booked on anything matching "{query}" {view === 'day' ? 'on this day' : 'this week'}.</div>
         ) : view === 'day' ? (
-          <DayView dayKey={from} slots={shownCrew} people={shownPeople} kind={R} onOpen={(s) => navigate(`/installation-planner/projects/${s.project_id}`)} />
+          <DayView dayKey={from} slots={shownCrew} people={shownPeople} kind={R} onOpen={(s) => openProject(s.project_id)} />
         ) : view === 'crew' ? (
-          <CrewView days={days} slots={shownCrew} people={shownPeople} kind={R} todayKey={todayKey} onDay={openDay} onOpen={(s) => navigate(`/installation-planner/projects/${s.project_id}`)} />
+          <CrewView days={days} slots={shownCrew} people={shownPeople} kind={R} todayKey={todayKey} onDay={openDay} onOpen={(s) => openProject(s.project_id)} />
         ) : view === 'list' ? (
           <ListView days={days} byDay={byDay} todayKey={todayKey} onOpen={open} />
         ) : (
