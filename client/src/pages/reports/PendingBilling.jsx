@@ -147,7 +147,7 @@ export default function PendingBilling() {
                   <tr>
                     <th>Job Order</th><th>SO / NSSO</th><th>Customer</th><th>Sales Rep</th><th>Department</th><th>Description</th>
                     <th>Completed</th>
-                    <th title="The Job Order has a PAR & Pics file (Production > Job Order > Production Attachment), or someone with Update rights here ticked it" style={{ textAlign: 'center' }}>wt PAR&amp;Pics</th>
+                    <th title="The Job Order has a PAR file (Production > Job Order > Production Attachment), or someone with Update rights here ticked it" style={{ textAlign: 'center' }}>wt PAR&amp;Pics</th>
                     <th title="The Sales Order has a file typed PO (Sales Order > Attachment), or someone with Update rights here ticked it" style={{ textAlign: 'center' }}>wt PO</th>
                     <th className="text-right">Days Pending</th><th className="text-right">Qty</th>
                     <th className="text-right">Delivered</th><th className="text-right">Invoiced</th><th className="text-right">To Bill</th>

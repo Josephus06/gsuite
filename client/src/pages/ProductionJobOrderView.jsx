@@ -9,7 +9,7 @@ import RwipCreateModal from '../components/RwipCreateModal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { isNonStockItem } from '../utils/itemTypes';
 import { isPlanner } from '../utils/plannerRoles';
-import JobOrderAttachments, { PRODUCTION_KINDS } from '../components/JobOrderAttachments';
+import JobOrderAttachments, { PRODUCTION_KINDS, PRODUCTION_UPLOAD_KINDS } from '../components/JobOrderAttachments';
 import { isAdvanceCopy } from '../utils/advanceCopy';
 import SalesRevisionModal from '../components/SalesRevisionModal';
 import RevisionNotice from '../components/RevisionNotice';
@@ -995,11 +995,12 @@ export default function ProductionJobOrderView() {
         <JobOrderAttachments
           jobOrderId={id}
           kinds={PRODUCTION_KINDS}
+          uploadKinds={PRODUCTION_UPLOAD_KINDS}
+          uploadNote="images are saved as PNG"
           title="Production Attachment"
-          description={'Files the production planner keeps against this Job Order -- the plan, '
-            + 'references, anything the floor needs. Separate from the artist’s drawings, and '
-            + 'not part of what Sales approved.'}
-          emptyHint="Attach the production plan or any reference the floor needs."
+          description={'The PAR (Project Accomplishment Report) and the pictures of the job. Separate '
+            + 'from the artist’s drawings, and not part of what Sales approved.'}
+          emptyHint="Attach the PAR and the pictures of the job."
           canUpload={canManageProductionFiles}
           canDelete={canManageProductionFiles}
         />

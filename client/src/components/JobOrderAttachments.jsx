@@ -20,7 +20,10 @@ import { displayDateTime } from '../utils/dates';
 const MAX_BYTES = 10 * 1024 * 1024;
 
 export const ARTIST_KINDS = ['Perspective', 'Bill of Materials', 'Other'];
-export const PRODUCTION_KINDS = ['Production Plan', 'Reference', 'PAR & Pics', 'Other (Production)'];
+// Production uploads are PAR or Picture (2026-11-09); the older production kinds are still LISTED, so the
+// files already filed under them stay visible and removable, but are not offered for new uploads.
+export const PRODUCTION_UPLOAD_KINDS = ['PAR', 'Picture'];
+export const PRODUCTION_KINDS = [...PRODUCTION_UPLOAD_KINDS, 'Production Plan', 'Reference', 'PAR & Pics', 'Other (Production)'];
 
 // Short extension badge for the row icon: "PDF", "XLSX", or "FILE" when there is none.
 function fileExt(name) {
@@ -41,6 +44,10 @@ function fileSize(bytes) {
 export default function JobOrderAttachments({
   jobOrderId,
   kinds = ARTIST_KINDS,
+  // The kinds offered in "Document type" -- by default every kind listed.
+  uploadKinds,
+  // A note under the drop box, e.g. that images are saved as PNG.
+  uploadNote,
   title = 'Artist Attachment',
   description,
   emptyHint,
@@ -52,8 +59,9 @@ export default function JobOrderAttachments({
   onChange,
 }) {
   const [rows, setRows] = useState([]);
-  const [kind, setKind] = useState(kinds[0]);
-  const [busy, setBusy] = useState(false);
+  const offered = uploadKinds || kinds;
+  const [kind, setKind] = useState(offered[0]);
+  const [busy, setBusy] = useState('');
   const [error, setError] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const fileRef = useRef(null);
@@ -66,45 +74,46 @@ export default function JobOrderAttachments({
   useEffect(() => { load(); }, [jobOrderId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleFile(e) {
-    await upload(e.target.files?.[0]);
+    await upload(e.target.files);
   }
 
-  async function upload(file) {
-    if (!file) return;
+  // Several files at once (2026-11-09), sent one after another under the chosen type. A file that is
+  // refused -- too big, or the server says no -- is named in the error and the rest still go up.
+  async function upload(fileList) {
+    const files = Array.from(fileList || []);
+    if (!files.length) return;
     setError('');
-
-    // Size is checked here as well as on the server so the user finds out before spending a
-    // minute uploading a file that will be refused. Type is not restricted.
-    if (file.size > MAX_BYTES) {
-      setError(`"${file.name}" is ${fileSize(file.size)}. Files must be 10MB or smaller.`);
-      if (fileRef.current) fileRef.current.value = '';
-      return;
+    const failed = [];
+    let sent = 0;
+    for (const [i, file] of files.entries()) {
+      // Size is checked here as well as on the server so the user finds out before spending a
+      // minute uploading a file that will be refused.
+      if (file.size > MAX_BYTES) { failed.push(`"${file.name}" is ${fileSize(file.size)} -- files must be 10MB or smaller.`); continue; }
+      setBusy(files.length > 1 ? `Uploading ${i + 1} of ${files.length}…` : 'Uploading…');
+      try {
+        const data = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = () => reject(new Error('Could not read that file'));
+          reader.readAsDataURL(file);
+        });
+        await api.post(`/job-orders/${jobOrderId}/attachments`, {
+          file_name: file.name, kind, data, mime_type: file.type || 'application/octet-stream',
+        });
+        sent += 1;
+      } catch (err) {
+        failed.push(err.response?.data?.error || `"${file.name}": ${err.message || 'upload failed'}`);
+      }
     }
-
-    setBusy(true);
-    try {
-      const data = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = () => reject(new Error('Could not read that file'));
-        reader.readAsDataURL(file);
-      });
-      await api.post(`/job-orders/${jobOrderId}/attachments`, {
-        file_name: file.name, kind, data, mime_type: file.type || 'application/octet-stream',
-      });
-      await load();
-      onChange?.();
-    } catch (err) {
-      setError(err.response?.data?.error || err.message || 'Upload failed');
-    } finally {
-      setBusy(false);
-      if (fileRef.current) fileRef.current.value = '';
-    }
+    setBusy('');
+    if (fileRef.current) fileRef.current.value = '';
+    if (failed.length) setError(`${sent ? `${sent} of ${files.length} uploaded. ` : ''}${failed.join(' ')}`);
+    if (sent) { await load(); onChange?.(); }
   }
 
   async function handleDelete(attachmentId, name) {
     if (!confirm(`Remove "${name}"?`)) return;
-    setBusy(true);
+    setBusy('Removing…');
     setError('');
     try {
       await api.delete(`/job-orders/${jobOrderId}/attachments/${attachmentId}`);
@@ -113,7 +122,7 @@ export default function JobOrderAttachments({
     } catch (err) {
       setError(err.response?.data?.error || 'Could not remove that file');
     } finally {
-      setBusy(false);
+      setBusy('');
     }
   }
 
@@ -165,7 +174,7 @@ export default function JobOrderAttachments({
               </div>
               <span className="att-kind">{r.kind}</span>
               {canDelete && (
-                <button type="button" className="btn btn-sm btn-warning" disabled={busy} onClick={() => handleDelete(r.id, r.file_name)}>
+                <button type="button" className="btn btn-sm btn-warning" disabled={!!busy} onClick={() => handleDelete(r.id, r.file_name)}>
                   Remove
                 </button>
               )}
@@ -184,21 +193,24 @@ export default function JobOrderAttachments({
         <div className="att-upload">
           <div className="att-field">
             <label htmlFor={`att-kind-${jobOrderId}`}>Document type</label>
-            <select id={`att-kind-${jobOrderId}`} value={kind} onChange={(e) => setKind(e.target.value)} disabled={busy}>
-              {kinds.map((k) => <option key={k} value={k}>{k}</option>)}
+            <select id={`att-kind-${jobOrderId}`} value={kind} onChange={(e) => setKind(e.target.value)} disabled={!!busy}>
+              {offered.map((k) => <option key={k} value={k}>{k}</option>)}
             </select>
           </div>
           <label
             className={`att-drop${dragOver ? ' is-over' : ''}${busy ? ' is-busy' : ''}`}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
             onDragLeave={() => setDragOver(false)}
-            onDrop={(e) => { e.preventDefault(); setDragOver(false); upload(e.dataTransfer.files?.[0]); }}
+            onDrop={(e) => { e.preventDefault(); setDragOver(false); upload(e.dataTransfer.files); }}
           >
-            <input ref={fileRef} type="file" onChange={handleFile} disabled={busy} />
+            <input ref={fileRef} type="file" multiple onChange={handleFile} disabled={!!busy}
+              accept={kind === 'Picture' ? 'image/*' : undefined} />
             <div className="att-drop-main">
-              {busy ? 'Uploading…' : <><em>Choose a file</em> or drag it here</>}
+              {busy || <><em>Choose files</em> or drag them here</>}
             </div>
-            <div className="att-drop-hint">Any file type · up to 10MB</div>
+            <div className="att-drop-hint">
+              {kind === 'Picture' ? 'Images only' : 'Any file type'} · several at once · up to 10MB each{uploadNote ? ` · ${uploadNote}` : ''}
+            </div>
           </label>
         </div>
       )}

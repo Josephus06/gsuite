@@ -1293,9 +1293,33 @@ const ARTIST_ATTACHMENT_KINDS = ['Perspective', 'Bill of Materials', 'Other'];
 // they cannot collide with the artist's 'Other'.
 // 'PAR & Pics' (2026-11-04): the signed Project Accomplishment Report and site photos -- Pending Billing's
 // "wt PAR&Pics" column ticks when a JO has one.
-const PRODUCTION_ATTACHMENT_KINDS = ['Production Plan', 'Reference', 'PAR & Pics', 'Other (Production)'];
-const ATTACHMENT_KINDS = [...ARTIST_ATTACHMENT_KINDS, ...PRODUCTION_ATTACHMENT_KINDS];
+// 2026-11-09: new production files are only 'PAR' (the signed Project Accomplishment Report) or
+// 'Picture' (site photos); the four older kinds stay valid for the files already filed under them --
+// listed, opened and removed as production files -- but nothing new is uploaded as them.
+const PRODUCTION_UPLOAD_KINDS = ['PAR', 'Picture'];
+const PRODUCTION_LEGACY_KINDS = ['Production Plan', 'Reference', 'PAR & Pics', 'Other (Production)'];
+const PRODUCTION_ATTACHMENT_KINDS = [...PRODUCTION_UPLOAD_KINDS, ...PRODUCTION_LEGACY_KINDS];
+const UPLOAD_KINDS = [...ARTIST_ATTACHMENT_KINDS, ...PRODUCTION_UPLOAD_KINDS];
 const isProductionKind = (kind) => PRODUCTION_ATTACHMENT_KINDS.includes(kind);
+
+// Every image put on a production attachment is stored as PNG (asked 2026-11-09), at most 2400 px on
+// its long side, EXIF rotation applied. A PNG already is left exactly as uploaded. Returns null for a
+// file that is not an image; throws when it is one sharp cannot read (HEIC, BMP, a broken file).
+const IMAGE_EXT = /\.(jpe?g|png|webp|gif|tiff?|avif|heic|heif|bmp|jfif)$/i;
+const looksLikeImage = (name, mime) => /^image\//i.test(String(mime || '')) || IMAGE_EXT.test(String(name || ''));
+let sharpLib = null;
+try { sharpLib = require('sharp'); } catch { /* not installed: images are kept as uploaded */ }
+async function imageToPng(buf, name, mime) {
+  if (!looksLikeImage(name, mime)) return null;
+  const pngName = /\.[^.]+$/.test(name) ? String(name).replace(/\.[^.]+$/, '.png') : `${name}.png`;
+  if (/\.png$/i.test(name) || /^image\/png$/i.test(String(mime || ''))) return { buf, fileName: pngName, mime: 'image/png' };
+  if (!sharpLib) return null;
+  const out = await sharpLib(buf, { failOn: 'none' }).rotate()
+    .resize({ width: 2400, height: 2400, fit: 'inside', withoutEnlargement: true })
+    .png({ compressionLevel: 9, adaptiveFiltering: true })
+    .toBuffer();
+  return { buf: out, fileName: pngName, mime: 'image/png' };
+}
 
 // Uploading is the assigned artist's job; anyone with can_edit on Job Orders (design
 // supervisors, admins) can also attach on their behalf. Removal is stricter -- see the
@@ -1354,8 +1378,8 @@ router.post('/:id/attachments', requireAuth, async (req, res, next) => {
   try {
     const { file_name: fileName, kind, data, mime_type: mimeType } = req.body || {};
     if (!fileName || !data) return res.status(400).json({ error: 'file_name and data are required' });
-    if (!ATTACHMENT_KINDS.includes(kind)) {
-      return res.status(400).json({ error: `kind must be one of: ${ATTACHMENT_KINDS.join(', ')}` });
+    if (!UPLOAD_KINDS.includes(kind)) {
+      return res.status(400).json({ error: `kind must be one of: ${UPLOAD_KINDS.join(', ')}` });
     }
 
     // Which rule applies is decided by the kind, so an artist cannot upload under a
@@ -1397,10 +1421,22 @@ router.post('/:id/attachments', requireAuth, async (req, res, next) => {
     let safeMime = /^[\w.+-]+\/[\w.+-]+$/.test(String(mimeType || ''))
       ? String(mimeType).slice(0, 100)
       : 'application/octet-stream';
-    // A photo or screenshot is stored as a smaller JPG (lib/shrinkFile.js).
     let storedName = String(fileName);
-    const small = await shrinkFile(buf, storedName);
-    if (small) { buf = small.buf; storedName = small.fileName; safeMime = small.mime; }
+    if (isProductionKind(kind)) {
+      // Production files: every image becomes a PNG; a Picture must be an image.
+      let png = null;
+      try {
+        png = await imageToPng(buf, storedName, safeMime);
+      } catch {
+        return res.status(400).json({ error: `"${storedName}" could not be read as an image to convert it to PNG -- save it as JPG or PNG and attach it again.` });
+      }
+      if (png) { buf = png.buf; storedName = png.fileName; safeMime = png.mime; }
+      else if (kind === 'Picture') return res.status(400).json({ error: `"${storedName}" is not an image -- a Picture must be a photo or image file. Attach documents as PAR.` });
+    } else {
+      // A photo or screenshot is stored as a smaller JPG (lib/shrinkFile.js).
+      const small = await shrinkFile(buf, storedName);
+      if (small) { buf = small.buf; storedName = small.fileName; safeMime = small.mime; }
+    }
 
     const [result] = await conn.query(
       `INSERT INTO job_order_attachments (job_order_id, kind, file_name, mime_type, size_bytes, file_data, uploaded_by_user_id)

@@ -176,7 +176,8 @@ async function loadRows(req, { allReps = false } = {}) {
     pool.query('SELECT id, quantity, gross_amount FROM non_standard_sales_order_lines WHERE id IN (?)',
       [[...new Set(jos.map((j) => j.nsso_line_id).filter(Boolean))].concat(0)]),
     withKind ? pool.query("SELECT DISTINCT sales_order_id FROM sales_order_attachments WHERE kind = 'PO' AND sales_order_id IN (?)", [soIds]) : [[]],
-    pool.query("SELECT DISTINCT job_order_id FROM job_order_attachments WHERE kind = 'PAR & Pics' AND job_order_id IN (?)", [ids]),
+    // 'PAR' since 2026-11-09 (Production Attachment's types became PAR / Picture); 'PAR & Pics' for older files.
+    pool.query("SELECT DISTINCT job_order_id FROM job_order_attachments WHERE kind IN ('PAR', 'PAR & Pics') AND job_order_id IN (?)", [ids]),
     withKind ? pool.query(
       `SELECT m.target, m.target_id, m.marked_at, u.display_name AS marked_by FROM pending_billing_marks m
          LEFT JOIN users u ON u.id = m.marked_by_user_id
