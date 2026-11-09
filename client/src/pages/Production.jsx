@@ -7,6 +7,8 @@ import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
 import { CustomerLink } from '../components/PartyLink';
 import SearchInput from '../components/SearchInput';
+import FilterPicker from '../components/FilterPicker';
+import { useHeadOfficeFilter } from '../utils/useHeadOffice';
 
 const PAGE_SIZE = 10;
 
@@ -45,6 +47,15 @@ export default function Production() {
   const [stage, setStage] = useState('pending_for_scheduling');
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
+  // Filters (asked 2026-11-09). Office Location starts on the user's default office (Users > User
+  // Branches); null until known, and the list waits for it.
+  const [officeLocationId, setOfficeLocationId] = useHeadOfficeFilter();
+  const [jobLocationId, setJobLocationId] = useState('');
+  const [dateField, setDateField] = useState('forwarded');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [locations, setLocations] = useState([]);
+  useEffect(() => { api.get('/production/locations').then(({ data }) => setLocations(data)).catch(() => {}); }, []);
 
   async function load() {
     setLoading(true);
@@ -52,13 +63,20 @@ export default function Production() {
       : stage === 'advance_copy' ? { advance: 1 }
       : { stage };
     if (search) params.search = search;
+    if (officeLocationId) params.office_location_id = officeLocationId;
+    if (jobLocationId) params.job_location_id = jobLocationId;
+    if (dateFrom || dateTo) {
+      params.date_field = dateField;
+      if (dateFrom) params.date_from = dateFrom;
+      if (dateTo) params.date_to = dateTo;
+    }
     const { data } = await api.get('/production', { params });
     setRows(data.rows);
     setCounts(data.counts);
     setLoading(false);
   }
 
-  useEffect(() => { setPage(1); load(); }, [stage]);
+  useEffect(() => { if (officeLocationId === null) return; setPage(1); load(); }, [stage, officeLocationId === null]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function runSearch() {
     setPage(1);
@@ -82,6 +100,32 @@ export default function Production() {
             <div className="field">
               <label>General Searching</label>
               <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search..." />
+            </div>
+            <div className="field">
+              <label>Office Location</label>
+              <FilterPicker label="Office Location" items={locations} value={officeLocationId ?? ''} onChange={(v) => setOfficeLocationId(v)}
+                getLabel={(l) => l.location_name} allLabel="All" />
+            </div>
+            <div className="field">
+              <label>Job Location</label>
+              <FilterPicker label="Job Location" items={locations} value={jobLocationId} onChange={(v) => setJobLocationId(v)}
+                getLabel={(l) => l.location_name} allLabel="All" />
+            </div>
+            <div className="field">
+              <label>Date</label>
+              <select value={dateField} onChange={(e) => setDateField(e.target.value)}>
+                <option value="forwarded">Date Forwarded</option>
+                <option value="created">Date Created</option>
+                <option value="delivery">Delivery Date</option>
+              </select>
+            </div>
+            <div className="field">
+              <label>From</label>
+              <input type="date" value={dateFrom} max={dateTo || undefined} onChange={(e) => setDateFrom(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} />
+            </div>
+            <div className="field">
+              <label>To</label>
+              <input type="date" value={dateTo} min={dateFrom || undefined} onChange={(e) => setDateTo(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} />
             </div>
           </div>
           <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={runSearch}>Search</button>

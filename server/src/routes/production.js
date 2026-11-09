@@ -116,6 +116,7 @@ router.get('/', requireAuth, requireProductionView, async (req, res, next) => {
   try {
     const {
       stage, hold, search, sales_rep_id: salesRepId, job_location_id: jobLocationId, customer_id: customerId,
+      office_location_id: officeLocationId, date_field: dateField, date_from: dateFrom, date_to: dateTo,
     } = req.query;
 
     // Advance copies have no production_stage -- that is what makes them advance copies -- so
@@ -175,6 +176,19 @@ router.get('/', requireAuth, requireProductionView, async (req, res, next) => {
     if (salesRepId) { commonWhere.push('so.sales_rep_id = ?'); commonParams.push(salesRepId); }
     if (jobLocationId) { commonWhere.push('jo.job_location_id = ?'); commonParams.push(jobLocationId); }
     if (customerId) { commonWhere.push('so.customer_id = ?'); commonParams.push(customerId); }
+    // Office Location (asked 2026-11-09; the screen starts on the user's default office): the
+    // SO's, or for an NSJO the NSSO's -- the same COALESCE the job order header reads.
+    if (officeLocationId) {
+      commonWhere.push('COALESCE(so.office_location_id, (SELECT nxo.office_location_id FROM non_standard_sales_orders nxo WHERE nxo.id = jo.nsso_id)) = ?');
+      commonParams.push(officeLocationId);
+    }
+    // Date From / To on Date Forwarded (default), Date Created or Delivery Date -- inclusive days,
+    // written as a range so the column's index still serves it.
+    const DATE_COLS = { forwarded: 'jo.date_forwarded', created: 'jo.created_at', delivery: 'jo.delivery_date' };
+    const dateCol = DATE_COLS[dateField] || DATE_COLS.forwarded;
+    const isDay = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || ''));
+    if (isDay(dateFrom)) { commonWhere.push(`${dateCol} >= ?`); commonParams.push(dateFrom); }
+    if (isDay(dateTo)) { commonWhere.push(`${dateCol} < DATE_ADD(?, INTERVAL 1 DAY)`); commonParams.push(dateTo); }
     if (search) {
       commonWhere.push('(jo.job_order_no LIKE ? OR so.sales_order_no LIKE ? OR c.name LIKE ? OR jo.description LIKE ?)');
       commonParams.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
@@ -226,7 +240,7 @@ router.get('/', requireAuth, requireProductionView, async (req, res, next) => {
     // own filters actually reference -- sales_orders for the sales-rep/customer filters and the
     // search, customers for the search, and nothing else. Dragging job_types, locations and two
     // copies of employees through a GROUP BY that never reads them measured 770ms against 137ms.
-    const needsSo = !!(salesRepId || customerId || search);
+    const needsSo = !!(salesRepId || customerId || search || officeLocationId);
     const countFrom = `FROM job_orders jo
        ${visibleJoin}
        ${needsSo ? 'LEFT JOIN sales_orders so ON so.id = jo.sales_order_id' : ''}
@@ -261,6 +275,15 @@ router.get('/', requireAuth, requireProductionView, async (req, res, next) => {
 // production-floor Processes column set (On Hand/Committed read live from
 // inventory_locations, Total Built/Total Completed/Back Order, Sales vs Production
 // Remarks) and no Design/Sales-approval action buttons (those only apply pre-Release).
+// The Job Location / Office Location filter choices -- here rather than /lookups/locations, which
+// needs Lookups rights a production user doesn't have.
+router.get('/locations', requireAuth, requireProductionView, async (req, res, next) => {
+  try {
+    const [rows] = await pool.query('SELECT id, location_name FROM locations WHERE is_active = 1 ORDER BY location_name');
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
 router.get('/:id', requireAuth, requireProductionView, async (req, res, next) => {
   try {
     const [[jo]] = await pool.query(
