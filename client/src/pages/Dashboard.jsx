@@ -326,12 +326,12 @@ function RoleDashboard() {
         </div>
       </div>
 
-      {data.role === 'admin' && <AdminDashboard data={data} user={user} navigate={navigate} />}
+      {data.role === 'admin' && <AdminDashboard data={data} user={user} navigate={navigate} showInstallCalendar={showInstallCalendar} />}
       {data.role === 'design_supervisor' && <DesignSupervisorDashboard data={data} user={user} navigate={navigate} />}
       {data.role === 'artist' && <ArtistDashboard data={data} user={user} navigate={navigate} />}
       {!['admin', 'design_supervisor', 'artist'].includes(data.role) && <SalesDashboard data={data} user={user} navigate={navigate} />}
-      {showInstallCalendar && (
-        // Production > Installation Planner's calendar, read only (asked 2026-11-09), for Account
+      {showInstallCalendar && data.role !== 'admin' && (
+        // On the admin dashboard AdminDashboard places it itself (in the sales trend's panel). Production > Installation Planner's calendar, read only (asked 2026-11-09), for Account
         // Officers, SBUs, Marketing, Sales Managers and General Managers -- the server decides who.
         <div style={{ marginTop: 16 }}>
           <InstallationPlanner readOnly />
@@ -341,7 +341,7 @@ function RoleDashboard() {
   );
 }
 
-function AdminDashboard({ data, user, navigate }) {
+function AdminDashboard({ data, user, navigate, showInstallCalendar = false }) {
   // Whether this account may read the collection forecast at all. Asked here rather than
   // assumed from the admin dashboard: the panel below shows who owes the company what, and the
   // API refuses it without the page permission anyway.
@@ -413,6 +413,12 @@ function AdminDashboard({ data, user, navigate }) {
             <h3>Collection Forecast</h3>
             <CollectionForecastCalendar />
           </div>
+        ) : showInstallCalendar ? (
+          // SBUs, Account Officers, Marketing, Sales Managers (asked 2026-11-09): the installation
+          // schedule, read only, takes the sales trend's panel.
+          <div className="holo-card dash-chart-card" style={{ minWidth: 0 }}>
+            <InstallationPlanner readOnly />
+          </div>
         ) : (
           // Without Treasury access the calendar would render an empty month rather than a
           // refusal, which reads as a broken card -- so the trend stays for those accounts.
@@ -427,6 +433,10 @@ function AdminDashboard({ data, user, navigate }) {
           </div>
         )}
       </div>
+
+      {showInstallCalendar && (data.gmCards || isPlanner(user) || user?.account_type === 'System Admin' || canSeeCollections) && (
+        <div style={{ marginBottom: 20 }}><InstallationPlanner readOnly /></div>
+      )}
 
       <div className="holo-grid holo-grid-wide">
         {/* Invoiced sales net of VAT over the current year (1 Jan - 31 Dec), with each customer's share of them and
