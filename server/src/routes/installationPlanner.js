@@ -108,10 +108,13 @@ const vehicleName = (r) => {
 async function isDashboardReader(userId) {
   const [[u]] = await pool.query(
     `SELECT u.account_type, u.is_account_officer, u.is_sales_business_unit, u.is_sales_manager, u.is_sales_marketing_director,
-            d.name AS department_name
+            u.is_signage_planner, d.name AS department_name
        FROM users u LEFT JOIN employees e ON e.id = u.employee_id LEFT JOIN departments d ON d.id = e.department_id
       WHERE u.id = ? AND u.is_active = 1`, [userId]);
   if (!u) return false;
+  // A Signage Planner's dashboard IS the planner (asked 2026-11-09) -- with their own planner
+  // rights it is the full module; without them it still reads the calendar rather than failing.
+  if (u.is_signage_planner) return true;
   if (u.is_account_officer || u.is_sales_business_unit || u.is_sales_manager || u.is_sales_marketing_director) return true;
   if (['Sales Manager', 'General Manager', 'Sales Business Unit', 'Account Officer'].includes(u.account_type)) return true;
   if (/^\s*marketing\s*$/i.test(u.department_name || '')) return true;

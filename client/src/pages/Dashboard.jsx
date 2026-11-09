@@ -292,13 +292,18 @@ export default function Dashboard() {
 // The original dashboard, unchanged apart from being mounted behind the tab. Its /dashboard
 // request only fires when the tab is actually opened, so the feed doesn't pay for it.
 function RoleDashboard() {
-  const { user } = useAuth();
+  const { user, can } = useAuth();
+  // A Signage Planner's dashboard is the Installation Planner itself (asked 2026-11-09) -- the
+  // full module, every action their Installation Planner permissions allow; read only if they
+  // have none.
+  const signagePlanner = !!user?.is_signage_planner;
   const navigate = useNavigate();
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   useEffect(() => {
+    if (signagePlanner) { setLoading(false); return; }
     api.get('/dashboard')
       .then(({ data }) => setData(data))
       .catch(() => setError('Could not load dashboard data.'))
@@ -309,6 +314,7 @@ function RoleDashboard() {
     api.get('/installation-planner/dashboard-calendar').then(({ data: d }) => setShowInstallCalendar(!!d.show)).catch(() => {});
   }, []);
 
+  if (signagePlanner) return <InstallationPlanner readOnly={!can('/installation-planner', 'can_view')} />;
   if (loading) return <div className="holo-dashboard"><p className="holo-empty">Loading dashboard...</p></div>;
   if (error || !data) return <div className="holo-dashboard"><p className="holo-empty">{error || 'No data.'}</p></div>;
 

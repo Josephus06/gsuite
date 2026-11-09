@@ -63,7 +63,7 @@ export default function InstallationPlanner({ readOnly = false }) {
       setRights(data.rights);
       setPeople({ employees: data.employees, vehicles: data.vehicles });
     }).catch(() => {});
-  }, []);
+  }, [readOnly]); // a Signage Planner's Dashboard turns it off once their permissions load
 
   const [crew, setCrew] = useState([]);
   // Reschedules: what waits for the SBU, the dialog open, and a counter that reloads both after a change.
@@ -74,7 +74,7 @@ export default function InstallationPlanner({ readOnly = false }) {
   const reload = () => setReloadKey((n) => n + 1);
   useEffect(() => {
     if (!readOnly) api.get(`${API}/reschedules`, { params: { status: 'for_approval' } }).then(({ data }) => setPending(data)).catch(() => {});
-  }, [reloadKey]);
+  }, [reloadKey, readOnly]);
   // The search box (JO #, customer, project # / title), sent once typing pauses.
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
