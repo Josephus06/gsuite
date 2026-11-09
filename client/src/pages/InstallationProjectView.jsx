@@ -5,10 +5,12 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import Modal from '../components/Modal';
 import { displayDate, displayDateTime } from '../utils/dates';
 import {
-  API, BOM_LABEL, BlobImage, Check, ProgressBar, StatusBadge, errorOf, filePayload, openBlob, personName, slotHours, timeText, vehicleLabel,
+  API, BOM_LABEL, BlobImage, Check, ProgressBar, RESOURCES, StatusBadge, resourceList, resourceName, errorOf, filePayload, openBlob, personName, slotHours, timeText, vehicleLabel,
 } from './installation/common';
+import { DecisionModal, RESCHEDULE_BADGE, RESCHEDULE_LABEL, rangeLabel } from './installation/reschedule';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+const ROLE_BADGE = { installer: 'badge-info', subcon: 'badge-warning', driver: 'badge-success', vehicle: 'badge-muted' };
 const day10 = (v) => (v ? String(v).slice(0, 10) : '');
 // Every day from `from` to `to`, as YYYY-MM-DD.
 function daysBetween(from, to) {
@@ -112,12 +114,17 @@ export default function InstallationProjectView() {
             <Row label="Planner">{p.planner_name || '—'}</Row>
             <Row label="Driver">{p.driver_name || '—'}</Row>
             <Row label="Installers">{p.installers.length ? p.installers.map(personName).join(', ') : '—'}</Row>
-            <Row label="Subcons">{p.subcons.length ? p.subcons.map((s) => s.name).join(', ') : '—'}</Row>
+            <Row label="Subcons">
+              {p.subcons.length || (p.subcon_suppliers || []).length
+                ? [...p.subcons.map(personName), ...(p.subcon_suppliers || []).map((x) => `${x.name} (supplier)`)].join(', ')
+                : '—'}
+            </Row>
           </div>
         </div>
 
         {/* RIGHT */}
         <div style={{ display: 'grid', gap: 12, flex: '2 1 480px', minWidth: 0 }}>
+          {(p.reschedules || []).length > 0 && <Reschedules list={p.reschedules} onOpen={(request) => setModal({ kind: 'decision', request })} />}
           <CrewSchedule p={p} busy={busy} canEdit={r.can_edit} call={call}
             onAdd={(day) => setModal({ kind: 'slot', day })} onEdit={(slot) => setModal({ kind: 'slot', slot })} />
           <Checklist p={p} busy={busy} canTick={r.can_update} call={call} />
@@ -127,6 +134,9 @@ export default function InstallationProjectView() {
         </div>
       </div>
 
+      {modal?.kind === 'decision' && (
+        <DecisionModal request={modal.request} onClose={() => setModal(null)} onDone={() => { setModal(null); load(); }} />
+      )}
       {modal?.kind === 'slot' && (
         <SlotModal p={p} slot={modal.slot} day={modal.day} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} />
       )}
@@ -145,25 +155,60 @@ function Row({ label, children }) {
   );
 }
 
-// Installer Schedule: the project's days, each with who is on site and from what time to what time.
-// One installer can be on another project the same day at other hours; the server refuses overlaps.
+// The project's reschedule requests (dragged on the planner calendar), newest first; a waiting one on top
+// is what the SBU still has to decide.
+function Reschedules({ list, onOpen }) {
+  const waiting = list.find((x) => x.status === 'for_approval');
+  return (
+    <div className="card">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
+        <h3 style={{ margin: 0 }}>Reschedules</h3>
+        {waiting && <span className={`badge ${waiting.may_decide ? 'badge-danger' : 'badge-warning'}`}>{waiting.may_decide ? 'Waiting on you' : 'Waiting for the SBU'}</span>}
+      </div>
+      <div className="table-wrap" style={{ marginTop: 10 }}>
+        <table>
+          <thead><tr><th>Asked</th><th>From</th><th>To</th><th>Reason</th><th>Status</th></tr></thead>
+          <tbody>
+            {list.map((x) => (
+              <tr key={x.id} onClick={() => onOpen(x)} style={{ cursor: 'pointer' }}>
+                <td style={{ whiteSpace: 'nowrap' }}>{displayDateTime(x.requested_at)}<div className="muted" style={{ fontSize: 12 }}>{x.requested_by_name}</div></td>
+                <td>{rangeLabel(x.old_date_from, x.old_date_to)}</td>
+                <td><strong>{rangeLabel(x.new_date_from, x.new_date_to)}</strong></td>
+                <td>{x.reason_name}{x.remarks && <div className="muted" style={{ fontSize: 12 }}>{x.remarks}</div>}</td>
+                <td>
+                  <span className={`badge ${RESCHEDULE_BADGE[x.status]}`}>{RESCHEDULE_LABEL[x.status]}</span>
+                  {x.decided_by_name && <div className="muted" style={{ fontSize: 12 }}>{x.decided_by_name}{x.decision_note ? ` · ${x.decision_note}` : ''}</div>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// Crew & Vehicle Schedule: the project's days, each with who -- installers, subcons, drivers -- and
+// which vehicles are on it, from what time to what time. Any of them can be on another project the same
+// day at other hours; the server refuses overlaps.
 function CrewSchedule({ p, busy, canEdit, call, onAdd, onEdit }) {
   const days = daysBetween(day10(p.date_from), day10(p.date_to));
   const slots = p.crew_slots || [];
   const byDay = new Map(days.map((k) => [k, []]));
   const outside = [];
   for (const s of slots) (byDay.get(day10(s.work_date)) || outside).push(s);
-  // Hours per installer across the project.
+  // Hours per person / vehicle across the project.
   const totals = new Map();
   for (const s of slots) {
-    const name = personName(s);
+    const name = resourceName(s);
     totals.set(name, (totals.get(name) || 0) + slotHours(s));
   }
-  const remove = (s) => window.confirm(`Remove ${personName(s)} from ${day10(s.work_date)}, ${timeText(s.start_time)} – ${timeText(s.end_time)}?`)
+  const remove = (s) => window.confirm(`Remove ${resourceName(s)} from ${day10(s.work_date)}, ${timeText(s.start_time)} – ${timeText(s.end_time)}?`)
     && call(() => api.delete(`${API}/projects/${p.id}/crew/${s.id}`));
   const row = (s, flag) => (
     <tr key={s.id}>
-      <td><strong>{personName(s)}</strong>{flag && <span className="badge badge-danger" style={{ marginLeft: 6 }}>{flag}</span>}</td>
+      <td><span className={`badge ${ROLE_BADGE[s.role] || 'badge-muted'}`}>{RESOURCES[s.role]?.one || s.role}</span></td>
+      <td><strong>{resourceName(s)}</strong>{flag && <span className="badge badge-danger" style={{ marginLeft: 6 }}>{flag}</span>}</td>
       <td style={{ whiteSpace: 'nowrap' }}>{timeText(s.start_time)} – {timeText(s.end_time)}</td>
       <td style={{ whiteSpace: 'nowrap' }}>{hoursText(slotHours(s))}</td>
       <td>{s.note || ''}</td>
@@ -178,17 +223,17 @@ function CrewSchedule({ p, busy, canEdit, call, onAdd, onEdit }) {
   return (
     <div className="card">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-        <h3 style={{ margin: 0 }}>Installer Schedule <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>{days.length} day(s) · {slots.length} slot(s)</span></h3>
-        {canEdit && days.length > 0 && <button type="button" className="btn btn-sm btn-primary" onClick={() => onAdd(days[0])}>+ Assign Installer</button>}
+        <h3 style={{ margin: 0 }}>Crew &amp; Vehicle Schedule <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>{days.length} day(s) · {slots.length} slot(s)</span></h3>
+        {canEdit && days.length > 0 && <button type="button" className="btn btn-sm btn-primary" onClick={() => onAdd(days[0])}>+ Assign</button>}
       </div>
-      {days.length === 0 ? <p className="muted">Set the project's Timeline From / To (Edit) to schedule installers on its days.</p> : (
+      {days.length === 0 ? <p className="muted">Set the project's Timeline From / To (Edit) to schedule the crew and vehicles on its days.</p> : (
         <div className="table-wrap" style={{ marginTop: 10 }}>
           <table>
-            <thead><tr><th>Installer</th><th>Time</th><th>Hours</th><th>Note</th>{canEdit && <th />}</tr></thead>
+            <thead><tr><th>As</th><th>Who / What</th><th>Time</th><th>Hours</th><th>Note</th>{canEdit && <th />}</tr></thead>
             <tbody>
               {days.map((k) => [
                 <tr key={k}>
-                  <th colSpan={canEdit ? 5 : 4} style={{ background: 'var(--border)' }}>
+                  <th colSpan={canEdit ? 6 : 5} style={{ background: 'var(--border)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                       <span>{weekday(k)}, {displayDate(k)}</span>
                       {canEdit && <button type="button" className="btn btn-sm" onClick={() => onAdd(k)}>+ Add</button>}
@@ -196,11 +241,11 @@ function CrewSchedule({ p, busy, canEdit, call, onAdd, onEdit }) {
                   </th>
                 </tr>,
                 ...(byDay.get(k).length ? byDay.get(k).map((s) => row(s)) : [
-                  <tr key={`${k}-none`}><td colSpan={canEdit ? 5 : 4} className="muted">No installer scheduled.</td></tr>,
+                  <tr key={`${k}-none`}><td colSpan={canEdit ? 6 : 5} className="muted">Nobody scheduled.</td></tr>,
                 ]),
               ])}
               {outside.length > 0 && [
-                <tr key="outside"><th colSpan={canEdit ? 5 : 4} style={{ background: 'var(--border)' }}>Outside the timeline (the dates were changed)</th></tr>,
+                <tr key="outside"><th colSpan={canEdit ? 6 : 5} style={{ background: 'var(--border)' }}>Outside the timeline (the dates were changed)</th></tr>,
                 ...outside.map((s) => row(s, displayDate(s.work_date))),
               ]}
             </tbody>
@@ -216,14 +261,15 @@ function CrewSchedule({ p, busy, canEdit, call, onAdd, onEdit }) {
   );
 }
 
-// Assign (or change) one installer's hours. A new assignment can repeat the same hours on several of the
+// Assign (or change) the hours of one installer, subcon, driver or vehicle. A new assignment can repeat the same hours on several of the
 // project's days at once (e.g. Nov 8-10, 8:00 AM - 11:30 AM). Shows what the installer already has on
 // the day, on every project, so a free window is easy to see.
 function SlotModal({ p, slot, day, onClose, onSaved }) {
   const days = daysBetween(day10(p.date_from), day10(p.date_to));
-  const [employees, setEmployees] = useState(null);
+  const [meta, setMeta] = useState(null);
+  const [role, setRole] = useState(slot?.role || 'installer');
   const [form, setForm] = useState({
-    employee_id: slot?.employee_id || '',
+    who: slot ? String(slot.role === 'vehicle' ? slot.asset_id : slot.employee_id) : '',
     start_time: slot ? String(slot.start_time).slice(0, 5) : '08:00',
     end_time: slot ? String(slot.end_time).slice(0, 5) : '11:30',
     note: slot?.note || '',
@@ -235,21 +281,34 @@ function SlotModal({ p, slot, day, onClose, onSaved }) {
   const [busy, setBusy] = useState(false);
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
 
-  useEffect(() => { api.get(`${API}/meta`).then(({ data }) => setEmployees(data.employees)).catch((err) => setError(errorOf(err))); }, []);
-  // The installer's slots on the chosen days, on every project.
+  useEffect(() => { api.get(`${API}/meta`).then(({ data }) => setMeta(data)).catch((err) => setError(errorOf(err))); }, []);
+  const isVehicle = role === 'vehicle';
+  // Their slots on the chosen days, on every project and in any role -- a person is one person.
   useEffect(() => {
-    if (!form.employee_id || !picked.length) { setTaken([]); return; }
+    if (!form.who || !picked.length) { setTaken([]); return; }
     const sorted = [...picked].sort();
-    api.get(`${API}/crew`, { params: { from: sorted[0], to: sorted[sorted.length - 1], employee_id: form.employee_id } })
+    api.get(`${API}/crew`, { params: { from: sorted[0], to: sorted[sorted.length - 1], [isVehicle ? 'asset_id' : 'employee_id']: form.who } })
       .then(({ data }) => setTaken(data.filter((s) => picked.includes(day10(s.work_date)) && s.id !== slot?.id)))
       .catch(() => {});
-  }, [form.employee_id, picked.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [form.who, role, picked.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const crewIds = new Set(p.installers.map((e) => Number(e.id)));
-  // Position Code INSTALLER (or already on this project's crew); the project's installers first.
-  const options = employees
-    ? employees.filter((e) => e.is_installer || crewIds.has(Number(e.id))).sort((a, b) => (crewIds.has(Number(b.id)) - crewIds.has(Number(a.id))))
-    : [];
+  // Already on this project in that role: ★, and listed first.
+  const onProject = new Set((role === 'installer' ? p.installers : role === 'subcon' ? p.subcons : role === 'vehicle' ? p.vehicles
+    : (p.driver_employee_id ? [{ id: p.driver_employee_id }] : [])).map((x) => Number(x.id)));
+  // Everyone of that kind, plus anyone already on the project who no longer has the Position Code (so an
+  // older slot can still be edited); the project's own first.
+  let options = [];
+  if (meta) {
+    options = resourceList(role, meta);
+    const onProjectRows = role === 'installer' ? p.installers : role === 'subcon' ? p.subcons : role === 'vehicle' ? p.vehicles : [];
+    for (const x of onProjectRows) {
+      if (!options.some((o) => Number(o.id) === Number(x.id))) {
+        options.push({ id: x.id, name: role === 'vehicle' ? vehicleLabel(x) : personName(x) });
+      }
+    }
+    options.sort((a, b) => onProject.has(Number(b.id)) - onProject.has(Number(a.id)) || a.name.localeCompare(b.name));
+  }
+  const R = RESOURCES[role];
   const overlaps = (s) => String(s.start_time).slice(0, 5) < form.end_time && String(s.end_time).slice(0, 5) > form.start_time;
 
   async function save(e) {
@@ -257,7 +316,10 @@ function SlotModal({ p, slot, day, onClose, onSaved }) {
     if (!picked.length) { setError('Pick at least one day.'); return; }
     setBusy(true);
     setError('');
-    const body = (work_date) => ({ ...form, work_date });
+    const body = (work_date) => ({
+      role, start_time: form.start_time, end_time: form.end_time, note: form.note, work_date,
+      [isVehicle ? 'asset_id' : 'employee_id']: form.who,
+    });
     if (slot) {
       try { await api.put(`${API}/projects/${p.id}/crew/${slot.id}`, body(picked[0])); onSaved(); } catch (err) { setError(errorOf(err)); setBusy(false); }
       return;
@@ -280,21 +342,32 @@ function SlotModal({ p, slot, day, onClose, onSaved }) {
   const close = savedSome ? onSaved : onClose;
 
   return (
-    <Modal title={slot ? 'Change Installer Slot' : 'Assign Installer'} onClose={close}>
+    <Modal title={slot ? `Change ${R.one} Slot` : 'Assign to the Schedule'} onClose={close}>
       {error && <div className="error-banner">{error}</div>}
-      {!employees ? <LoadingSpinner /> : (
+      {!meta ? <LoadingSpinner /> : (
         <form onSubmit={save}>
           <div className="field">
-            <label>Installer *</label>
-            <select required value={form.employee_id} onChange={(e) => set({ employee_id: e.target.value })}>
-              <option value="">-- Select Installer --</option>
-              {options.map((e) => (
-                <option key={e.id} value={e.id}>{personName(e)}{crewIds.has(Number(e.id)) ? ' ★ on this project' : e.department_name ? ` · ${e.department_name}` : ''}</option>
+            <label>As *</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap' }}>
+              {Object.entries(RESOURCES).map(([k, cfg]) => (
+                <button key={k} type="button" className={`btn btn-sm ${role === k ? 'btn-primary' : ''}`} disabled={!!slot}
+                  onClick={() => { setRole(k); set({ who: '' }); }}>{cfg.one}</button>
+              ))}
+            </div>
+          </div>
+          <div className="field">
+            <label>{R.one} *</label>
+            <select required value={form.who} onChange={(e) => set({ who: e.target.value })}>
+              <option value="">-- Select {R.one} --</option>
+              {options.map((x) => (
+                <option key={x.id} value={x.id}>{x.name}{onProject.has(Number(x.id)) ? ' ★ on this project' : ''}</option>
               ))}
             </select>
             <div className="muted" style={{ fontSize: 12 }}>
-              Employees with Position Code INSTALLER. ★ = already on this project; anyone else you schedule is added to its crew.
+              {isVehicle ? 'Vehicles in Assets > Fleet.' : `Employees with Position Code ${R.code}.`} ★ = already on this project;
+              {role === 'driver' ? ' a driver you schedule becomes the project\'s driver if it has none.' : ` any other you schedule is added to the project's ${R.plural.toLowerCase()}.`}
             </div>
+            {options.length === 0 && <div className="muted" style={{ fontSize: 12 }}>{R.none}</div>}
           </div>
           <div className="field">
             <label>{slot ? 'Day *' : 'Day(s) *'}</label>
@@ -323,12 +396,12 @@ function SlotModal({ p, slot, day, onClose, onSaved }) {
           </div>
           <div className="field"><label>Note</label><input maxLength={500} value={form.note} placeholder="e.g. mounting, wiring" onChange={(e) => set({ note: e.target.value })} /></div>
 
-          {form.employee_id && (
+          {form.who && (
             <div className="card" style={{ padding: 10, marginTop: 8 }}>
               <strong style={{ fontSize: 13 }}>Already scheduled on {picked.length > 1 ? 'these days' : 'this day'}</strong>
               {taken.length === 0 ? <div className="muted" style={{ fontSize: 12 }}>Nothing -- free all day.</div> : taken.map((s) => (
                 <div key={s.id} style={{ fontSize: 12, marginTop: 4, color: overlaps(s) ? 'var(--color-danger-text, #b91c1c)' : undefined }}>
-                  {picked.length > 1 && `${displayDate(s.work_date)} · `}{timeText(s.start_time)} – {timeText(s.end_time)} · {s.project_no}{s.job_order_no ? ` (${s.job_order_no})` : ''} {s.project_id === p.id ? '· this project' : `· ${s.project_title}`}
+                  {picked.length > 1 && `${displayDate(s.work_date)} · `}{timeText(s.start_time)} – {timeText(s.end_time)}{s.role !== role ? ` · as ${RESOURCES[s.role]?.one.toLowerCase()}` : ''} · {s.project_no}{s.job_order_no ? ` (${s.job_order_no})` : ''} {s.project_id === p.id ? '· this project' : `· ${s.project_title}`}
                   {overlaps(s) && <strong> -- overlaps the hours above</strong>}
                 </div>
               ))}

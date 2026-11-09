@@ -19,6 +19,32 @@ export const vehicleLabel = (v) => {
   return v.plate_no ? `${name} (${v.plate_no})` : name;
 };
 
+// What the Crew & Vehicle Schedule books (2026-11-09): three kinds of employee, by Position Code, and the
+// Assets > Fleet vehicles. `flag` is the employee's flag from /meta.
+export const RESOURCES = {
+  installer: { one: 'Installer', plural: 'Installers', flag: 'is_installer', code: 'INSTALLER' },
+  subcon: { one: 'Subcon', plural: 'Subcons', flag: 'is_subcon', code: 'SUBCON' },
+  driver: { one: 'Driver', plural: 'Drivers', flag: 'is_driver', code: 'DRIVER' },
+  vehicle: { one: 'Vehicle', plural: 'Vehicles' },
+};
+for (const [k, r] of Object.entries(RESOURCES)) {
+  r.key = k;
+  r.none = k === 'vehicle'
+    ? 'No vehicles yet -- add them in Assets > Fleet.'
+    : `No ${r.plural.toLowerCase()} yet -- set Position Code ${r.code} on their employee records.`;
+}
+// A slot's (or a list entry's) key: 'v<asset id>' for a vehicle, 'e<employee id>' for a person.
+export const resourceKey = (s) => (s.role === 'vehicle' ? `v${s.asset_id}` : `e${s.employee_id}`);
+export const resourceName = (s) => (s.role === 'vehicle'
+  ? vehicleLabel({ ...s, id: s.asset_id })
+  : [s.first_name, s.last_name].filter(Boolean).join(' '));
+// Everyone (or every vehicle) of one kind, as { key, id, name }.
+export function resourceList(kind, { employees = [], vehicles = [] }) {
+  if (kind === 'vehicle') return vehicles.map((v) => ({ key: `v${v.id}`, id: v.id, name: vehicleLabel(v) }));
+  const flag = RESOURCES[kind].flag;
+  return employees.filter((e) => e[flag]).map((e) => ({ key: `e${e.id}`, id: e.id, name: personName(e) }));
+}
+
 // "13:30:00" -> "1:30 PM"
 export function timeText(t) {
   const [h, m] = String(t || '').split(':').map(Number);

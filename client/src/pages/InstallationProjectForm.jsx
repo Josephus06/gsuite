@@ -256,8 +256,18 @@ export default function InstallationProjectForm() {
             </div>
             <div className="field">
               <label>Subcon(s) Involved</label>
-              <MultiPick items={meta.suppliers} value={form.subcons} onChange={(v) => set({ subcons: v })}
-                getLabel={(s) => s.name} getSub={(s) => s.supplier_code} placeholder="Select subcontractors (suppliers)..." />
+              {/* Employees with Position Code SUBCON (2026-11-09) -- plus anyone already on this project. */}
+              <MultiPick items={meta.employees.filter((e) => e.is_subcon || form.subcons.includes(Number(e.id)))}
+                value={form.subcons} onChange={(v) => set({ subcons: v })}
+                getLabel={empLabel} getSub={(e) => e.department_name} placeholder="Select subcons..." />
+              {!meta.employees.some((e) => e.is_subcon) && (
+                <div className="muted" style={{ fontSize: 12 }}>No employee has Position Code SUBCON yet -- set it on their employee record.</div>
+              )}
+              {(project?.subcon_suppliers || []).length > 0 && (
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Named before as suppliers: {project.subcon_suppliers.map((x) => x.name).join(', ')} (kept as they were).
+                </div>
+              )}
             </div>
             <div className="field">
               <Check checked={form.needs_safety_officer} style={{ marginBottom: 6 }}

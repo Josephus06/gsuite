@@ -1,8 +1,10 @@
 const express = require('express');
 const pool = require('../db');
 const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
+const { sbuCanApproveDepartment } = require('../lib/sbuGroups');
+const { insertFor } = require('../lib/approvalNotifications');
 const { shrinkFile } = require('../lib/shrinkFile');
-const { todayPh } = require('../lib/fleet');
+const { todayPh, loadVehicles } = require('../lib/fleet');
 
 // Production > Installation Planner (2026-11-09). The PLANNER app's Project module and planner
 // dashboard calendar, in T1S; the tables and the reasons are in db/add-installation-planner.js.
@@ -65,11 +67,52 @@ async function driverProblem(conn, driverId, projectId) {
 const notInstallerError = (rows) => `${rows.map((e) => `${e.first_name} ${e.last_name}`).join(', ')} `
   + `${rows.length > 1 ? 'are' : 'is'} not an installer -- set their Position Code to INSTALLER on the employee record first.`;
 
+// Subcons (asked 2026-11-09): employees whose Position Code is SUBCON, booked by time like installers.
+// As with installers, someone already a subcon on the project stays allowed there.
+const IS_SUBCON = "UPPER(TRIM(COALESCE(e.position_code, ''))) = 'SUBCON'";
+async function notSubcons(conn, employeeIds, projectId) {
+  if (!employeeIds.length) return [];
+  const [rows] = await conn.query(
+    `SELECT e.id, e.first_name, e.last_name FROM employees e
+      WHERE e.id IN (?) AND NOT (${IS_SUBCON})
+        AND e.id NOT IN (SELECT employee_id FROM installation_project_subcon_employees WHERE project_id = ?)`,
+    [employeeIds, projectId || 0]);
+  return rows;
+}
+const notSubconError = (rows) => `${rows.map((e) => `${e.first_name} ${e.last_name}`).join(', ')} `
+  + `${rows.length > 1 ? 'are' : 'is'} not a subcon -- set their Position Code to SUBCON on the employee record first.`;
+
+// The vehicles are Assets > Fleet's own list (lib/fleet.js loadVehicles -- what that page shows under
+// "All vehicles"), named as it names them: make and model (else the asset's brand / model), plate.
+async function fleetVehicles(assetId = null) {
+  const rows = await loadVehicles(pool, assetId).catch(() => []);
+  return rows.map((v) => ({
+    id: Number(v.asset_id), plate_no: v.plate_no || null,
+    make: v.make || v.brand || null, model: v.model || v.asset_model || null,
+    asset_name: v.asset_name || null, reference_no: v.reference_no || null,
+  }));
+}
+async function isFleetVehicle(conn, assetId) {
+  return (await fleetVehicles(Number(assetId))).length > 0;
+}
+const vehicleName = (r) => {
+  const name = [r.make, r.model].filter(Boolean).join(' ') || r.asset_name || r.reference_no || `Asset #${r.asset_id}`;
+  return r.plate_no ? `${name} (${r.plate_no})` : name;
+};
+
 // A JO is installation work when its Job Type is one or any of its processes is one -- the same test
 // as Sales > Installation Orders per Month (routes/installationOrdersReport.js).
 const INSTAL_JO = `(jt.display_name LIKE '%INSTAL%' OR EXISTS (
     SELECT 1 FROM job_order_processes jop JOIN processes p ON p.id = jop.process_id
      WHERE jop.job_order_id = jo.id AND p.process_name LIKE '%INSTAL%'))`;
+
+// The calendar's search box (asked 2026-11-09): a project (alias p, its JO as jo) matches on its JO #,
+// its customer's name (through the JO's SO or NSSO), its project # or its title. Subqueries rather than
+// joins, so it drops into any query that already has p and jo.
+const PROJECT_SEARCH = `(jo.job_order_no LIKE ? OR p.project_no LIKE ? OR p.title LIKE ?
+  OR EXISTS (SELECT 1 FROM sales_orders so2 JOIN customers c2 ON c2.id = so2.customer_id WHERE so2.id = jo.sales_order_id AND c2.name LIKE ?)
+  OR EXISTS (SELECT 1 FROM non_standard_sales_orders ns2 JOIN customers c3 ON c3.id = ns2.customer_id WHERE ns2.id = jo.nsso_id AND c3.name LIKE ?))`;
+const PROJECT_SEARCH_ARGS = 5;
 
 // A data: URL or bare base64 from the browser's FileReader -> a Buffer.
 function decodeUpload(body) {
@@ -142,21 +185,14 @@ router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
     const [categories] = await pool.query('SELECT id, name, is_active FROM installation_categories ORDER BY name');
     const [employees] = await pool.query(
       `SELECT e.id, e.first_name, e.last_name, e.employee_code, e.position_title, dp.name AS department_name,
-              (${IS_INSTALLER}) AS is_installer, (${IS_DRIVER}) AS is_driver
+              (${IS_INSTALLER}) AS is_installer, (${IS_DRIVER}) AS is_driver, (${IS_SUBCON}) AS is_subcon
          FROM employees e LEFT JOIN departments dp ON dp.id = e.department_id
         WHERE e.is_active = 1 ORDER BY e.first_name, e.last_name`);
-    for (const e of employees) { e.is_installer = !!Number(e.is_installer); e.is_driver = !!Number(e.is_driver); }
+    for (const e of employees) { e.is_installer = !!Number(e.is_installer); e.is_driver = !!Number(e.is_driver); e.is_subcon = !!Number(e.is_subcon); }
     const [suppliers] = await pool.query('SELECT id, supplier_code, name FROM suppliers ORDER BY name').catch(() => [[]]);
     // Assets > Fleet's vehicles: assets with vehicle details or a vehicle class / item.
-    const [vehicles] = await pool.query(
-      `SELECT a.id, v.plate_no, v.make, v.model, ai.display_name AS asset_name, a.reference_no
-         FROM assets a
-         LEFT JOIN asset_classes ac ON ac.id = a.asset_class_id
-         LEFT JOIN asset_items ai ON ai.id = a.asset_item_id
-         LEFT JOIN vehicle_details v ON v.asset_id = a.id
-        WHERE v.asset_id IS NOT NULL OR ac.name LIKE '%Transport%' OR ac.name LIKE '%Vehicle%'
-           OR ai.category LIKE '%Vehicle%' OR ai.category LIKE '%Transport%'
-        ORDER BY v.plate_no IS NULL, v.plate_no, a.id`).catch(() => [[]]);
+    // Assets > Fleet (Vehicles), exactly: the same list as that page's "All vehicles" (lib/fleet.js).
+    const vehicles = await fleetVehicles();
     res.json({ categories, employees, suppliers, vehicles, statuses: STATUSES, rights: await rightsOf(req.user.id), today: todayPh() });
   } catch (err) { next(err); }
 });
@@ -210,21 +246,38 @@ router.get('/events', requireAuth, requirePermission(ROUTE, 'can_view'), async (
   try {
     const { from, to } = req.query;
     if (!isDate(from) || !isDate(to)) return errorOut(res, 400, 'from and to (YYYY-MM-DD) are required');
-    const where = ['p.date_from IS NOT NULL', 'p.date_from <= ?', 'COALESCE(p.date_to, p.date_from) >= ?'];
-    const params = [to, from];
+    const where = [`((p.date_from IS NOT NULL AND p.date_from <= ? AND COALESCE(p.date_to, p.date_from) >= ?)
+                    OR (rr.id IS NOT NULL AND rr.new_date_from <= ? AND rr.new_date_to >= ?))`];
+    const params = [to, from, to, from];
     if (STATUSES.includes(req.query.status)) { where.push('p.status = ?'); params.push(req.query.status); }
-    // One installer's projects: on the crew, or booked on the Installer Schedule.
+    // One person's projects -- an installer or subcon on it, its driver, or booked on its schedule --
+    // or one vehicle's: on the project, or booked on its schedule.
     if (idOrNull(req.query.employee_id)) {
-      where.push(`(EXISTS (SELECT 1 FROM installation_project_installers i WHERE i.project_id = p.id AND i.employee_id = ?)
+      const eid = Number(req.query.employee_id);
+      where.push(`(p.driver_employee_id = ?
+                   OR EXISTS (SELECT 1 FROM installation_project_installers i WHERE i.project_id = p.id AND i.employee_id = ?)
+                   OR EXISTS (SELECT 1 FROM installation_project_subcon_employees se WHERE se.project_id = p.id AND se.employee_id = ?)
                    OR EXISTS (SELECT 1 FROM installation_crew_slots s WHERE s.project_id = p.id AND s.employee_id = ?))`);
-      params.push(Number(req.query.employee_id), Number(req.query.employee_id));
+      params.push(eid, eid, eid, eid);
+    }
+    if (idOrNull(req.query.asset_id)) {
+      const aid = Number(req.query.asset_id);
+      where.push(`(EXISTS (SELECT 1 FROM installation_project_vehicles pv WHERE pv.project_id = p.id AND pv.asset_id = ?)
+                   OR EXISTS (SELECT 1 FROM installation_crew_slots s WHERE s.project_id = p.id AND s.asset_id = ?))`);
+      params.push(aid, aid);
+    }
+    if (String(req.query.search || '').trim()) {
+      where.push(PROJECT_SEARCH);
+      params.push(...Array(PROJECT_SEARCH_ARGS).fill(`%${String(req.query.search).trim()}%`));
     }
     const [rows] = await pool.query(
       `SELECT p.id, p.project_no, p.title, p.status, p.progress, p.date_from, COALESCE(p.date_to, p.date_from) AS date_to,
-              c.name AS category_name, jo.job_order_no
+              c.name AS category_name, jo.job_order_no,
+              rr.id AS pending_id, rr.new_date_from AS pending_from, rr.new_date_to AS pending_to, rr.reason_name AS pending_reason
          FROM installation_projects p
          LEFT JOIN installation_categories c ON c.id = p.category_id
          LEFT JOIN job_orders jo ON jo.id = p.job_order_id
+         LEFT JOIN installation_reschedule_requests rr ON rr.project_id = p.id AND rr.status = 'for_approval'
         WHERE ${where.join(' AND ')}
         ORDER BY p.date_from, p.id`, params);
     res.json(rows);
@@ -255,7 +308,7 @@ router.get('/projects/:id', requireAuth, requirePermission(ROUTE, 'can_view'), a
     const [[p]] = await pool.query(`${PROJECT_SELECT} WHERE p.id = ?`, [req.params.id]);
     if (!p) return errorOut(res, 404, 'Project not found');
     const id = p.id;
-    const [[installers], [subcons], [vehicles], [files], [checklist], [bom], [updates], [crew]] = await Promise.all([
+    const [[installers], [subconSuppliers], [vehicles], [files], [checklist], [bom], [updates], [crew], [reschedules], [subcons]] = await Promise.all([
       pool.query(
         `SELECT e.id, e.first_name, e.last_name FROM installation_project_installers x JOIN employees e ON e.id = x.employee_id
           WHERE x.project_id = ? ORDER BY e.first_name, e.last_name`, [id]),
@@ -263,7 +316,7 @@ router.get('/projects/:id', requireAuth, requirePermission(ROUTE, 'can_view'), a
         `SELECT s.id, s.name FROM installation_project_subcons x JOIN suppliers s ON s.id = x.supplier_id
           WHERE x.project_id = ? ORDER BY s.name`, [id]).catch(() => [[]]),
       pool.query(
-        `SELECT a.id, v.plate_no, v.make, v.model, ai.display_name AS asset_name, a.reference_no
+        `SELECT a.id, v.plate_no, COALESCE(v.make, a.brand) AS make, COALESCE(v.model, a.model) AS model, ai.display_name AS asset_name, a.reference_no
            FROM installation_project_vehicles x JOIN assets a ON a.id = x.asset_id
            LEFT JOIN vehicle_details v ON v.asset_id = a.id LEFT JOIN asset_items ai ON ai.id = a.asset_item_id
           WHERE x.project_id = ?`, [id]).catch(() => [[]]),
@@ -283,9 +336,14 @@ router.get('/projects/:id', requireAuth, requirePermission(ROUTE, 'can_view'), a
            FROM installation_progress_updates g LEFT JOIN users u ON u.id = g.created_by_user_id
           WHERE g.project_id = ? ORDER BY g.created_at DESC, g.id DESC`, [id]),
       pool.query(`${CREW_SELECT} WHERE s.project_id = ? ORDER BY s.work_date, s.start_time, e.first_name`, [id]),
+      pool.query(`${RESCHEDULE_SELECT} WHERE r.project_id = ? ORDER BY r.requested_at DESC, r.id DESC`, [id]),
+      pool.query(
+        `SELECT e.id, e.first_name, e.last_name FROM installation_project_subcon_employees x JOIN employees e ON e.id = x.employee_id
+          WHERE x.project_id = ? ORDER BY e.first_name, e.last_name`, [id]),
     ]);
     res.json({
-      ...p, installers, subcons, vehicles, checklist, bom_items: bom, updates, crew_slots: crew,
+      ...p, installers, subcons, subcon_suppliers: subconSuppliers, vehicles, checklist, bom_items: bom, updates, crew_slots: crew,
+      reschedules: await withActions(reschedules, req.user.id),
       files: Object.fromEntries(files.map((f) => [f.kind, f])),
       rights: await rightsOf(req.user.id),
     });
@@ -332,7 +390,7 @@ function readProject(body) {
 async function syncTeam(conn, projectId, r) {
   const sets = [
     ['installation_project_installers', 'employee_id', r.installers],
-    ['installation_project_subcons', 'supplier_id', r.subcons],
+    ['installation_project_subcon_employees', 'employee_id', r.subcons],
     ['installation_project_vehicles', 'asset_id', r.vehicles],
   ];
   for (const [table, col, list] of sets) {
@@ -348,6 +406,8 @@ router.post('/projects', requireAuth, requirePermission(ROUTE, 'can_add'), async
   try {
     const bad = await notInstallers(conn, r.installers, null);
     if (bad.length) return errorOut(res, 400, notInstallerError(bad));
+    const badSub = await notSubcons(conn, r.subcons, null);
+    if (badSub.length) return errorOut(res, 400, notSubconError(badSub));
     const noDriver = await driverProblem(conn, r.values.driver_employee_id, null);
     if (noDriver) return errorOut(res, 400, noDriver);
     await conn.beginTransaction();
@@ -378,16 +438,27 @@ router.put('/projects/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), a
     if (!p) return errorOut(res, 404, 'Project not found');
     const bad = await notInstallers(conn, r.installers, p.id);
     if (bad.length) return errorOut(res, 400, notInstallerError(bad));
+    const badSub = await notSubcons(conn, r.subcons, p.id);
+    if (badSub.length) return errorOut(res, 400, notSubconError(badSub));
     const noDriver = await driverProblem(conn, r.values.driver_employee_id, p.id);
     if (noDriver) return errorOut(res, 400, noDriver);
-    // An installer still on the Installer Schedule stays on the crew until their slots are removed.
-    const [booked] = await conn.query(
-      `SELECT e.first_name, e.last_name, COUNT(*) AS n FROM installation_crew_slots s JOIN employees e ON e.id = s.employee_id
-        WHERE s.project_id = ? ${r.installers.length ? 'AND s.employee_id NOT IN (?)' : ''} GROUP BY s.employee_id`,
-      r.installers.length ? [p.id, r.installers] : [p.id]);
-    if (booked.length) {
-      return errorOut(res, 409, `${booked.map((b) => `${b.first_name} ${b.last_name} (${b.n} slot${b.n > 1 ? 's' : ''})`).join(', ')} `
-        + 'still on the Installer Schedule -- remove their slots on the project page first, or keep them as installers.');
+    // An installer, subcon or vehicle still on the schedule stays on the project until its slots go.
+    const keep = { installer: r.installers, subcon: r.subcons, vehicle: r.vehicles };
+    const stillBooked = [];
+    for (const [role, list] of Object.entries(keep)) {
+      const col = role === 'vehicle' ? 'asset_id' : 'employee_id';
+      const [rows] = await conn.query(
+        `${CREW_SELECT} WHERE s.project_id = ? AND s.role = ? ${list.length ? `AND s.${col} NOT IN (?)` : ''}`,
+        list.length ? [p.id, role, list] : [p.id, role]);
+      const counts = new Map();
+      for (const x of rows) {
+        const name = role === 'vehicle' ? vehicleName(x) : `${x.first_name} ${x.last_name}`;
+        counts.set(name, (counts.get(name) || 0) + 1);
+      }
+      for (const [name, n] of counts) stillBooked.push(`${name} (${n} ${role} slot${n > 1 ? 's' : ''})`);
+    }
+    if (stillBooked.length) {
+      return errorOut(res, 409, `${stillBooked.join(', ')} still on the Crew & Vehicle Schedule -- remove those slots on the project page first, or keep them on the project.`);
     }
     await conn.beginTransaction();
     await conn.query('UPDATE installation_projects SET ? WHERE id = ?', [r.values, p.id]);
@@ -567,22 +638,30 @@ router.delete('/projects/:id/bom-items/:itemId', requireAuth, requirePermission(
   } catch (err) { next(err); }
 });
 
-// ---------------------------------------------------------------- installer schedule (crew slots)
+// ---------------------------------------------------------------- crew & vehicle schedule (slots)
 
-// Which installer is on which project, on which day, from what time to what time. One installer may
-// work two projects the same day (JO-123 8:00-11:30, JO-321 1:00-4:30) but not two at once: a slot
-// that overlaps one of theirs on any project -- other than a cancelled one -- is refused, naming it.
+// Who -- or which vehicle -- is on which project, on which day, from what time to what time. Four
+// roles (2026-11-09): installer, subcon and driver are employees (Position Code INSTALLER / SUBCON /
+// DRIVER), vehicle is an Assets > Fleet asset. One person or vehicle may be on two projects the same day
+// (JO-123 8:00-11:30, JO-321 1:00-4:30) but not on two at once: a slot that overlaps one of theirs on any
+// project -- other than a cancelled one -- is refused, naming it. A person is one person whatever the
+// role, so an overlap is checked across all of their slots.
+const SLOT_ROLES = ['installer', 'subcon', 'driver', 'vehicle'];
+const ROLE_LABEL = { installer: 'installer', subcon: 'subcon', driver: 'driver', vehicle: 'vehicle' };
 const TIME = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
 const hm = (t) => String(t).slice(0, 5);
 const ampm = (t) => { const [h, m] = hm(t).split(':').map(Number); return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
 const CREW_SELECT = `
-  SELECT s.id, s.project_id, s.employee_id, s.work_date, s.start_time, s.end_time, s.note,
+  SELECT s.id, s.project_id, s.role, s.employee_id, s.asset_id, s.work_date, s.start_time, s.end_time, s.note,
          e.first_name, e.last_name, p.project_no, p.title AS project_title, p.status AS project_status,
-         jo.job_order_no
+         jo.job_order_no, vd.plate_no, COALESCE(vd.make, va.brand) AS make, COALESCE(vd.model, va.model) AS model, vai.display_name AS asset_name, va.reference_no
     FROM installation_crew_slots s
     JOIN installation_projects p ON p.id = s.project_id
     LEFT JOIN employees e ON e.id = s.employee_id
-    LEFT JOIN job_orders jo ON jo.id = p.job_order_id`;
+    LEFT JOIN job_orders jo ON jo.id = p.job_order_id
+    LEFT JOIN assets va ON va.id = s.asset_id
+    LEFT JOIN asset_items vai ON vai.id = va.asset_item_id
+    LEFT JOIN vehicle_details vd ON vd.asset_id = s.asset_id`;
 
 // Every slot in [from, to] (the Crew calendar), optionally one installer's.
 router.get('/crew', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
@@ -591,15 +670,23 @@ router.get('/crew', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
     if (!isDate(from) || !isDate(to)) return errorOut(res, 400, 'from and to (YYYY-MM-DD) are required');
     const where = ['s.work_date BETWEEN ? AND ?', "p.status <> 'cancelled'"];
     const params = [from, to];
+    if (SLOT_ROLES.includes(req.query.role)) { where.push('s.role = ?'); params.push(req.query.role); }
     if (idOrNull(req.query.employee_id)) { where.push('s.employee_id = ?'); params.push(Number(req.query.employee_id)); }
+    if (idOrNull(req.query.asset_id)) { where.push('s.asset_id = ?'); params.push(Number(req.query.asset_id)); }
+    if (String(req.query.search || '').trim()) {
+      where.push(PROJECT_SEARCH);
+      params.push(...Array(PROJECT_SEARCH_ARGS).fill(`%${String(req.query.search).trim()}%`));
+    }
     const [rows] = await pool.query(`${CREW_SELECT} WHERE ${where.join(' AND ')} ORDER BY s.work_date, s.start_time, e.first_name`, params);
     res.json(rows);
   } catch (err) { next(err); }
 });
 
 function readSlot(body, project) {
-  const employeeId = idOrNull(body.employee_id);
-  if (!employeeId) return { error: 'Choose the installer.' };
+  const role = SLOT_ROLES.includes(body.role) ? body.role : 'installer';
+  const employeeId = role === 'vehicle' ? null : idOrNull(body.employee_id);
+  const assetId = role === 'vehicle' ? idOrNull(body.asset_id) : null;
+  if (role === 'vehicle' ? !assetId : !employeeId) return { error: `Choose the ${ROLE_LABEL[role]}.` };
   if (!isDate(body.work_date)) return { error: 'Choose the day.' };
   if (!TIME.test(body.start_time || '') || !TIME.test(body.end_time || '')) return { error: 'Enter the start and end time.' };
   const start = hm(body.start_time);
@@ -607,9 +694,9 @@ function readSlot(body, project) {
   if (end <= start) return { error: 'The end time must be after the start time.' };
   const from = project.date_from ? String(project.date_from).slice(0, 10) : null;
   const to = project.date_to ? String(project.date_to).slice(0, 10) : from;
-  if (!from) return { error: "Set the project's Timeline From / To first -- the installers are scheduled on its days." };
+  if (!from) return { error: "Set the project's Timeline From / To first -- the crew and vehicles are scheduled on its days." };
   if (body.work_date < from || body.work_date > to) return { error: `Pick a day within the project's timeline (${from} to ${to}).` };
-  return { values: { employee_id: employeeId, work_date: body.work_date, start_time: start, end_time: end, note: trunc(body.note, 500) } };
+  return { values: { role, employee_id: employeeId, asset_id: assetId, work_date: body.work_date, start_time: start, end_time: end, note: trunc(body.note, 500) } };
 }
 
 // Saves a slot (new, or slotId) after checking the installer is free then. Locks that installer's day
@@ -623,29 +710,46 @@ async function saveSlot(req, res, slotId) {
     const r = readSlot(req.body || {}, p);
     if (r.error) return errorOut(res, 400, r.error);
     const v = r.values;
-    const bad = await notInstallers(conn, [v.employee_id], p.id);
-    if (bad.length) return errorOut(res, 400, notInstallerError(bad));
+    if (v.role === 'installer') {
+      const bad = await notInstallers(conn, [v.employee_id], p.id);
+      if (bad.length) return errorOut(res, 400, notInstallerError(bad));
+    } else if (v.role === 'subcon') {
+      const bad = await notSubcons(conn, [v.employee_id], p.id);
+      if (bad.length) return errorOut(res, 400, notSubconError(bad));
+    } else if (v.role === 'driver') {
+      const noDriver = await driverProblem(conn, v.employee_id, p.id);
+      if (noDriver) return errorOut(res, 400, noDriver);
+    } else if (!(await isFleetVehicle(conn, v.asset_id))) {
+      return errorOut(res, 400, 'That is not one of the vehicles in Assets > Fleet.');
+    }
     await conn.beginTransaction();
     if (slotId) {
       const [[mine]] = await conn.query('SELECT id FROM installation_crew_slots WHERE id = ? AND project_id = ? FOR UPDATE', [slotId, p.id]);
       if (!mine) { await conn.rollback(); return errorOut(res, 404, 'Schedule slot not found'); }
     }
+    const who = v.role === 'vehicle' ? 's.asset_id = ?' : 's.employee_id = ?';
     const [clash] = await conn.query(
       `${CREW_SELECT}
-        WHERE s.employee_id = ? AND s.work_date = ? AND s.start_time < ? AND s.end_time > ?
+        WHERE ${who} AND s.work_date = ? AND s.start_time < ? AND s.end_time > ?
           AND p.status <> 'cancelled' AND s.id <> ?
-        ORDER BY s.start_time FOR UPDATE`,
-      [v.employee_id, v.work_date, v.end_time, v.start_time, slotId || 0]);
+        ORDER BY s.start_time FOR UPDATE OF s`,
+      [v.role === 'vehicle' ? v.asset_id : v.employee_id, v.work_date, v.end_time, v.start_time, slotId || 0]);
     if (clash.length) {
       await conn.rollback();
       const c = clash[0];
       const where = c.project_id === p.id ? 'this project' : `${c.project_no}${c.job_order_no ? ` (${c.job_order_no})` : ''}`;
-      return errorOut(res, 409, `${c.first_name} ${c.last_name} is already on ${where} from ${ampm(c.start_time)} to ${ampm(c.end_time)} that day.`);
+      const name = v.role === 'vehicle' ? vehicleName(c) : `${c.first_name} ${c.last_name}`;
+      const as = v.role !== 'vehicle' && c.role !== v.role ? ` as ${ROLE_LABEL[c.role]}` : '';
+      return errorOut(res, 409, `${name} is already on ${where}${as} from ${ampm(c.start_time)} to ${ampm(c.end_time)} that day.`);
     }
     if (slotId) await conn.query('UPDATE installation_crew_slots SET ? WHERE id = ?', [v, slotId]);
     else await conn.query('INSERT INTO installation_crew_slots SET ?', [{ ...v, project_id: p.id, created_by_user_id: req.user.id }]);
-    // Scheduled on the project = on its crew.
-    await conn.query('INSERT IGNORE INTO installation_project_installers (project_id, employee_id) VALUES (?, ?)', [p.id, v.employee_id]);
+    // Scheduled on the project = on the project: an installer / subcon joins its crew, a vehicle its
+    // vehicles, and a driver becomes its driver when it has none yet.
+    if (v.role === 'installer') await conn.query('INSERT IGNORE INTO installation_project_installers (project_id, employee_id) VALUES (?, ?)', [p.id, v.employee_id]);
+    else if (v.role === 'subcon') await conn.query('INSERT IGNORE INTO installation_project_subcon_employees (project_id, employee_id) VALUES (?, ?)', [p.id, v.employee_id]);
+    else if (v.role === 'vehicle') await conn.query('INSERT IGNORE INTO installation_project_vehicles (project_id, asset_id) VALUES (?, ?)', [p.id, v.asset_id]);
+    else await conn.query('UPDATE installation_projects SET driver_employee_id = ? WHERE id = ? AND driver_employee_id IS NULL', [v.employee_id, p.id]);
     await conn.commit();
     res.status(slotId ? 200 : 201).json({ ok: true });
   } catch (err) {
@@ -667,6 +771,155 @@ router.delete('/projects/:id/crew/:slotId', requireAuth, requirePermission(ROUTE
     await pool.query('DELETE FROM installation_crew_slots WHERE id = ? AND project_id = ?', [req.params.slotId, req.params.id]);
     res.status(204).send();
   } catch (err) { next(err); }
+});
+
+// ---------------------------------------------------------------- reschedule requests (SBU approval)
+
+// The planner drags a project's bar to new dates on the calendar, gives a reason (Lookups > Reasons,
+// type Reschedule) and forwards it to the SBU; the project's Timeline From / To change only when the
+// SBU approves. One request waits per project at a time.
+//
+// Who decides: the SBU over the Job Order's sales division (lib/sbuGroups.js, the same scope that
+// approves that division's orders); any SBU when the project has no JO or its order has no division;
+// a System Admin always.
+const RESCHEDULE_SELECT = `
+  SELECT r.*, p.project_no, p.title AS project_title, p.status AS project_status, jo.job_order_no,
+         rq.display_name AS requested_by_name, dc.display_name AS decided_by_name,
+         COALESCE(s.sales_division_id, ns.sales_division_id) AS department_id
+    FROM installation_reschedule_requests r
+    JOIN installation_projects p ON p.id = r.project_id
+    LEFT JOIN job_orders jo ON jo.id = p.job_order_id
+    LEFT JOIN sales_orders s ON s.id = jo.sales_order_id
+    LEFT JOIN non_standard_sales_orders ns ON ns.id = jo.nsso_id
+    LEFT JOIN users rq ON rq.id = r.requested_by_user_id
+    LEFT JOIN users dc ON dc.id = r.decided_by_user_id`;
+
+async function canDecideReschedule(userId, departmentId) {
+  if (await isSystemAdmin(userId)) return true;
+  const [[u]] = await pool.query('SELECT is_sales_business_unit FROM users WHERE id = ? AND is_active = 1', [userId]);
+  if (!u?.is_sales_business_unit) return false;
+  if (departmentId == null) return true;
+  return sbuCanApproveDepartment(userId, departmentId);
+}
+
+// The SBUs who may decide a request -- told when one is forwarded.
+async function deciders(departmentId) {
+  const [sbus] = await pool.query("SELECT id FROM users WHERE is_sales_business_unit = 1 AND is_active = 1 AND (account_type IS NULL OR account_type <> 'System Admin')");
+  const out = [];
+  for (const u of sbus) if (departmentId == null || await sbuCanApproveDepartment(u.id, departmentId)) out.push(u.id);
+  return out;
+}
+
+const dayText = (d) => (d ? String(d).slice(0, 10) : '—');
+const rangeText = (f, t) => (f ? `${dayText(f)}${t && dayText(t) !== dayText(f) ? ` to ${dayText(t)}` : ''}` : 'no dates');
+
+// Each with may_decide / may_cancel for the viewer.
+async function withActions(rows, userId) {
+  const admin = await isSystemAdmin(userId);
+  const out = [];
+  for (const r of rows) {
+    const open = r.status === 'for_approval';
+    out.push({
+      ...r,
+      may_decide: open && await canDecideReschedule(userId, r.department_id),
+      may_cancel: open && (admin || Number(r.requested_by_user_id) === Number(userId)),
+    });
+  }
+  return out;
+}
+
+router.get('/reschedule-reasons', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [rows] = await pool.query("SELECT id, name FROM reasons WHERE is_active = 1 AND reason_type = 'Reschedule' ORDER BY name")
+      .catch(() => [[]]);
+    res.json(rows);
+  } catch (err) { next(err); }
+});
+
+router.get('/reschedules', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const status = ['for_approval', 'approved', 'rejected', 'cancelled'].includes(req.query.status) ? req.query.status : 'for_approval';
+    const [rows] = await pool.query(`${RESCHEDULE_SELECT} WHERE r.status = ? ORDER BY r.requested_at DESC LIMIT 200`, [status]);
+    res.json(await withActions(rows, req.user.id));
+  } catch (err) { next(err); }
+});
+
+router.post('/projects/:id/reschedules', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  try {
+    const p = await projectOr404(req, res);
+    if (!p) return;
+    if (['done', 'cancelled'].includes(p.status)) return errorOut(res, 409, `This project is ${p.status} -- it is not rescheduled.`);
+    const { new_date_from: from, new_date_to: to } = req.body || {};
+    if (!isDate(from) || !isDate(to)) return errorOut(res, 400, 'The new dates are missing.');
+    if (to < from) return errorOut(res, 400, 'The new end date is before the new start date.');
+    if (from === dayText(p.date_from) && to === dayText(p.date_to || p.date_from)) return errorOut(res, 400, 'Those are the dates it already has.');
+    const reasonId = idOrNull(req.body?.reason_id);
+    if (!reasonId) return errorOut(res, 400, 'Choose the reason for the reschedule.');
+    const [[reason]] = await pool.query("SELECT id, name FROM reasons WHERE id = ? AND is_active = 1 AND reason_type = 'Reschedule'", [reasonId]);
+    if (!reason) return errorOut(res, 400, 'That reason is not one of the Reschedule reasons in Lookups.');
+    const [[open]] = await pool.query("SELECT id FROM installation_reschedule_requests WHERE project_id = ? AND status = 'for_approval'", [p.id]);
+    if (open) return errorOut(res, 409, 'A reschedule of this project is already waiting for the SBU -- cancel it first to ask for different dates.');
+    const [ins] = await pool.query(
+      `INSERT INTO installation_reschedule_requests
+         (project_id, old_date_from, old_date_to, new_date_from, new_date_to, reason_id, reason_name, remarks, requested_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [p.id, p.date_from, p.date_to || p.date_from, from, to, reason.id, reason.name, trunc(req.body?.remarks, 1000), req.user.id]);
+    const [[row]] = await pool.query(`${RESCHEDULE_SELECT} WHERE r.id = ?`, [ins.insertId]);
+    insertFor(await deciders(row.department_id), {
+      type: 'installation_reschedule',
+      title: `Reschedule for approval: ${p.project_no}${row.job_order_no ? ` (${row.job_order_no})` : ''}`,
+      message: `${rangeText(p.date_from, p.date_to)} -> ${rangeText(from, to)} · ${reason.name}`,
+      relatedType: 'installation_project', relatedId: p.id,
+    }, req.user.id).catch(() => {});
+    res.status(201).json({ id: ins.insertId });
+  } catch (err) { next(err); }
+});
+
+async function decide(req, res, verdict) {
+  const conn = await pool.getConnection();
+  try {
+    await conn.beginTransaction();
+    const [[r]] = await conn.query(`${RESCHEDULE_SELECT} WHERE r.id = ? FOR UPDATE OF r`, [req.params.rid]);
+    if (!r) { await conn.rollback(); return errorOut(res, 404, 'Reschedule request not found'); }
+    if (r.status !== 'for_approval') { await conn.rollback(); return errorOut(res, 409, `This request was already ${r.status.replace('_', ' ')}.`); }
+    const admin = await isSystemAdmin(req.user.id);
+    if (verdict === 'cancelled') {
+      if (!admin && Number(r.requested_by_user_id) !== Number(req.user.id)) { await conn.rollback(); return errorOut(res, 403, 'Only whoever asked for it can cancel this request.'); }
+    } else if (!(await canDecideReschedule(req.user.id, r.department_id))) {
+      await conn.rollback(); return errorOut(res, 403, "Only the SBU over this job's sales division can approve or reject its reschedule.");
+    }
+    const note = trunc(req.body?.note, 1000);
+    if (verdict === 'rejected' && !note) { await conn.rollback(); return errorOut(res, 400, 'Say why it is rejected.'); }
+    await conn.query(
+      'UPDATE installation_reschedule_requests SET status = ?, decided_by_user_id = ?, decided_at = NOW(), decision_note = ? WHERE id = ?',
+      [verdict, req.user.id, note, r.id]);
+    if (verdict === 'approved') {
+      await conn.query('UPDATE installation_projects SET date_from = ?, date_to = ? WHERE id = ?', [r.new_date_from, r.new_date_to, r.project_id]);
+    }
+    await conn.commit();
+    if (verdict !== 'cancelled') {
+      insertFor([r.requested_by_user_id], {
+        type: 'installation_reschedule',
+        title: `Reschedule ${verdict}: ${r.project_no}${r.job_order_no ? ` (${r.job_order_no})` : ''}`,
+        message: `${rangeText(r.new_date_from, r.new_date_to)}${note ? ` · ${note}` : ''}`,
+        relatedType: 'installation_project', relatedId: r.project_id,
+      }, req.user.id).catch(() => {});
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    await conn.rollback().catch(() => {});
+    throw err;
+  } finally { conn.release(); }
+}
+
+router.post('/reschedules/:rid/approve', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try { await decide(req, res, 'approved'); } catch (err) { next(err); }
+});
+router.post('/reschedules/:rid/reject', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try { await decide(req, res, 'rejected'); } catch (err) { next(err); }
+});
+router.post('/reschedules/:rid/cancel', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try { await decide(req, res, 'cancelled'); } catch (err) { next(err); }
 });
 
 // ---------------------------------------------------------------- progress updates

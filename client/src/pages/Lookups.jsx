@@ -85,7 +85,7 @@ const CONFIG = [
     { name: 'is_active', label: 'Active', type: 'checkbox' },
   ] },
   { key: 'reasons', label: 'Reasons', fields: [
-    { name: 'reason_type', label: 'Type', type: 'select', options: ['Cancellation', 'Disapproval', 'Return', 'Adjustment', 'Other', 'RFQC', 'RMA'], required: true },
+    { name: 'reason_type', label: 'Type', type: 'select', options: ['Cancellation', 'Disapproval', 'Return', 'Adjustment', 'Other', 'RFQC', 'RMA', 'Reschedule'], required: true },
     { name: 'name', label: 'Name', type: 'text', required: true },
     { name: 'is_active', label: 'Active', type: 'checkbox' },
   ] },

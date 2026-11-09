@@ -17,7 +17,9 @@
 //                                      sat on the category's item itself, so ticking it on one project
 //                                      ticked it on every project of that category
 //   installation_bom_items             the BOM lines: Not Ready / Ready / Done
-//   installation_crew_slots            Installer Schedule: installer x day x start/end time on a project
+//   installation_crew_slots            Crew & Vehicle Schedule: installer / subcon / driver / vehicle x day x time
+//   installation_project_subcon_employees  subcons = employees with Position Code SUBCON
+//   installation_reschedule_requests   calendar drags waiting on / decided by the SBU
 //   installation_progress_updates      "+N%" updates with a note and a photo
 //
 //   pages /installation-planner     "Installation Planner"  View the dashboard + projects; Add; Edit;
@@ -155,6 +157,39 @@ const TABLES = [
      KEY idx_installation_crew_project (project_id, work_date),
      CONSTRAINT fk_installation_crew_project FOREIGN KEY (project_id) REFERENCES installation_projects (id) ON DELETE CASCADE
    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  // Reschedule requests (asked 2026-11-09): the planner drags a project's bar on the calendar to new
+  // dates, gives a reason (Lookups > Reasons, type Reschedule) and forwards it to the SBU; the project's
+  // dates change only when the SBU approves. The reason's name is copied so a later rename of the
+  // lookup does not reword a decided request.
+  `CREATE TABLE IF NOT EXISTS installation_reschedule_requests (
+     id BIGINT AUTO_INCREMENT PRIMARY KEY,
+     project_id BIGINT NOT NULL,
+     old_date_from DATE NULL,
+     old_date_to DATE NULL,
+     new_date_from DATE NOT NULL,
+     new_date_to DATE NOT NULL,
+     reason_id BIGINT NULL,
+     reason_name VARCHAR(150) NOT NULL,
+     remarks VARCHAR(1000) NULL,
+     status ENUM('for_approval', 'approved', 'rejected', 'cancelled') NOT NULL DEFAULT 'for_approval',
+     requested_by_user_id BIGINT NULL,
+     requested_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+     decided_by_user_id BIGINT NULL,
+     decided_at DATETIME NULL,
+     decision_note VARCHAR(1000) NULL,
+     KEY idx_installation_reschedule_project (project_id, status),
+     KEY idx_installation_reschedule_status (status),
+     CONSTRAINT fk_installation_reschedule_project FOREIGN KEY (project_id) REFERENCES installation_projects (id) ON DELETE CASCADE
+   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  // Subcons as employees (asked 2026-11-09): the project's subcontractors are employees whose Position
+  // Code is SUBCON, booked by time like installers. installation_project_subcons (suppliers) is kept for
+  // the projects that already named supplier subcons; nothing new is written there.
+  `CREATE TABLE IF NOT EXISTS installation_project_subcon_employees (
+     project_id BIGINT NOT NULL,
+     employee_id BIGINT NOT NULL,
+     PRIMARY KEY (project_id, employee_id),
+     CONSTRAINT fk_installation_subcon_emp_project FOREIGN KEY (project_id) REFERENCES installation_projects (id) ON DELETE CASCADE
+   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   `CREATE TABLE IF NOT EXISTS installation_progress_updates (
      id BIGINT AUTO_INCREMENT PRIMARY KEY,
      project_id BIGINT NOT NULL,
@@ -176,6 +211,28 @@ const TABLES = [
     await pool.query(ddl);
     console.log(`  ${/EXISTS (\w+)/.exec(ddl)[1]} ready`);
   }
+
+  // The schedule takes four kinds of slot (asked 2026-11-09): installer, subcon and driver (an employee)
+  // and vehicle (an Assets > Fleet asset). `role` says which; a vehicle slot has asset_id instead of
+  // employee_id. Existing slots are installers -- the column's default.
+  const crewCols = (await pool.query('SHOW COLUMNS FROM installation_crew_slots'))[0].map((c) => c.Field);
+  if (!crewCols.includes('role')) {
+    await pool.query(`ALTER TABLE installation_crew_slots
+      ADD COLUMN role ENUM('installer', 'subcon', 'driver', 'vehicle') NOT NULL DEFAULT 'installer' AFTER project_id,
+      ADD COLUMN asset_id BIGINT NULL AFTER employee_id,
+      MODIFY employee_id BIGINT NULL,
+      ADD KEY idx_installation_crew_asset_day (asset_id, work_date)`);
+    console.log('  installation_crew_slots: added role and asset_id (vehicles)');
+  } else console.log('  installation_crew_slots already has role / asset_id');
+
+  // Lookups > Reasons gets a 'Reschedule' type for the reasons a project is moved. Appended to the end of
+  // the ENUM, so existing rows keep their values.
+  const [[rt]] = await pool.query("SHOW COLUMNS FROM reasons LIKE 'reason_type'");
+  if (rt && !/'Reschedule'/.test(rt.Type)) {
+    const values = rt.Type.replace(/^enum\(|\)$/g, '');
+    await pool.query(`ALTER TABLE reasons MODIFY reason_type ENUM(${values}, 'Reschedule') NOT NULL`);
+    console.log("  reasons.reason_type: added 'Reschedule'");
+  } else if (rt) console.log("  reasons.reason_type already has 'Reschedule'");
 
   const [permCols] = await pool.query('SHOW COLUMNS FROM user_page_permissions');
   const flags = permCols.map((c) => c.Field).filter((f) => /^can_/.test(f));
