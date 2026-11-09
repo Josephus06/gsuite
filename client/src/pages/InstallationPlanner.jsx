@@ -23,6 +23,7 @@ export default function InstallationPlanner() {
   const [view, setView] = useState('month');
   const [anchor, setAnchor] = useState(() => new Date());
   const [status, setStatus] = useState('');
+  const [installerId, setInstallerId] = useState('');
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -59,9 +60,12 @@ export default function InstallationPlanner() {
     setLoading(true);
     const req = view === 'crew' || view === 'day'
       ? api.get(`${API}/crew`, { params: { from, to } }).then(({ data }) => setCrew(data))
-      : api.get(`${API}/events`, { params: { from, to, status: status || undefined } }).then(({ data }) => setEvents(data));
+      : api.get(`${API}/events`, { params: { from, to, status: status || undefined, employee_id: installerId || undefined } }).then(({ data }) => setEvents(data));
     req.then(() => setError('')).catch((err) => setError(errorOf(err))).finally(() => setLoading(false));
-  }, [from, to, status, view]);
+  }, [from, to, status, view, installerId]);
+  // The Installers and Day views narrowed to the chosen installer.
+  const shownInstallers = installerId ? installers.filter((e) => Number(e.id) === Number(installerId)) : installers;
+  const shownCrew = installerId ? crew.filter((s) => Number(s.employee_id) === Number(installerId)) : crew;
 
   const byDay = useMemo(() => {
     const map = new Map();
@@ -136,10 +140,19 @@ export default function InstallationPlanner() {
               <button key={v} type="button" className={`btn btn-sm ${view === v ? 'btn-primary' : ''}`} onClick={() => setView(v)}>{label}</button>
             ))}
           </div>
-          <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ marginLeft: 'auto', visibility: view === 'crew' || view === 'day' ? 'hidden' : 'visible' }}>
-            <option value="">All statuses</option>
-            {Object.entries(STATUS_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          </select>
+          {/* width auto: the app's select rule is full width, which pushed this onto a row of its own */}
+          <div style={{ display: 'flex', gap: 8, marginLeft: 'auto', flexWrap: 'wrap' }}>
+            <select value={installerId} onChange={(e) => setInstallerId(e.target.value)} style={{ width: 'auto', minWidth: 180 }} title="Installer">
+              <option value="">All installers</option>
+              {installers.map((e) => <option key={e.id} value={e.id}>{personName(e)}</option>)}
+            </select>
+            {view !== 'crew' && view !== 'day' && (
+              <select value={status} onChange={(e) => setStatus(e.target.value)} style={{ width: 'auto', minWidth: 140 }} title="Status">
+                <option value="">All statuses</option>
+                {Object.entries(STATUS_LABEL).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+              </select>
+            )}
+          </div>
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 8, fontSize: 11 }}>
           {Object.entries(STATUS_LABEL).map(([k, l]) => (
@@ -150,9 +163,9 @@ export default function InstallationPlanner() {
         </div>
 
         {loading ? <LoadingSpinner /> : view === 'day' ? (
-          <DayView dayKey={from} slots={crew} installers={installers} onOpen={(s) => navigate(`/installation-planner/projects/${s.project_id}`)} />
+          <DayView dayKey={from} slots={shownCrew} installers={shownInstallers} onOpen={(s) => navigate(`/installation-planner/projects/${s.project_id}`)} />
         ) : view === 'crew' ? (
-          <CrewView days={days} slots={crew} installers={installers} todayKey={todayKey} onDay={openDay} onOpen={(s) => navigate(`/installation-planner/projects/${s.project_id}`)} />
+          <CrewView days={days} slots={shownCrew} installers={shownInstallers} todayKey={todayKey} onDay={openDay} onOpen={(s) => navigate(`/installation-planner/projects/${s.project_id}`)} />
         ) : view === 'list' ? (
           <ListView days={days} byDay={byDay} todayKey={todayKey} onOpen={open} />
         ) : (
@@ -198,10 +211,12 @@ function EventBar({ e, dayKey, weekStart, wrap, onOpen }) {
         display: 'block', width: wrap ? '100%' : 'calc(100% + 8px)', margin: wrap ? '3px 0 0' : '3px -4px 0', textAlign: 'left', cursor: 'pointer',
         background: STATUS_COLOR[e.status] || '#64748b', color: '#fff', border: 'none', fontSize: 11, lineHeight: 1.35,
         padding: '2px 6px', whiteSpace: wrap ? 'normal' : 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        // A continuation day carries no text; without a set height the bar collapsed to a thin line.
+        minHeight: 19, boxSizing: 'border-box',
         borderRadius: wrap ? 4 : `${first ? 4 : 0}px ${last ? 4 : 0}px ${last ? 4 : 0}px ${first ? 4 : 0}px`,
         textDecoration: e.status === 'cancelled' ? 'line-through' : 'none',
       }}>
-      {label ? `${e.title} (${(STATUS_LABEL[e.status] || e.status).toUpperCase()})` : ' '}
+      {label ? `${e.title} (${(STATUS_LABEL[e.status] || e.status).toUpperCase()})` : ' '}
       {wrap && <div style={{ opacity: 0.85 }}>{e.project_no}{e.job_order_no ? ` · ${e.job_order_no}` : ''} · {e.progress}%</div>}
     </button>
   );

@@ -213,6 +213,12 @@ router.get('/events', requireAuth, requirePermission(ROUTE, 'can_view'), async (
     const where = ['p.date_from IS NOT NULL', 'p.date_from <= ?', 'COALESCE(p.date_to, p.date_from) >= ?'];
     const params = [to, from];
     if (STATUSES.includes(req.query.status)) { where.push('p.status = ?'); params.push(req.query.status); }
+    // One installer's projects: on the crew, or booked on the Installer Schedule.
+    if (idOrNull(req.query.employee_id)) {
+      where.push(`(EXISTS (SELECT 1 FROM installation_project_installers i WHERE i.project_id = p.id AND i.employee_id = ?)
+                   OR EXISTS (SELECT 1 FROM installation_crew_slots s WHERE s.project_id = p.id AND s.employee_id = ?))`);
+      params.push(Number(req.query.employee_id), Number(req.query.employee_id));
+    }
     const [rows] = await pool.query(
       `SELECT p.id, p.project_no, p.title, p.status, p.progress, p.date_from, COALESCE(p.date_to, p.date_from) AS date_to,
               c.name AS category_name, jo.job_order_no
