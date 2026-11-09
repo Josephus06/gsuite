@@ -171,6 +171,35 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        ORDER BY t.id DESC`,
       params
     );
+    // format=xlsx (asked 2026-11-09): the same rows -- the open tab and every filter -- as a workbook.
+    if (req.query.format === 'xlsx') {
+      const STATUS_LABELS = {
+        pending_fulfillment: 'Pending Fulfillment', partially_fulfilled: 'Partially Fulfilled', pending_receipt: 'Pending Receipt',
+        pending_receipt_partially_fulfilled: 'Pending Receipt / Partially Fulfilled', received: 'Received', cancelled: 'Cancelled',
+      };
+      await sendXlsx(res, {
+        filename: 'transfer-orders.xlsx',
+        sheet: 'Transfer Orders',
+        columns: [
+          { header: 'TO No.', key: 'to_no', width: 14 },
+          { header: 'Date Created', key: 'created', width: 13 },
+          { header: 'Date Needed', key: 'needed', width: 13 },
+          { header: 'Withdraw From', key: 'withdraw_from_name', width: 24 },
+          { header: 'Transfer To', key: 'transfer_to_name', width: 24 },
+          { header: 'Job Order', key: 'job_order_no', width: 18 },
+          { header: 'Requestor', key: 'requestor_name', width: 26 },
+          { header: 'Memo', key: 'memo', width: 50 },
+          { header: 'Status', key: 'status_label', width: 22 },
+        ],
+        rows: rows.map((r) => ({
+          to_no: r.to_no, created: day(r.date_created), needed: day(r.date_needed),
+          withdraw_from_name: r.withdraw_from_name || '', transfer_to_name: r.transfer_to_name || '',
+          job_order_no: r.job_order_no || '', requestor_name: r.requestor_name || '', memo: r.memo || '',
+          status_label: STATUS_LABELS[r.status] || r.status || '',
+        })),
+      });
+      return;
+    }
     res.json(rows);
   } catch (err) {
     next(err);

@@ -8,6 +8,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
 import useAutoSearch from '../utils/useAutoSearch';
 import SearchInput from '../components/SearchInput';
+import { downloadFile } from '../utils/downloadFile';
 
 const PAGE_SIZE = 10;
 
@@ -92,14 +93,33 @@ export default function TransferOrders() {
 
   useEffect(() => { api.get('/lookups/locations').then(({ data }) => setLocations(data)); }, []);
 
-  async function load() {
-    setLoading(true);
+  // The filters as the server takes them -- shared by the list and the Extract.
+  function filterParams() {
     const params = { status };
     if (search) params.search = search;
     if (withdrawFrom) params.withdraw_from = withdrawFrom.id;
     if (transferTo) params.transfer_to = transferTo.id;
     rangeParams(created, 'created', params);
     rangeParams(needed, 'needed', params);
+    return params;
+  }
+
+  // Extract (asked 2026-11-09): every transfer order in the open tab under the filters, not just this page.
+  const [extracting, setExtracting] = useState(false);
+  async function extract() {
+    setExtracting(true);
+    try {
+      await downloadFile('/transfer-orders', { ...filterParams(), format: 'xlsx' }, `transfer-orders-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch {
+      alert('Extract failed. Please try again.');
+    } finally {
+      setExtracting(false);
+    }
+  }
+
+  async function load() {
+    setLoading(true);
+    const params = filterParams();
     const [{ data }, { data: countData }] = await Promise.all([
       api.get('/transfer-orders', { params }),
       api.get('/transfer-orders/status-counts'),
@@ -138,7 +158,12 @@ export default function TransferOrders() {
           <LocationField label="Transfer To" value={transferTo} onChange={setTransferTo} locations={locations} />
           <DateRangeField label="Delivery Date" value={needed} onChange={setNeeded} />
         </div>
-        <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={runSearch}>Search</button>
+        <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+          <button className="btn btn-primary" onClick={runSearch}>Search</button>
+          <button type="button" className="btn" onClick={extract} disabled={extracting} title="Download every transfer order in this tab under the filters above">
+            {extracting ? 'Extracting...' : 'Extract'}
+          </button>
+        </div>
       </div>
 
       <div className="status-tabs">
