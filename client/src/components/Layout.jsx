@@ -177,19 +177,35 @@ const NAV_STRUCTURE = [
   },
   {
     label: 'Sales',
-    children: [
-      { route: '/estimates', label: 'Estimates' },
-      { route: '/sales-orders', label: 'Sales Orders' },
-      { route: '/non-standard-job-orders', label: 'NSTDJO' },
-      { route: '/non-standard-sales-orders', label: 'NSSO' },
-      { route: '/warranty-certificates', label: 'Warranty Certificate' },
-      { route: '/completion-certificates', label: 'Certificate of Completion' },
-      { route: '/job-orders', label: 'Job Orders' },
-      { route: '/reports/pending-billing', label: 'Pending Billing' },
-      { route: '/reports/weighted-sales', label: 'Weighted Sales per Month' },
-      { route: '/reports/top-customers', label: 'Top Customers per Year' },
-      // SOs per month with their installation JOs -- by Job Type or process (2026-11-04).
-      { route: '/reports/installation-orders', label: 'Installation Orders per Month' },
+    // Grouped like Production (asked 2026-11-09): Transaction / Reports / Certificate columns.
+    sections: [
+      {
+        title: 'Transaction',
+        items: [
+          { route: '/estimates', label: 'Estimates' },
+          { route: '/sales-orders', label: 'Sales Orders' },
+          { route: '/non-standard-job-orders', label: 'NSTDJO' },
+          { route: '/non-standard-sales-orders', label: 'NSSO' },
+          { route: '/job-orders', label: 'Job Orders' },
+        ],
+      },
+      {
+        title: 'Reports',
+        items: [
+          { route: '/reports/pending-billing', label: 'Pending Billing' },
+          { route: '/reports/weighted-sales', label: 'Weighted Sales per Month' },
+          { route: '/reports/top-customers', label: 'Top Customers per Year' },
+          // SOs per month with their installation JOs -- by Job Type or process (2026-11-04).
+          { route: '/reports/installation-orders', label: 'Installation Orders per Month' },
+        ],
+      },
+      {
+        title: 'Certificate',
+        items: [
+          { route: '/warranty-certificates', label: 'Warranty Certificate' },
+          { route: '/completion-certificates', label: 'Certificate of Completion' },
+        ],
+      },
     ],
   },
   {
