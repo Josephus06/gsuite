@@ -250,6 +250,10 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
   const ewtAmount = netOfTax * (withholdingPct / 100);
   const amountDue = grossAmount - ewtAmount;
 
+  // Billing a Sales Order or a Delivery Ticket as an SI needs the printed BS/SI serial (asked
+  // 2026-11-10); a DR does not.
+  const bsSiRequired = !fromEstimate && !nssoId && invoiceType !== 'DR';
+
   async function handleSave() {
     setError('');
     if (fromEstimate && !estimate) { setError('Choose an Estimate first.'); return; }
@@ -257,6 +261,7 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
     if (badQty.length) { setError(`Line ${badQty.join(', ')}: the quantity to invoice must be more than 0 and no more than what is left to bill.`); return; }
     const deptError = headerDepartmentError(department?.id);
     if (deptError) { setError(deptError); return; }
+    if (bsSiRequired && !String(bsSiNo || '').trim()) { setError('Enter the BS/SI #.'); return; }
     setSaving(true);
     try {
       const { data: si } = await api.post('/sales-invoices', {
@@ -434,7 +439,7 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
                   onClear={() => { setPaymentTerm(null); setTerm(''); }}
                 />
               </div>
-              <div className="field"><label>BS/SI #</label><input value={bsSiNo} onChange={(e) => setBsSiNo(e.target.value)} /></div>
+              <div className="field"><label>BS/SI #{bsSiRequired ? ' *' : ''}</label><input value={bsSiNo} onChange={(e) => setBsSiNo(e.target.value)} /></div>
               <div className="field"><label>PO #</label><input value={poNo} onChange={(e) => setPoNo(e.target.value)} /></div>
               <div className="field"><label>Bill to Address</label><input value={billToAddress} onChange={(e) => setBillToAddress(e.target.value)} /></div>
               <div className="field"><label>Memo</label><textarea rows={4} value={memo} onChange={(e) => setMemo(e.target.value)} /></div>

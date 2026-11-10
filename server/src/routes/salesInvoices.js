@@ -1332,6 +1332,10 @@ router.post('/', requireAuth, requireInvoiceCreatePermission, async (req, res, n
     // standalone, delivery ticket, sales order) reads the same department_id.
     const deptError = headerDepartmentError(departmentId);
     if (deptError) return res.status(400).json({ error: deptError });
+    // An SI billed from a Sales Order or a Delivery Ticket carries its printed BS/SI serial (asked
+    // 2026-11-10); a DR needs none. The Estimate, NSSO and standalone paths are unchanged.
+    const fromSoOrTicket = !req.body.estimate_id && !req.body.nsso_id && (req.body.delivery_ticket_id || salesOrderId);
+    if (fromSoOrTicket && req.body.invoice_type !== 'DR' && !String(bsSiNo || '').trim()) return res.status(400).json({ error: 'Enter the BS/SI #.' });
 
     // Each path below is AWAITED: a bare `return billX()` let its errors (a closed period) escape
     // the catch and crash the whole server, and released the connection while it was still in use.
