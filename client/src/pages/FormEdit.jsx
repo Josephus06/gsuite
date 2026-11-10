@@ -5,6 +5,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import { useAuth } from '../context/useAuth';
 import { ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, MEMBER_FORMS, blankMemberLine, FUND_TYPES, HR_TYPES, LEAVE_TYPE_LABELS, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, TYPE_LABELS, hoursMinutes, leaveDays, money, overtimeHours, undertimeMinutes, BANK_LOAN_ROWS } from '../utils/requestForms';
 import EntityPicker from '../components/EntityPicker';
+import MoneyInput from '../components/MoneyInput';
 
 // Filling out a form, and revising one. The same page does both: an edit is the same boxes with
 // the answers already in them, and keeping one copy is what stops the create and edit forms from
@@ -530,12 +531,11 @@ export default function FormEdit() {
                   <label>{r.label}{r.required ? ' *' : ''}</label>
                   {r.multiline ? (
                     <textarea rows={3} value={form[r.field]} maxLength={1000} onChange={(e) => set(r.field, e.target.value)} />
+                  ) : r.type === 'money' ? (
+                    // Commas and two decimal places written as you type (asked 2026-11-10).
+                    <MoneyInput value={form[r.field]} onChange={(v) => set(r.field, v)} />
                   ) : (
-                    <input
-                      type={r.type === 'money' ? 'number' : r.type === 'date' ? 'date' : 'text'}
-                      step={r.type === 'money' ? '0.01' : undefined} min={r.type === 'money' ? '0' : undefined}
-                      value={form[r.field]} onChange={(e) => set(r.field, e.target.value)}
-                    />
+                    <input type={r.type === 'date' ? 'date' : 'text'} value={form[r.field]} onChange={(e) => set(r.field, e.target.value)} />
                   )}
                 </div>
               ))}
