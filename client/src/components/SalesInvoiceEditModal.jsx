@@ -283,7 +283,8 @@ export default function SalesInvoiceEditModal({ invoice, onClose, onSaved }) {
                 onClear={() => { setPaymentTerm(null); setTerm(''); }}
               />
             </div>
-            <div className="field"><label>BS/SI #</label><input value={bsSiNo} onChange={(e) => setBsSiNo(e.target.value)} /></div>
+            {/* A DR carries no BS/SI # (asked 2026-11-10): the field is not shown on a DR. */}
+            {invoice?.invoice_type !== 'DR' && <div className="field"><label>BS/SI #</label><input value={bsSiNo} onChange={(e) => setBsSiNo(e.target.value)} /></div>}
             <div className="field"><label>PO #</label><input value={poNo} onChange={(e) => setPoNo(e.target.value)} /></div>
             <div className="field">
               <label>Sales Rep</label>

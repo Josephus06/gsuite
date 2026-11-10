@@ -184,7 +184,7 @@ export default function StandaloneInvoiceModal({ onClose, onSaved, replicateFrom
         date_created: dateCreated,
         date_due: dateDue,
         term,
-        bs_si_no: bsSiNo,
+        bs_si_no: invoiceType === 'DR' ? '' : bsSiNo,
         po_no: poNo,
         sales_rep_id: salesRep?.id || null,
         office_location_id: officeLocation?.id || null,
@@ -286,7 +286,8 @@ export default function StandaloneInvoiceModal({ onClose, onSaved, replicateFrom
                   onClear={() => { setPaymentTerm(null); setTerm(''); }}
                 />
               </div>
-              <div className="field"><label>BS/SI #</label><input value={bsSiNo} onChange={(e) => setBsSiNo(e.target.value)} /></div>
+              {/* A DR carries no BS/SI # (asked 2026-11-10): the field is not shown on a DR. */}
+              {invoiceType !== 'DR' && <div className="field"><label>BS/SI #</label><input value={bsSiNo} onChange={(e) => setBsSiNo(e.target.value)} /></div>}
               <div className="field"><label>PO #</label><input value={poNo} onChange={(e) => setPoNo(e.target.value)} /></div>
               <div className="field"><label>Bill to Address</label><input value={billToAddress} onChange={(e) => setBillToAddress(e.target.value)} /></div>
               <div className="field"><label>Memo</label><textarea rows={4} value={memo} onChange={(e) => setMemo(e.target.value)} /></div>

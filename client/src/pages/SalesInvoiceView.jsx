@@ -254,7 +254,7 @@ export default function SalesInvoiceView() {
               <div>Delivery Ticket : <Link className="link-btn" to={`/delivery-tickets/${si.delivery_ticket_id}`}>{si.dt_no}</Link></div>
             )}
             <div>Date : <span className="hi">{formatDate(si.date_created)}</span></div>
-            <div>BS/SI # : <span className="hi">{si.bs_si_no || ''}</span></div>
+            {si.invoice_type !== 'DR' && <div>BS/SI # : <span className="hi">{si.bs_si_no || ''}</span></div>}
             <div>PO # : <span className="hi">{si.po_no || ''}</span></div>
             <div>Memo : <span className="hi">{si.memo || ''}</span></div>
           </div>
