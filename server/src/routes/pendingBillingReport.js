@@ -175,7 +175,12 @@ async function loadRows(req, { allReps = false } = {}) {
       [[...new Set(jos.map((j) => j.sales_order_id).filter(Boolean))].concat(0)]),
     pool.query('SELECT id, quantity, gross_amount FROM non_standard_sales_order_lines WHERE id IN (?)',
       [[...new Set(jos.map((j) => j.nsso_line_id).filter(Boolean))].concat(0)]),
-    withKind ? pool.query("SELECT DISTINCT sales_order_id FROM sales_order_attachments WHERE kind = 'PO' AND sales_order_id IN (?)", [soIds]) : [[]],
+    // A file typed PO -- or, attached before files had a type (kind NULL), one whose NAME reads as a PO
+    // (asked 2026-11-10: SO-195971's "PO 4500007724.pdf" left wt PO unticked).
+    withKind ? pool.query(
+      `SELECT DISTINCT sales_order_id FROM sales_order_attachments
+        WHERE sales_order_id IN (?) AND (kind = 'PO' OR (kind IS NULL AND (
+          LOWER(file_name) REGEXP '(^|[^a-z])(po|p[.]o[.]?)([^a-z]|$)' OR LOWER(file_name) LIKE '%purchase order%')))`, [soIds]) : [[]],
     // 'PAR' since 2026-11-09 (Production Attachment's types became PAR / Picture); 'PAR & Pics' for older files.
     pool.query("SELECT DISTINCT job_order_id FROM job_order_attachments WHERE kind IN ('PAR', 'PAR & Pics') AND job_order_id IN (?)", [ids]),
     withKind ? pool.query(
