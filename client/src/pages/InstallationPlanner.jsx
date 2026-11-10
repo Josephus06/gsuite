@@ -29,7 +29,12 @@ export default function InstallationPlanner({ readOnly = false }) {
   const [people, setPeople] = useState({ employees: [], vehicles: [] });
   // Which of them the Installers / Subcons / Drivers / Vehicles and Day views show.
   const [resource, setResource] = useState('installer');
-  const [view, setView] = useState('month');
+  const [view, setViewRaw] = useState('month');
+  // "+N more" on a Month / Week day opens List on that day alone (asked 2026-11-10); any other move
+  // -- a view button, prev / next, Today -- goes back to the whole month.
+  const [listDay, setListDay] = useState('');
+  const setView = (v) => { setListDay(''); setViewRaw(v); };
+  const openDayList = (k) => { setAnchor(parse(k)); setViewRaw('list'); setListDay(k); };
   const [anchor, setAnchor] = useState(() => new Date());
   const [status, setStatus] = useState('');
   // One installer / subcon / driver ('e<id>') or vehicle ('v<id>') to narrow every view to.
@@ -193,6 +198,7 @@ export default function InstallationPlanner({ readOnly = false }) {
   };
 
   function step(n) {
+    setListDay('');
     if (view === 'day') setAnchor(addDays(anchor, n));
     else if (view === 'week' || view === 'crew') setAnchor(addDays(anchor, 7 * n));
     else setAnchor(new Date(anchor.getFullYear(), anchor.getMonth() + n, 1));
@@ -272,7 +278,7 @@ export default function InstallationPlanner({ readOnly = false }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12, flexWrap: 'wrap' }}>
           <button type="button" className="btn btn-sm" onClick={() => step(-1)} aria-label="Previous">‹</button>
           <button type="button" className="btn btn-sm" onClick={() => step(1)} aria-label="Next">›</button>
-          <button type="button" className="btn btn-sm" onClick={() => setAnchor(new Date())}>Today</button>
+          <button type="button" className="btn btn-sm" onClick={() => { setListDay(''); setAnchor(new Date()); }}>Today</button>
           <h3 style={{ margin: '0 8px', minWidth: 200 }}>{title}</h3>
           <div style={{ display: 'flex' }}>
             {/* Order asked 2026-11-09: Month | Week | Day | List | Installers | Subcons | Drivers | Vehicles.
@@ -332,7 +338,8 @@ export default function InstallationPlanner({ readOnly = false }) {
         ) : view === 'crew' ? (
           <CrewView days={days} slots={shownCrew} people={shownPeople} kind={R} todayKey={todayKey} onDay={openDay} onOpen={(s) => openProject(s.project_id)} />
         ) : view === 'list' ? (
-          <ListView days={days} byDay={byDay} todayKey={todayKey} onOpen={open} />
+          <ListView days={listDay ? days.filter((d) => ymd(d) === listDay) : days} byDay={byDay} todayKey={todayKey} onOpen={open}
+            onWholeMonth={listDay ? () => setListDay('') : null} />
         ) : (
           <div style={{ overflowX: 'auto' }}>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(110px, 1fr))', gap: 1, background: 'var(--border)', minWidth: 770 }}>
@@ -363,7 +370,10 @@ export default function InstallationPlanner({ readOnly = false }) {
                       <div key={`gap${lane}`} style={{ height: view === 'week' ? BAR_H_WEEK : BAR_H, marginTop: 3 }} />
                     )))}
                     {list.slice(max).filter(Boolean).length > 0 && (
-                      <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>+{list.slice(max).filter(Boolean).length} more</div>
+                      <button type="button" className="link-btn" onClick={() => openDayList(k)} title="List every job order scheduled this day"
+                        style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontSize: 11, marginTop: 2, display: 'block' }}>
+                        +{list.slice(max).filter(Boolean).length} more
+                      </button>
                     )}
                   </div>
                 );
@@ -593,11 +603,18 @@ function CrewView({ days, slots, people: everyone, kind, todayKey, onOpen, onDay
   );
 }
 
-function ListView({ days, byDay, todayKey, onOpen }) {
+function ListView({ days, byDay, todayKey, onOpen, onWholeMonth }) {
   const withEvents = days.filter((d) => (byDay.get(ymd(d)) || []).some(Boolean));
-  if (!withEvents.length) return <div className="empty-state">No projects scheduled in this month.</div>;
+  // One day, from "+N more": a way back to the whole month above the table.
+  const back = onWholeMonth && (
+    <div style={{ marginBottom: 8 }}>
+      <button type="button" className="btn btn-sm" onClick={onWholeMonth}>‹ Whole month</button>
+    </div>
+  );
+  if (!withEvents.length) return <>{back}<div className="empty-state">No projects scheduled {onWholeMonth ? 'on this day' : 'in this month'}.</div></>;
   return (
     <div className="table-wrap">
+      {back}
       <table>
         <tbody>
           {withEvents.map((d) => {
