@@ -7,6 +7,7 @@ import { API, RESOURCES, STATUS_COLOR, STATUS_LABEL, StatusBadge, errorOf, resou
 import { DecisionModal, RescheduleModal, rangeLabel } from './installation/reschedule';
 import { downloadBlob, renderDayPng } from './installation/dayReport';
 import ButtonMenu from '../components/ButtonMenu';
+import ProjectSummaryModal from './installation/ProjectSummaryModal';
 
 // Production > Installation Planner -- the dashboard (server: routes/installationPlanner.js). PLANNER's
 // planner dashboard: the counts on top, then the Project Schedule Calendar -- every project across its
@@ -214,7 +215,9 @@ export default function InstallationPlanner({ readOnly = false }) {
     : `${MONTHS[anchor.getMonth()]} ${anchor.getFullYear()}`;
 
   // Read only, a bar or a booking opens nothing -- its tooltip says what it is.
-  const openProject = (id) => { if (!readOnly) navigate(`/installation-planner/projects/${id}`); };
+  // Read only (the Dashboard), a bar or booking opens the project's details in a popup instead
+  // (asked 2026-11-10) -- the project page itself needs the Installation Planner permission.
+  const openProject = (id) => { if (readOnly) setModal({ kind: 'summary', id }); else navigate(`/installation-planner/projects/${id}`); };
   const open = (e) => openProject(e.id);
   // Clicking a date opens that day, installer by installer, hour by hour.
   const openDay = (k) => { setAnchor(parse(k)); setView('day'); };
@@ -391,6 +394,7 @@ export default function InstallationPlanner({ readOnly = false }) {
         <RescheduleModal project={modal.project} newFrom={modal.newFrom} newTo={modal.newTo}
           onClose={() => setModal(null)} onSaved={() => { setModal(null); reload(); }} />
       )}
+      {modal?.kind === 'summary' && <ProjectSummaryModal projectId={modal.id} onClose={() => setModal(null)} />}
       {modal?.kind === 'decision' && (
         <DecisionModal request={modal.request} onClose={() => setModal(null)} onDone={() => { setModal(null); reload(); }} />
       )}

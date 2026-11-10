@@ -340,6 +340,30 @@ router.get('/projects', requireAuth, requirePermission(ROUTE, 'can_view'), async
   } catch (err) { next(err); }
 });
 
+// The Dashboard's read-only calendar (asked 2026-11-10): clicking a bar shows the project's details --
+// JO, customer, site, dates, status, the team and the crew schedule -- to anyone who may read the
+// calendar. Nothing here edits; files, checklist, BOM and progress photos stay on the project page.
+router.get('/projects/:id/summary', requireAuth, requireCalendarRead, async (req, res, next) => {
+  try {
+    const [[p]] = await pool.query(`${PROJECT_SELECT} WHERE p.id = ?`, [req.params.id]);
+    if (!p) return errorOut(res, 404, 'Project not found');
+    const [[installers], [subcons], [crew]] = await Promise.all([
+      pool.query(`SELECT e.id, e.first_name, e.last_name FROM installation_project_installers x JOIN employees e ON e.id = x.employee_id
+                   WHERE x.project_id = ? ORDER BY e.first_name, e.last_name`, [p.id]),
+      pool.query(`SELECT e.id, e.first_name, e.last_name FROM installation_project_subcon_employees x JOIN employees e ON e.id = x.employee_id
+                   WHERE x.project_id = ? ORDER BY e.first_name, e.last_name`, [p.id]),
+      pool.query(`${CREW_SELECT} WHERE s.project_id = ? ORDER BY s.work_date, s.start_time, e.first_name`, [p.id]),
+    ]);
+    res.json({
+      id: p.id, project_no: p.project_no, title: p.title, description: p.description, site_address: p.site_address,
+      status: p.status, progress: p.progress, date_from: p.date_from, date_to: p.date_to,
+      category_name: p.category_name, job_order_id: p.job_order_id, job_order_no: p.job_order_no,
+      job_order_description: p.job_order_description, customer_name: p.customer_name, driver_name: p.driver_name,
+      installers, subcons, crew_slots: crew,
+    });
+  } catch (err) { next(err); }
+});
+
 router.get('/projects/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const [[p]] = await pool.query(`${PROJECT_SELECT} WHERE p.id = ?`, [req.params.id]);
