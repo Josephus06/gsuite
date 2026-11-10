@@ -201,7 +201,7 @@ export default function PlaceOrderForm() {
 
   // The picker's list after the search; paged five at a time below.
   const q = pickerSearch.trim().toLowerCase();
-  const pickerRows = openPRs.filter((pr) => !q || [pr.pr_no, pr.requestor_name, pr.department_name]
+  const pickerRows = openPRs.filter((pr) => !q || [pr.pr_no, pr.requestor_name, pr.department_name, pr.memo]
     .some((v) => String(v || '').toLowerCase().includes(q)));
 
   return (
@@ -324,10 +324,10 @@ export default function PlaceOrderForm() {
               <button type="button" onClick={() => setShowPicker(false)} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 24, lineHeight: 1, cursor: 'pointer' }}>×</button>
             </div>
             <div style={{ padding: 24 }}>
-              <input placeholder="Search PR #, requestor or department" value={pickerSearch} onChange={(e) => { setPickerSearch(e.target.value); setPickerPage(1); }} style={{ marginBottom: 16, maxWidth: 320 }} />
+              <input placeholder="Search PR #, requestor, department or memo" value={pickerSearch} onChange={(e) => { setPickerSearch(e.target.value); setPickerPage(1); }} style={{ marginBottom: 16, maxWidth: 320 }} />
               <div className="table-wrap">
                 <table>
-                  <thead><tr><th></th><th>PR #</th><th>Date Created</th><th>Requested From</th><th>Requestor</th><th>Status</th><th>Item Status</th></tr></thead>
+                  <thead><tr><th></th><th>PR #</th><th>Date Created</th><th>Requested From</th><th>Requestor</th><th>Memo</th><th>Status</th><th>Item Status</th></tr></thead>
                   <tbody>
                     {pickerRows.slice((pickerPage - 1) * PICKER_PAGE_SIZE, pickerPage * PICKER_PAGE_SIZE)
                       .map((pr) => (
@@ -337,12 +337,13 @@ export default function PlaceOrderForm() {
                           <td>{String(pr.date_created).slice(0, 10)}</td>
                           <td>{pr.department_name}</td>
                           <td>{pr.requestor_name}</td>
+                          <td style={{ maxWidth: 260, whiteSpace: 'pre-wrap' }}>{pr.memo || <span className="muted">—</span>}</td>
                           <td>{pr.status}</td>
                           <td>{pr.item_status}</td>
                         </tr>
                       ))}
                     {pickerRows.length === 0 && (
-                      <tr><td colSpan={7} className="muted" style={{ textAlign: 'center', padding: 20 }}>{openPRs.length ? 'No Purchase Requisition matches the search.' : 'No open Purchase Requisitions.'}</td></tr>
+                      <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 20 }}>{openPRs.length ? 'No Purchase Requisition matches the search.' : 'No open Purchase Requisitions.'}</td></tr>
                     )}
                   </tbody>
                 </table>

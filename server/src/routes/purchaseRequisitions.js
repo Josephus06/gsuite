@@ -46,7 +46,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const [rows] = await pool.query(
-      `SELECT pr.id, pr.pr_no, pr.date_created, pr.status,
+      `SELECT pr.id, pr.pr_no, pr.date_created, pr.status, pr.memo,
               d.name AS department_name,
               CONCAT(e.first_name, ' ', e.last_name) AS requestor_name,
               u.display_name AS prepared_by_name
