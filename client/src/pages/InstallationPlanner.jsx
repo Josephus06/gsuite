@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
-import { API, RESOURCES, STATUS_COLOR, STATUS_LABEL, StatusBadge, errorOf, resourceKey, resourceList, resourceName, slotHours, timeText } from './installation/common';
+import { API, RESOURCES, STATUS_COLOR, STATUS_LABEL, StatusBadge, errorOf, resourceKey, resourceList, mergeSlots, resourceName, slotHours, timeText } from './installation/common';
 import { DecisionModal, RescheduleModal, rangeLabel } from './installation/reschedule';
 import { downloadBlob, renderDayPng } from './installation/dayReport';
 import ButtonMenu from '../components/ButtonMenu';
@@ -87,7 +87,9 @@ export default function InstallationPlanner({ readOnly = false }) {
   useEffect(() => {
     setLoading(true);
     const q = query || undefined;
-    const who = whoKey ? { [whoKey[0] === 'v' ? 'asset_id' : 'employee_id']: whoKey.slice(1) } : {};
+    // A merged person (same name on two records) is asked for by every one of their ids.
+    const whoP = whoKey && whoKey[0] === 'e' ? resourceList(resource, people).find((p) => p.key === whoKey) : null;
+    const who = whoKey ? { [whoKey[0] === 'v' ? 'asset_id' : 'employee_id']: whoP ? whoP.ids.join(',') : whoKey.slice(1) } : {};
     const req = view === 'crew' || view === 'day'
       ? api.get(`${API}/crew`, { params: { from, to, search: q, role: resource } }).then(({ data }) => setCrew(data))
       : api.get(`${API}/events`, { params: { from, to, status: status || undefined, ...who, search: q } }).then(({ data }) => setEvents(data));
@@ -97,7 +99,8 @@ export default function InstallationPlanner({ readOnly = false }) {
   // kind, booked or not, narrowed to the one chosen; while searching, to those booked on what matches
   // (everyone else would only be noise in an answer to "who is on JO-123?").
   const allOfKind = resourceList(resource, people);
-  const shownCrew = whoKey ? crew.filter((x) => resourceKey(x) === whoKey) : crew;
+  const crewM = mergeSlots(allOfKind, crew);
+  const shownCrew = whoKey ? crewM.filter((x) => resourceKey(x) === whoKey) : crewM;
   const bookedKeys = new Set(shownCrew.map(resourceKey));
   const shownPeople = allOfKind.filter((p) => (!whoKey || p.key === whoKey) && (!query || bookedKeys.has(p.key)));
   const R = RESOURCES[resource];
@@ -111,7 +114,8 @@ export default function InstallationPlanner({ readOnly = false }) {
     setError('');
     try {
       const { data } = await api.get(`${API}/crew`, { params: { from: reportDay, to: reportDay, role: kind } });
-      const blob = await renderDayPng({ dayKey: reportDay, kind: RESOURCES[kind], people: resourceList(kind, people), slots: data });
+      const reportPeople = resourceList(kind, people);
+      const blob = await renderDayPng({ dayKey: reportDay, kind: RESOURCES[kind], people: reportPeople, slots: mergeSlots(reportPeople, data) });
       downloadBlob(blob, `${RESOURCES[kind].plural}-Schedule-${reportDay}.png`);
     } catch (err) {
       setError(`Could not generate the report: ${errorOf(err)}`);
@@ -355,7 +359,7 @@ export default function InstallationPlanner({ readOnly = false }) {
                     onDragLeave={() => setDropKey((cur) => (cur === k ? '' : cur))}
                     onDrop={(ev) => onDropDay(ev, k)}
                     style={{
-                      background: dropKey === k ? 'rgba(37,99,235,0.10)' : 'var(--surface)', minHeight: view === 'week' ? 360 : 104, padding: 4,
+                      background: dropKey === k ? 'rgba(37,99,235,0.10)' : 'var(--surface)', minHeight: view === 'week' ? 480 : 104, padding: 4,
                       opacity: inMonth ? 1 : 0.45, outline: dropKey === k ? '2px dashed var(--accent)' : 'none', outlineOffset: -2,
                     }}>
                     <button type="button" onClick={() => openDay(k)} title="Open this day by installer"
@@ -400,7 +404,9 @@ export default function InstallationPlanner({ readOnly = false }) {
 // the finish, anywhere else shifts the whole range; the drop opens the reschedule dialog. A ghost (dashed)
 // is a reschedule waiting for the SBU -- clicking it opens the request.
 const BAR_H = 19;
-const BAR_H_WEEK = 40;
+// Week: room for the whole title (up to three lines) and the project / JO line under it (asked 2026-11-10).
+const BAR_H_WEEK = 80;
+const CLAMP3 = { display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' };
 const GRIP = { position: 'absolute', top: 0, bottom: 0, width: 9, cursor: 'ew-resize', background: 'rgba(255,255,255,0.35)' };
 function EventBar({ e, dayKey, weekStart, wrap, draggable, onOpen }) {
   const start = String(e.date_from).slice(0, 10);
@@ -426,8 +432,8 @@ function EventBar({ e, dayKey, weekStart, wrap, draggable, onOpen }) {
         display: 'block', width: wrap ? '100%' : 'calc(100% + 8px)', margin: wrap ? '3px 0 0' : '3px -4px 0', textAlign: 'left',
         cursor: draggable ? 'grab' : 'pointer',
         background: e.ghost ? 'transparent' : color, color: e.ghost ? color : '#fff',
-        border: e.ghost ? `1px dashed ${color}` : 'none', fontSize: 11, lineHeight: 1.35,
-        padding: '2px 6px', whiteSpace: wrap ? 'normal' : 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        border: e.ghost ? `1px dashed ${color}` : 'none', fontSize: wrap ? 12 : 11, lineHeight: 1.35,
+        padding: wrap ? '4px 8px' : '2px 6px', whiteSpace: wrap ? 'normal' : 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
         // One fixed height per view: a continuation day carries no text (it collapsed to a thin line), and
         // bars of different heights would not line up across the week's lanes.
         height: wrap ? BAR_H_WEEK : BAR_H, boxSizing: 'border-box',
@@ -437,8 +443,11 @@ function EventBar({ e, dayKey, weekStart, wrap, draggable, onOpen }) {
       }}>
       {draggable && first && <span draggable onDragStart={(ev) => startDrag(ev, 'start')} title="Drag to move the start" style={{ ...GRIP, left: 0 }} />}
       {draggable && last && <span draggable onDragStart={(ev) => startDrag(ev, 'end')} title="Drag to move the finish" style={{ ...GRIP, right: 0 }} />}
-      {label ? (e.ghost ? `⇄ Proposed: ${e.job_order_no || e.project_no}` : `${e.pending_id ? '⇄ ' : ''}${e.title} (${(STATUS_LABEL[e.status] || e.status).toUpperCase()})`) : '\u00a0'}
-      {wrap && !e.ghost && <div style={{ opacity: 0.85 }}>{e.project_no}{e.job_order_no ? ` · ${e.job_order_no}` : ''} · {e.progress}%</div>}
+      {(() => {
+        const text = label ? (e.ghost ? `⇄ Proposed: ${e.job_order_no || e.project_no}` : `${e.pending_id ? '⇄ ' : ''}${e.title} (${(STATUS_LABEL[e.status] || e.status).toUpperCase()})`) : '\u00a0';
+        return wrap ? <div style={{ ...CLAMP3, fontWeight: 600 }}>{text}</div> : text;
+      })()}
+      {wrap && !e.ghost && <div style={{ opacity: 0.9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.project_no}{e.job_order_no ? ` · ${e.job_order_no}` : ''} · {e.progress}%</div>}
     </div>
   );
 }

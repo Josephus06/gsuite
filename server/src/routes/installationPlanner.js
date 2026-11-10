@@ -288,13 +288,14 @@ router.get('/events', requireAuth, requireCalendarRead, async (req, res, next) =
     if (STATUSES.includes(req.query.status)) { where.push('p.status = ?'); params.push(req.query.status); }
     // One person's projects -- an installer or subcon on it, its driver, or booked on its schedule --
     // or one vehicle's: on the project, or booked on its schedule.
-    if (idOrNull(req.query.employee_id)) {
-      const eid = Number(req.query.employee_id);
-      where.push(`(p.driver_employee_id = ?
-                   OR EXISTS (SELECT 1 FROM installation_project_installers i WHERE i.project_id = p.id AND i.employee_id = ?)
-                   OR EXISTS (SELECT 1 FROM installation_project_subcon_employees se WHERE se.project_id = p.id AND se.employee_id = ?)
-                   OR EXISTS (SELECT 1 FROM installation_crew_slots s WHERE s.project_id = p.id AND s.employee_id = ?))`);
-      params.push(eid, eid, eid, eid);
+    // employee_id may be a comma list: one person on two employee records (the calendar merges them).
+    const eids = String(req.query.employee_id || '').split(',').map(idOrNull).filter(Boolean).map(Number);
+    if (eids.length) {
+      where.push(`(p.driver_employee_id IN (?)
+                   OR EXISTS (SELECT 1 FROM installation_project_installers i WHERE i.project_id = p.id AND i.employee_id IN (?))
+                   OR EXISTS (SELECT 1 FROM installation_project_subcon_employees se WHERE se.project_id = p.id AND se.employee_id IN (?))
+                   OR EXISTS (SELECT 1 FROM installation_crew_slots s WHERE s.project_id = p.id AND s.employee_id IN (?)))`);
+      params.push(eids, eids, eids, eids);
     }
     if (idOrNull(req.query.asset_id)) {
       const aid = Number(req.query.asset_id);

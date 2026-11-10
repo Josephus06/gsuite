@@ -42,7 +42,24 @@ export const resourceName = (s) => (s.role === 'vehicle'
 export function resourceList(kind, { employees = [], vehicles = [] }) {
   if (kind === 'vehicle') return vehicles.map((v) => ({ key: `v${v.id}`, id: v.id, name: vehicleLabel(v) }));
   const flag = RESOURCES[kind].flag;
-  return employees.filter((e) => e[flag]).map((e) => ({ key: `e${e.id}`, id: e.id, name: personName(e) }));
+  // Two employee records with the same name are one person on the calendar (asked 2026-11-10: ALLAN
+  // RAMAN twice) -- one row / column, both records' bookings in it. Keyed on the first record.
+  const byName = new Map();
+  for (const e of employees.filter((x) => x[flag])) {
+    const name = personName(e);
+    const k = name.trim().replace(/s+/g, ' ').toLowerCase();
+    if (byName.has(k)) byName.get(k).ids.push(e.id);
+    else byName.set(k, { key: `e${e.id}`, id: e.id, ids: [e.id], name });
+  }
+  return [...byName.values()];
+}
+
+// Bookings re-keyed onto the merged people above, so a slot on either record lands in the one column.
+export function mergeSlots(list, slots) {
+  const alias = new Map();
+  for (const p of list) for (const id of p.ids || []) if (id !== p.id) alias.set(Number(id), p.id);
+  if (!alias.size) return slots;
+  return slots.map((s) => (s.role !== 'vehicle' && alias.has(Number(s.employee_id)) ? { ...s, employee_id: alias.get(Number(s.employee_id)) } : s));
 }
 
 // "13:30:00" -> "1:30 PM"
