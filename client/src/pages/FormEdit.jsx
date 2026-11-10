@@ -517,9 +517,7 @@ export default function FormEdit() {
 
       {/* Request to Apply for a Bank Loan (asked 2026-11-10), the rows of the company's letter. */}
       {type === 'bank_loan' && (() => {
-        const amt = Number(form.bl_amount) || 0;
-        const autoNet = form.bl_doc_stamp !== '' || form.bl_advance_interest !== ''
-          ? amt - (Number(form.bl_doc_stamp) || 0) - (Number(form.bl_advance_interest) || 0) : null;
+        // No placeholders in these boxes (asked 2026-11-10).
         return (
           <div className="card" style={{ marginTop: 16 }}>
             <h3>Request to Apply for a Bank Loan</h3>
@@ -537,7 +535,6 @@ export default function FormEdit() {
                       type={r.type === 'money' ? 'number' : r.type === 'date' ? 'date' : 'text'}
                       step={r.type === 'money' ? '0.01' : undefined} min={r.type === 'money' ? '0' : undefined}
                       value={form[r.field]} onChange={(e) => set(r.field, e.target.value)}
-                      placeholder={r.key === 'net_proceeds' && autoNet != null ? `${money(autoNet)} (loan less doc stamp and interest)` : r.placeholder}
                     />
                   )}
                 </div>
