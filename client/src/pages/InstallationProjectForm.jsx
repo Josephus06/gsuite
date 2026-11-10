@@ -163,7 +163,7 @@ export default function InstallationProjectForm() {
               </div>
               <div className="muted" style={{ fontSize: 12 }}>
                 {jo ? `${jo.job_type || ''}${jo.location ? ` · ${jo.location}` : ''}${jo.project_nos ? ` · already on ${jo.project_nos}` : ''}`
-                  : 'Job Orders whose Job Type or a process is installation. Picking one fills the title from the JO.'}
+                  : 'Every Job Order In Process in production. Picking one fills the title from the JO.'}
               </div>
             </div>
             <div className="field" style={{ gridColumn: '1 / -1' }}>

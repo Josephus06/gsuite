@@ -136,12 +136,6 @@ router.get('/dashboard-calendar', requireAuth, async (req, res, next) => {
   try { res.json({ show: await isDashboardReader(req.user.id) }); } catch (err) { next(err); }
 });
 
-// A JO is installation work when its Job Type is one or any of its processes is one -- the same test
-// as Sales > Installation Orders per Month (routes/installationOrdersReport.js).
-const INSTAL_JO = `(jt.display_name LIKE '%INSTAL%' OR EXISTS (
-    SELECT 1 FROM job_order_processes jop JOIN processes p ON p.id = jop.process_id
-     WHERE jop.job_order_id = jo.id AND p.process_name LIKE '%INSTAL%'))`;
-
 // The calendar's search box (asked 2026-11-09): a project (alias p, its JO as jo) matches on its JO #,
 // its customer's name (through the JO's SO or NSSO), its project # or its title. Subqueries rather than
 // joins, so it drops into any query that already has p and jo.
@@ -233,10 +227,11 @@ router.get('/meta', requireAuth, requireCalendarRead, async (req, res, next) => 
   } catch (err) { next(err); }
 });
 
-// The installation Job Orders to pick from (newest first), each with the project already doing it.
+// The Job Orders to pick from (newest first), each with the project already doing it: every JO In
+// Process in production, whatever its Job Type (asked 2026-11-10 -- it was installation JOs only).
 router.get('/job-orders', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const where = [INSTAL_JO, "COALESCE(jo.status, '') <> 'cancelled'"];
+    const where = ["jo.production_stage IN ('in_process', 'in_process_with_revision')", "COALESCE(jo.status, '') <> 'cancelled'"];
     const params = [];
     if (req.query.search) {
       where.push('(jo.job_order_no LIKE ? OR jo.description LIKE ? OR cs.name LIKE ? OR cn.name LIKE ? OR s.sales_order_no LIKE ? OR ns.nsso_no LIKE ?)');
