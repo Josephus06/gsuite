@@ -93,6 +93,9 @@ function readBody(body) {
       clearance_status: coeType === 'with_rating' ? trunc(body.clearance_status, 150) : null,
       approver_user_id: Number(body.approver_user_id) || null,
       remarks: trunc(body.remarks, 500),
+      // The letter's wording as HR edited it (2026-11-10); empty prints the standard wording.
+      body_text: String(body.body_text || '').trim().slice(0, 5000) || null,
+      body_closing: coeType === 'with_rating' ? (String(body.body_closing || '').trim().slice(0, 5000) || null) : null,
     },
   };
 }

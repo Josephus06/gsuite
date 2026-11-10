@@ -56,6 +56,10 @@ const pool = require('../db');
     ['approved_at', 'DATETIME NULL AFTER approver_user_id'],
     ['rejected_reason', 'VARCHAR(500) NULL AFTER approved_at'],
     ['decided_at', 'DATETIME NULL AFTER rejected_reason'],
+    // HR may edit the body of the letter (2026-11-10): empty = the standard wording. For a COE with
+    // rating, body_text is the paragraph above the appraisal table and body_closing the ones after.
+    ['body_text', 'TEXT NULL AFTER clearance_status'],
+    ['body_closing', 'TEXT NULL AFTER body_text'],
   ]) {
     const [c] = await pool.query('SHOW COLUMNS FROM hr_coes LIKE ?', [col]);
     if (c.length) console.log(`  hr_coes.${col} already there -- skipped`);

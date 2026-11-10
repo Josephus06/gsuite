@@ -4,6 +4,7 @@ import { useAuth } from '../context/useAuth';
 import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
+import { defaultWording } from './coeText';
 
 // HRD > Certificate of Employment (2026-10-22). The company's two COE templates, issued from the
 // employee record: the plain COE and the COE with rating (the separation certificate with the
@@ -41,6 +42,9 @@ function blankForm(criteria, approvers = []) {
     clearance_status: '',
     approver_user_id: approvers[0]?.id || '',
     remarks: '',
+    // The letter's wording as HR edited it; empty = the standard wording (coeText.js).
+    body_text: '',
+    body_closing: '',
   };
 }
 
@@ -114,6 +118,9 @@ function CoeModal({ criteria, approvers, existing, onClose, onSaved }) {
   }
 
   const rating = form.coe_type === 'with_rating';
+  // The body of the letter (asked 2026-11-10): the standard wording until HR edits it.
+  const standardWording = defaultWording(form);
+  const edited = !!(form.body_text || form.body_closing);
 
   return (
     <Modal title={existing ? `Edit ${existing.coe_no}` : 'New Certificate of Employment'} onClose={onClose} large>
@@ -243,6 +250,42 @@ function CoeModal({ criteria, approvers, existing, onClose, onSaved }) {
               </div>
             </>
           )}
+
+          <div className="field">
+            <label>Body of the letter</label>
+            {!edited ? (
+              <>
+                <div className="muted" style={{ fontSize: 12, whiteSpace: 'pre-wrap', border: '1px solid var(--border)', borderRadius: 6, padding: 8, marginBottom: 6 }}>
+                  {standardWording.body.replace(/**/g, '')}{rating ? `
+
+[Performance Appraisal table, Mode of Separation, Clearance Status]
+
+${standardWording.closing.replace(/**/g, '')}` : ''}
+                </div>
+                <button type="button" className="btn btn-sm" onClick={() => set({ body_text: standardWording.body, body_closing: standardWording.closing })}>
+                  Edit the wording
+                </button>
+                <span className="muted" style={{ fontSize: 12, marginLeft: 8 }}>The standard wording, filled in from the fields above.</span>
+              </>
+            ) : (
+              <>
+                <textarea rows={rating ? 4 : 9} value={form.body_text} maxLength={5000} onChange={(e) => set({ body_text: e.target.value })} />
+                {rating && (
+                  <>
+                    <div className="muted" style={{ fontSize: 12, margin: '6px 0 4px' }}>After the Performance Appraisal table, Mode of Separation and Clearance Status:</div>
+                    <textarea rows={5} value={form.body_closing} maxLength={5000} onChange={(e) => set({ body_closing: e.target.value })} />
+                  </>
+                )}
+                <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                  Leave a blank line between paragraphs. **Text between double asterisks** prints in bold. Edited wording does not
+                  follow later changes to the name, position or dates above.
+                </div>
+                <button type="button" className="btn btn-sm" style={{ marginTop: 6 }} onClick={() => set({ body_text: '', body_closing: '' })}>
+                  Use the standard wording
+                </button>
+              </>
+            )}
+          </div>
 
           {/* The General Manager who approves -- and whose name the certificate is signed in. */}
           <div className="field">

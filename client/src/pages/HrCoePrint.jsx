@@ -5,6 +5,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import logo from '../assets/coe-logo-creations.png';
 import rule from '../assets/coe-logo-digital.jpeg';
 import footer from '../assets/coe-footer.jpeg';
+import { defaultWording, paragraphs, rich } from './coeText';
 
 // Certificate of Employment on the company's own templates (COE.docx and "COE Template.docx", 2026-10-22):
 // A4, Times New Roman, the GraphicStar logo over the blue/orange rule in the header and the three
@@ -12,19 +13,7 @@ import footer from '../assets/coe-footer.jpeg';
 // cropped and placed as Word placed them, so the paper matches what HR printed before.
 // Printing is gated server-side (GET /hr-coe/:id/print, can_print).
 
-const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-function parts(v) {
-  const [y, m, d] = String(v || '').slice(0, 10).split('-').map(Number);
-  return y ? { y, m, d } : null;
-}
-// "January 5, 2020"
-const longDate = (v) => { const p = parts(v); return p ? `${MONTHS[p.m - 1]} ${p.d}, ${p.y}` : ''; };
-const ordinal = (n) => {
-  const s = ['th', 'st', 'nd', 'rd'];
-  const v = n % 100;
-  return `${n}${s[(v - 20) % 10] || s[v] || s[0]}`;
-};
-
+// The wording (dates spelled out, he/she, the paragraphs) is built in ./coeText.js, shared with the form.
 export default function HrCoePrint() {
   const { id } = useParams();
   const [coe, setCoe] = useState(null);
@@ -48,16 +37,13 @@ export default function HrCoePrint() {
   }
   if (!coe) return <LoadingSpinner />;
 
-  const his = { he: 'his', she: 'her' }[coe.pronoun] || 'his/her';
-  const he = { he: 'he', she: 'she' }[coe.pronoun] || 'he/she';
-  const issued = parts(coe.issued_date);
-  const givenOn = issued ? `${ordinal(issued.d)} day of ${MONTHS[issued.m - 1]} ${issued.y}` : '';
-  const to = coe.date_to ? longDate(coe.date_to) : 'present';
   const rating = coe.coe_type === 'with_rating';
+  // The body as HR edited it (2026-11-10), else the standard wording built from the fields.
+  const standard = defaultWording(coe);
+  const wording = { body: coe.body_text || standard.body, closing: coe.body_closing || standard.closing };
   // Signed in the name of the General Manager who approved it; nobody's name before that.
   const approved = coe.status === 'approved';
   const signedBy = approved ? coe.signatory_name : '';
-  const issuedTo = coe.issued_to || coe.employee_name;
 
   return (
     <div className="coep">
@@ -125,10 +111,9 @@ export default function HrCoePrint() {
         {rating ? (
           <div className="coep-body" style={{ fontSize: '11pt', lineHeight: 1.15 }}>
             <div className="coep-title" style={{ fontSize: '12pt', margin: '10mm 0 8mm' }}>CERTIFICATE OF EMPLOYMENT</div>
-            <p className="coep-indent" style={{ lineHeight: 1.5, marginBottom: '4mm' }}>
-              This is to certify that <b>{coe.employee_name}</b> was employed with <b>CEBU GRAPHICSTAR IMAGING CORPORATION</b> as
-              a <b>{coe.position_title || '____________'}</b> from {longDate(coe.date_from)} to {to}.
-            </p>
+            {paragraphs(wording.body).map((p, i) => (
+              <p key={i} className="coep-indent" style={{ lineHeight: 1.5, marginBottom: '4mm' }}>{rich(p)}</p>
+            ))}
             <div style={{ fontSize: '10.5pt', fontWeight: 700, paddingLeft: '25.4mm', marginBottom: '2mm' }}>
               Performance Appraisal prior to separation
             </div>
@@ -147,14 +132,10 @@ export default function HrCoePrint() {
             </table>
             <p>Mode of Separation: {coe.mode_of_separation || '_________'}</p>
             <p style={{ marginBottom: '4mm' }}>Clearance Status: {coe.clearance_status || '___________'}</p>
-            <p style={{ fontSize: '12pt', marginBottom: '4mm' }}>
-              This certificate is issued upon request of <b>{issuedTo}</b> as a proof that {he} no longer has any
-              accountability due to the company. It is issued for employment purposes and for whatever lawful purpose
-              it may serve {his} best.
-            </p>
-            <p style={{ fontSize: '10.5pt', textAlign: 'left' }}>
-              Issued this {givenOn} at Basak, Mandaue City, Cebu, Philippines.
-            </p>
+            {/* The last paragraph is the "Issued this ..." line, smaller and not justified, as on the template. */}
+            {paragraphs(wording.closing).map((p, i, all) => (i === all.length - 1 && all.length > 1
+              ? <p key={i} style={{ fontSize: '10.5pt', textAlign: 'left' }}>{rich(p)}</p>
+              : <p key={i} style={{ fontSize: '12pt', marginBottom: '4mm' }}>{rich(p)}</p>))}
             <div className="coep-sign" style={{ fontSize: '13pt', marginTop: '14mm' }}>
               {approved && coe.signature && <img className="coep-esign" src={coe.signature} alt="" />}
               <div><b>{signedBy || <span>&nbsp;</span>}</b></div>
@@ -164,14 +145,10 @@ export default function HrCoePrint() {
         ) : (
           <div className="coep-body" style={{ fontSize: '13pt' }}>
             <div className="coep-title" style={{ fontSize: '18pt', margin: '12mm 0 14mm' }}>CERTIFICATE OF EMPLOYMENT</div>
-            <p className="coep-indent" style={{ lineHeight: 1.5, marginBottom: '7mm' }}>
-              This is to certify that <b>{coe.employee_name}</b> has been employed with <b>CEBU GRAPHICSTAR IMAGING
-              CORPORATION</b> as a <b>{coe.position_title || '____________'}</b> from {longDate(coe.date_from)} to {to}.
-            </p>
-            <p className="coep-indent" style={{ lineHeight: 1.5, marginBottom: '7mm' }}>
-              This certification is being issued to <b>{issuedTo}</b> for whatever legal purpose it may serve {his} best.
-            </p>
-            <p>Given this {givenOn} at Basak, Mandaue City, Cebu, Philippines.</p>
+            {/* Every paragraph indented but the last, the "Given this ..." line, as on the template. */}
+            {paragraphs(wording.body).map((p, i, all) => (i === all.length - 1 && all.length > 1
+              ? <p key={i}>{rich(p)}</p>
+              : <p key={i} className="coep-indent" style={{ lineHeight: 1.5, marginBottom: '7mm' }}>{rich(p)}</p>))}
             <div className="coep-sign" style={{ marginTop: '24mm' }}>
               {approved && coe.signature && <img className="coep-esign" src={coe.signature} alt="" />}
               <div><b>{signedBy || <span>&nbsp;</span>}</b></div>
