@@ -37,11 +37,17 @@ export default function ProcessCosting() {
   function runSearch() { setApplied(search); setPage(1); }
   useAutoSearch(search, runSearch);
 
-  const q = applied.trim().toLowerCase();
-  const rows = processes.filter((p) => (status === 'all' || (status === 'active') === !!p.is_active)
-    && (!q
-      || String(p.process_name || '').toLowerCase().includes(q)
-      || String(p.process_code || '').toLowerCase().includes(q)));
+  // Word by word, not the exact text (asked 2026-11-10): a full process name pasted in found nothing
+  // when its spacing or dashes differed from the stored one ("SqFt -151" vs "SqFt - 151", a double or
+  // non-breaking space). Every word typed must appear in the code or the name, in any order.
+  const words = (s) => String(s || '').toLowerCase().split(/[\s \-–—_/,]+/).filter(Boolean);
+  const terms = words(applied);
+  const rows = processes.filter((p) => {
+    if (status !== 'all' && (status === 'active') !== !!p.is_active) return false;
+    if (!terms.length) return true;
+    const hay = ` ${words(p.process_code).join(' ')} ${words(p.process_name).join(' ')} `;
+    return terms.every((t) => hay.includes(t));
+  });
   const totalPages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
   const pageRows = rows.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
