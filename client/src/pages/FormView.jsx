@@ -9,7 +9,7 @@ import Modal from '../components/Modal';
 import EntityPicker from '../components/EntityPicker';
 import StandaloneVendorBillModal from '../components/StandaloneVendorBillModal';
 import { useAuth } from '../context/useAuth';
-import { hoursMinutes, osMonthLabel, osQty, overtimeHours, statusLabel, MEMBER_FORMS, ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, leaveTypeLabel, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, clock, fmtDate, formBanks, money, pretty } from '../utils/requestForms';
+import { hoursMinutes, osMonthLabel, osQty, overtimeHours, statusLabel, MEMBER_FORMS, ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, leaveTypeLabel, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, clock, fmtDate, formBanks, money, pretty, BANK_LOAN_ROWS, bankLoanValue } from '../utils/requestForms';
 import OvertimeDecline from '../components/OvertimeDecline';
 import { parseUtc } from '../utils/datetime';
 
@@ -463,6 +463,13 @@ export default function FormView() {
               </tbody>
             </table>
           </div>
+        </div>
+      )}
+
+      {doc.type === 'bank_loan' && (
+        <div className="card" style={{ marginTop: 16 }}>
+          <h3>Request to Apply for a Bank Loan</h3>
+          {BANK_LOAN_ROWS.map((r) => <Line key={r.key} label={r.label}>{bankLoanValue(r, d)}</Line>)}
         </div>
       )}
 

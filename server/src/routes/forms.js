@@ -151,7 +151,7 @@ async function savePreApprover(q, formId, preApproverId) {
 }
 
 const TYPES = ['liquidation', 'payment', 'fund_transfer', 'business_trip', 'revolving_fund', 'attendance_adjustment', 'overtime', 'leave', 'undertime', 'gate_pass',
-  'hmo_enrollment', 'hmo_deletion', 'bpi_deletion', 'fuel', 'office_supply'];
+  'hmo_enrollment', 'hmo_deletion', 'bpi_deletion', 'fuel', 'office_supply', 'bank_loan'];
 const TYPE_LABELS = {
   liquidation: 'Liquidation',
   payment: 'Request for Payment',
@@ -168,9 +168,10 @@ const TYPE_LABELS = {
   bpi_deletion: 'BPI Deletion',
   fuel: 'Fuel Request',
   office_supply: 'Office Supply Requisition Form',
+  bank_loan: 'Request to Apply for a Bank Loan',
 };
 // Forms with no expense lines: a trip sheet, and the attendance adjustment slip.
-const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime', 'leave', 'undertime', 'gate_pass', 'hmo_enrollment', 'hmo_deletion', 'bpi_deletion', 'fuel', 'office_supply'];
+const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime', 'leave', 'undertime', 'gate_pass', 'hmo_enrollment', 'hmo_deletion', 'bpi_deletion', 'fuel', 'office_supply', 'bank_loan'];
 // HR's member lists (asked 2026-10-19; db/add-hr-member-forms.js): Life & Health HMO enrollment and
 // deletion, and the BPI payroll-account deletion letter. One lines table; each form its own columns
 // (kept in step with client/src/utils/requestForms.js MEMBER_FORMS). required = a line needs these.
@@ -453,6 +454,12 @@ async function loadFull(id) {
     }
     doc.detail = d || null;
     doc.fuel_usage = await fuelUsage(doc.user_id, d?.fuel_date, doc.id);
+  } else if (doc.type === 'bank_loan') {
+    const [[d]] = await pool.query('SELECT * FROM form_bank_loan_details WHERE form_request_id = ?', [id]).catch((e) => {
+      if (e.code === 'ER_NO_SUCH_TABLE') return [[null]];
+      throw e;
+    });
+    doc.detail = d || null;
   } else if (doc.type === 'gate_pass') {
     doc.detail = await gatePassDetail(id);
   } else if (doc.type === 'office_supply') {
@@ -1445,6 +1452,24 @@ async function writeDetail(conn, docId, type, body, items, ownerId = null) {
     return {};
   }
 
+  // Request to Apply for a Bank Loan (2026-11-10; db/add-bank-loan-form.js). Net Proceeds, left
+  // blank, is the loan less the Doc Stamp and the Advance Interest.
+  if (type === 'bank_loan') {
+    const amount = Number(body.bl_amount) || 0;
+    const stamp = num(body.bl_doc_stamp);
+    const interest = num(body.bl_advance_interest);
+    let net = num(body.bl_net_proceeds);
+    if (net == null && (stamp != null || interest != null)) net = Math.round((amount - (stamp || 0) - (interest || 0)) * 100) / 100;
+    await conn.query(
+      `INSERT INTO form_bank_loan_details (form_request_id, loan_amount, need_by_date, purpose, borrower, bank, doc_stamp, advance_interest,
+         net_proceeds, proceeds_instruction, term_of_payment, journal_entry_no, pn_no, bank_notice, remarks)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [docId, amount, date(body.bl_need_by_date), trunc(body.bl_purpose, 500), trunc(body.bl_borrower, 150), trunc(body.bl_bank, 150),
+        stamp, interest, net, trunc(body.bl_proceeds_instruction, 500), trunc(body.bl_term_of_payment, 255),
+        trunc(body.bl_journal_entry_no, 60), trunc(body.bl_pn_no, 60), trunc(body.bl_bank_notice, 255), trunc(body.bl_remarks, 1000)]);
+    return {};
+  }
+
   if (type === 'gate_pass') {
     await conn.query(
       `INSERT INTO form_gate_pass_details (form_request_id, location_id, pass_date, destination, purpose)
@@ -1591,6 +1616,14 @@ function validate(type, body, items) {
     for (let i = 0; i < lines.length; i += 1) {
       if (!lines[i].particulars) return `Line ${i + 1}: say which office supply is requested.`;
       if (!(lines[i].quantity > 0)) return `Line ${i + 1}: enter the quantity.`;
+    }
+  }
+  if (type === 'bank_loan') {
+    if (!(Number(body.bl_amount) > 0)) return 'Enter the amount of the loan to be applied for.';
+    if (!trunc(body.bl_purpose, 500)) return 'Say what the loan is for (Purpose).';
+    if (!trunc(body.bl_bank, 150)) return 'Say which bank the loan is applied with.';
+    for (const [k, label] of [['bl_doc_stamp', 'Doc Stamp'], ['bl_advance_interest', 'Advance Interest'], ['bl_net_proceeds', 'Net Proceeds']]) {
+      if (body[k] !== undefined && body[k] !== null && body[k] !== '' && !(Number(body[k]) >= 0)) return `${label} has to be an amount.`;
     }
   }
   if (type === 'gate_pass') {
@@ -1822,6 +1855,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       fuel: 'form_fuel_details',
       gate_pass: 'form_gate_pass_details',
       office_supply: 'form_office_supply_details',
+      bank_loan: 'form_bank_loan_details',
       hmo_enrollment: 'form_member_details',
       hmo_deletion: 'form_member_details',
       bpi_deletion: 'form_member_details',

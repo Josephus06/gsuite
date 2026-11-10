@@ -21,13 +21,41 @@ export const TYPE_LABELS = {
   bpi_deletion: 'BPI Deletion',
   fuel: 'Fuel Request',
   office_supply: 'Office Supply Requisition Form',
+  bank_loan: 'Request to Apply for a Bank Loan',
 };
 
 // Which forms are HR's (2026-10-13) -- the form picker shows them as their own group.
 export const HR_TYPES = ['leave', 'undertime', 'overtime', 'attendance_adjustment', 'gate_pass', 'office_supply', 'hmo_enrollment', 'hmo_deletion', 'bpi_deletion'];
 
 // Forms with no expense lines (and so no amount): a trip sheet, and the attendance adjustment slip.
-export const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime', 'leave', 'undertime', 'gate_pass', 'hmo_enrollment', 'hmo_deletion', 'bpi_deletion', 'fuel', 'office_supply'];
+export const NO_ITEM_TYPES = ['business_trip', 'attendance_adjustment', 'overtime', 'leave', 'undertime', 'gate_pass', 'hmo_enrollment', 'hmo_deletion', 'bpi_deletion', 'fuel', 'office_supply', 'bank_loan'];
+
+// Request to Apply for a Bank Loan (2026-11-10), its rows in the order of the company's letter.
+// money = an amount (PhP), date = a day; the rest are text. Kept in step with routes/forms.js.
+export const BANK_LOAN_ROWS = [
+  { key: 'loan_amount', field: 'bl_amount', label: 'Amount of Loan to be applied (in PhP)', type: 'money', required: true },
+  { key: 'need_by_date', field: 'bl_need_by_date', label: 'Need by Date', type: 'date' },
+  { key: 'purpose', field: 'bl_purpose', label: 'Purpose', required: true, placeholder: 'e.g. CGIC OpEx' },
+  { key: 'borrower', field: 'bl_borrower', label: 'Borrower', placeholder: 'e.g. CGIC' },
+  { key: 'bank', field: 'bl_bank', label: 'Bank', required: true, placeholder: 'e.g. Maybank Phils.' },
+  { key: 'doc_stamp', field: 'bl_doc_stamp', label: 'Doc Stamp', type: 'money' },
+  { key: 'advance_interest', field: 'bl_advance_interest', label: 'Advance Interest', type: 'money' },
+  { key: 'net_proceeds', field: 'bl_net_proceeds', label: 'Net Proceeds', type: 'money' },
+  { key: 'proceeds_instruction', field: 'bl_proceeds_instruction', label: 'Instruction for Net Proceeds', placeholder: 'e.g. ACA to Maybank Acct 00765000731' },
+  { key: 'term_of_payment', field: 'bl_term_of_payment', label: 'Term of Payment' },
+  { key: 'journal_entry_no', field: 'bl_journal_entry_no', label: 'JRNL Entry No.' },
+  { key: 'pn_no', field: 'bl_pn_no', label: 'PN #' },
+  { key: 'bank_notice', field: 'bl_bank_notice', label: 'Notice to Bank via Email/Viber' },
+  { key: 'remarks', field: 'bl_remarks', label: 'Remarks', multiline: true },
+];
+// A row's value as printed: PhP1,500,000.00 for an amount, 10/21/2026 for a date.
+export function bankLoanValue(row, d) {
+  const v = d?.[row.key];
+  if (v == null || v === '') return '';
+  if (row.type === 'money') return `PhP${money(v)}`;
+  if (row.type === 'date') return fmtDate(v);
+  return String(v);
+}
 
 // HR's member lists (2026-10-19), after HR's own sheets -- kept in step with server/src/routes/forms.js
 // MEMBER_FORMS. Each column: key, the sheet's heading, and how it is entered.

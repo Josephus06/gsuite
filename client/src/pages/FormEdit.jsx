@@ -3,10 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { useAuth } from '../context/useAuth';
-import {
-  ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, MEMBER_FORMS, blankMemberLine, FUND_TYPES, HR_TYPES, LEAVE_TYPE_LABELS, NO_ITEM_TYPES, PAYMENT_TYPES,
-  PURPOSE_LABELS, TYPE_LABELS, hoursMinutes, leaveDays, money, overtimeHours, undertimeMinutes,
-} from '../utils/requestForms';
+import { ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, MEMBER_FORMS, blankMemberLine, FUND_TYPES, HR_TYPES, LEAVE_TYPE_LABELS, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, TYPE_LABELS, hoursMinutes, leaveDays, money, overtimeHours, undertimeMinutes, BANK_LOAN_ROWS } from '../utils/requestForms';
 import EntityPicker from '../components/EntityPicker';
 
 // Filling out a form, and revising one. The same page does both: an edit is the same boxes with
@@ -59,6 +56,8 @@ export default function FormEdit() {
     gp_location_id: '', gp_date: '', gp_destination: '', gp_purpose: '',
     // Office Supply Requisition Form (2026-10-23)
     os_month: '',
+    // Request to Apply for a Bank Loan (2026-11-10): every BANK_LOAN_ROWS field, the borrower CGIC.
+    ...Object.fromEntries(BANK_LOAN_ROWS.map((r) => [r.field, r.key === 'borrower' ? 'CGIC' : ''])),
     // HR member lists (2026-10-19)
     enrollment_for: 'HEALTH INSURANCE', letter_date: '',
     // Fuel Request (2026-10-19)
@@ -157,6 +156,13 @@ export default function FormEdit() {
       setMemberLines((d.lines || []).length
         ? d.lines.map((l) => Object.fromEntries(MEMBER_FORMS[data.type].columns.map((c) => [c.key, c.type === 'date' && l[c.key] ? String(l[c.key]).slice(0, 10) : (l[c.key] ?? '')])))
         : [blankMemberLine(data.type)]);
+    }
+    if (data.type === 'bank_loan') {
+      setForm((f) => ({
+        ...f,
+        ...Object.fromEntries(BANK_LOAN_ROWS.map((r) => [r.field, d[r.key] == null ? ''
+          : r.type === 'date' ? String(d[r.key]).slice(0, 10) : r.type === 'money' ? Number(d[r.key]) : String(d[r.key])])),
+      }));
     }
     if (data.type === 'office_supply') {
       setForm((f) => ({ ...f, os_month: d.osr_date ? String(d.osr_date).slice(0, 7) : '' }));
@@ -505,6 +511,38 @@ export default function FormEdit() {
             </div>
             <button type="button" className="btn btn-sm" style={{ marginTop: 8 }}
               onClick={() => setMemberLines([...lines, blankMemberLine(type)])}>{cfg.addLabel}</button>
+          </div>
+        );
+      })()}
+
+      {/* Request to Apply for a Bank Loan (asked 2026-11-10), the rows of the company's letter. */}
+      {type === 'bank_loan' && (() => {
+        const amt = Number(form.bl_amount) || 0;
+        const autoNet = form.bl_doc_stamp !== '' || form.bl_advance_interest !== ''
+          ? amt - (Number(form.bl_doc_stamp) || 0) - (Number(form.bl_advance_interest) || 0) : null;
+        return (
+          <div className="card" style={{ marginTop: 16 }}>
+            <h3>Request to Apply for a Bank Loan</h3>
+            <div className="muted" style={{ fontSize: 12, marginTop: -6, marginBottom: 10 }}>
+              Approved by the General Manager (the Approver below). Net Proceeds left blank is the loan less the Doc Stamp and Advance Interest.
+            </div>
+            <div className="review-grid" style={{ gridTemplateColumns: 'repeat(2, minmax(0, 1fr))' }}>
+              {BANK_LOAN_ROWS.map((r) => (
+                <div className="field" key={r.field} style={r.multiline ? { gridColumn: '1 / -1' } : undefined}>
+                  <label>{r.label}{r.required ? ' *' : ''}</label>
+                  {r.multiline ? (
+                    <textarea rows={3} value={form[r.field]} maxLength={1000} onChange={(e) => set(r.field, e.target.value)} />
+                  ) : (
+                    <input
+                      type={r.type === 'money' ? 'number' : r.type === 'date' ? 'date' : 'text'}
+                      step={r.type === 'money' ? '0.01' : undefined} min={r.type === 'money' ? '0' : undefined}
+                      value={form[r.field]} onChange={(e) => set(r.field, e.target.value)}
+                      placeholder={r.key === 'net_proceeds' && autoNet != null ? `${money(autoNet)} (loan less doc stamp and interest)` : r.placeholder}
+                    />
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         );
       })()}

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
-import { osMonthLabel, osQty, MEMBER_FORMS, ADJ_REASON_LABELS, DAY_PART_LABELS, LEAVE_TYPE_LABELS, PAYMENT_TYPES, PURPOSE_LABELS, bankLabel, clock, hoursMinutes } from '../utils/requestForms';
+import { BANK_LOAN_ROWS, bankLoanValue, osMonthLabel, osQty, MEMBER_FORMS, ADJ_REASON_LABELS, DAY_PART_LABELS, LEAVE_TYPE_LABELS, PAYMENT_TYPES, PURPOSE_LABELS, bankLabel, clock, hoursMinutes } from '../utils/requestForms';
 import letterhead from '../assets/graphicstar-letterhead.png';
 import { displayDate } from '../utils/dates';
 
@@ -107,7 +107,20 @@ function MemberSignatures({ doc }) {
   );
 }
 
+// The bank loan letter: "Approved by: JIMMY W. WU, General Manager" -- the approver's name and title,
+// with who prepared it (and noted it, when someone did) beside.
+function BankLoanSignatures({ doc }) {
+  return (
+    <div className="rf-signs">
+      <Signature image={doc.owner_signature} name={doc.owner_name} role="Prepared by" />
+      {doc.noted_by_name && <Signature image={doc.noted_signature} name={doc.noted_by_name} role="Noted by" />}
+      <Signature image={doc.approved_signature} name={doc.approved_by_name} role="Approved by: General Manager" />
+    </div>
+  );
+}
+
 function Signatures({ doc }) {
+  if (doc.type === 'bank_loan') return <BankLoanSignatures doc={doc} />;
   if (doc.type === 'gate_pass') return <GatePassSignatures doc={doc} />;
   if (doc.type === 'office_supply') return <OfficeSupplySignatures doc={doc} />;
   if (MEMBER_FORMS[doc.type]) return <MemberSignatures doc={doc} />;
@@ -400,6 +413,21 @@ export default function FormPrint() {
         {/* Office Supply Requisition Form (asked 2026-10-23), laid out as HR's sheet since 2026-10-26:
             MONTH, then OFFICE SUPPLIES / BRAND / QUANTITY / REMARKS / ACCOUNTABLE / DATE OF LAST
             PURCHASE / PURPOSE, the requesting department as the yellow band over its lines. */}
+        {/* Request to Apply for a Bank Loan (2026-11-10): the letter's two-column table. */}
+        {doc.type === 'bank_loan' && (
+          <table className="rf-table rf-fixed" style={{ marginTop: 14 }}>
+            <colgroup><col style={{ width: '42%' }} /><col /></colgroup>
+            <tbody>
+              {BANK_LOAN_ROWS.map((r) => (
+                <tr key={r.key}>
+                  <td style={{ fontWeight: 700, fontSize: 12, padding: '7px 8px' }}>{r.label}</td>
+                  <td style={{ fontSize: 12, padding: '7px 8px', whiteSpace: 'pre-wrap', minHeight: 18 }}>{bankLoanValue(r, d) || ' '}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+
         {doc.type === 'office_supply' && (
           <>
             <div className="rf-row">
