@@ -1221,9 +1221,11 @@ router.get('/:id', requireAuth, async (req, res, next) => {
     doc.can_cancel = (await isSystemAdmin(req.user.id))
       ? ADMIN_CANCELLABLE.includes(doc.status) && !(await adminCancelBlock(doc))
       : doc.is_owner && cancellable(doc);
-    // The owner while it is still open; a System Admin always.
-    doc.can_edit = (await userCan(req.user.id, ROUTE, 'can_edit'))
-      && ((doc.is_owner && EDITABLE_STATUSES.includes(doc.status)) || await isSystemAdmin(req.user.id));
+    // The owner while it is still open; a System Admin always. A bank loan request stays open to
+    // whoever filed it after approval, until they Confirm it (see bankLoanStillOpen).
+    doc.can_edit = ((await userCan(req.user.id, ROUTE, 'can_edit'))
+      && ((doc.is_owner && EDITABLE_STATUSES.includes(doc.status)) || await isSystemAdmin(req.user.id)))
+      || await bankLoanStillOpen(doc, req.user.id);
 
     const note = await mayNote(req.user.id, doc);
     doc.can_note = note.allowed;
@@ -1763,11 +1765,17 @@ async function restoreAfterRevision(conn, doc) {
   return backToNoted ? 'noted' : 'submitted';
 }
 
-router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+router.put('/:id', requireAuth, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const [[doc]] = await conn.query('SELECT * FROM form_requests WHERE id = ?', [req.params.id]);
     if (!doc) return res.status(404).json({ error: 'Not found' });
+    // Forms' Edit right -- or the filer of an approved, unconfirmed bank loan request (asked
+    // 2026-11-10: its bank details arrive after approval, so the whole form stays theirs to edit).
+    const openBankLoan = await bankLoanStillOpen(doc, req.user.id);
+    if (!openBankLoan && !(await userCan(req.user.id, ROUTE, 'can_edit'))) {
+      return res.status(403).json({ error: 'You do not have permission to perform this action' });
+    }
     // A System Admin may edit any form, whoever filed it and whatever its status (asked 2026-10-09);
     // the edit is recorded in its System Information like any other.
     const admin = await isSystemAdmin(req.user.id);
@@ -1775,7 +1783,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     // Editing an approved form would change a document somebody has already signed off. A
     // SUBMITTED one is still editable (asked 2026-10-07) -- nobody has acted on it yet -- and stays
     // submitted; once it is noted or approved it is locked -- except to a System Admin.
-    if (!admin && !EDITABLE_STATUSES.includes(doc.status)) {
+    if (!admin && !openBankLoan && !EDITABLE_STATUSES.includes(doc.status)) {
       return res.status(409).json({ error: `A ${doc.status} form cannot be edited.` });
     }
 
@@ -2065,6 +2073,12 @@ const BANK_LOAN_LATE_FIELDS = [
   ['proceeds_instruction', 'bl_proceeds_instruction', 500], ['term_of_payment', 'bl_term_of_payment', 255],
   ['journal_entry_no', 'bl_journal_entry_no', 60], ['pn_no', 'bl_pn_no', 60], ['bank_notice', 'bl_bank_notice', 255], ['remarks', 'bl_remarks', 1000],
 ];
+// An approved bank loan request its filer has not yet Confirmed: still editable by them, whole.
+async function bankLoanStillOpen(doc, userId) {
+  if (doc.type !== 'bank_loan' || doc.status !== 'approved' || Number(doc.user_id) !== Number(userId)) return false;
+  const [[d]] = await pool.query('SELECT confirmed_at FROM form_bank_loan_details WHERE form_request_id = ?', [doc.id]).catch(() => [[null]]);
+  return !d?.confirmed_at;
+}
 async function mayFinishBankLoan(userId, doc) {
   if (doc.type !== 'bank_loan' || doc.status !== 'approved' || doc.detail?.confirmed_at) return false;
   return Number(doc.user_id) === Number(userId) || isSystemAdmin(userId);
