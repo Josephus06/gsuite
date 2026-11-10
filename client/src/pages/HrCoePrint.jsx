@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import logo from '../assets/coe-logo-creations.png';
@@ -16,14 +16,18 @@ import { defaultWording, paragraphs, rich } from './coeText';
 // The wording (dates spelled out, he/she, the paragraphs) is built in ./coeText.js, shared with the form.
 export default function HrCoePrint() {
   const { id } = useParams();
+  // ?view=1: the certificate read before approval (the list's View) -- no Print button, and readable
+  // with View rights alone (GET /:id/view), not only Print.
+  const [params] = useSearchParams();
+  const viewOnly = params.get('view') === '1';
   const [coe, setCoe] = useState(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api.get(`/hr-coe/${id}/print`)
+    api.get(`/hr-coe/${id}/${viewOnly ? 'view' : 'print'}`)
       .then(({ data }) => setCoe(data))
       .catch((e) => setError(e.response?.data?.error || 'Could not load this certificate.'));
-  }, [id]);
+  }, [id, viewOnly]);
 
   useEffect(() => { if (coe) document.title = `${coe.coe_no} ${coe.employee_name}`; }, [coe]);
 
@@ -94,7 +98,7 @@ export default function HrCoePrint() {
               : `Waiting for ${coe.approver_name || 'the General Manager'} to approve.`}
           </span>
         )}
-        <button type="button" className="btn btn-primary" onClick={() => window.print()}>Print</button>
+        {!viewOnly && <button type="button" className="btn btn-primary" onClick={() => window.print()}>Print</button>}
       </div>
 
       <div className="coep-sheet">

@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
+const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -215,18 +215,35 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
   } catch (err) { next(err); }
 });
 
+async function printAnswer(row, res) {
+  // The approving GM's e-signature (their profile signature), only once approved -- an unapproved
+  // certificate must not carry anyone's signature.
+  let signature = null;
+  if (row.status === 'approved' && row.approver_user_id) {
+    const [[u]] = await pool.query('SELECT signature_data FROM users WHERE id = ?', [row.approver_user_id]);
+    signature = u?.signature_data || null;
+  }
+  res.json({ ...parseRow(row), signature });
+}
+
+// View (asked 2026-11-10): the certificate as it will print, read before approving -- for anyone who
+// may see the list, and always for the General Manager it was sent to. Same answer as /print.
+router.get('/:id/view', requireAuth, async (req, res, next) => {
+  try {
+    const [[row]] = await pool.query(`${BASE_SELECT} WHERE c.id = ?`, [req.params.id]);
+    if (!row) return res.status(404).json({ error: 'Certificate not found' });
+    const allowed = Number(row.approver_user_id) === Number(req.user.id)
+      || await userCan(req.user.id, ROUTE, 'can_view') || await isSystemAdmin(req.user.id);
+    if (!allowed) return res.status(403).json({ error: 'You do not have permission to view this certificate.' });
+    await printAnswer(row, res);
+  } catch (err) { next(err); }
+});
+
 router.get('/:id/print', requireAuth, requirePermission(ROUTE, 'can_print'), async (req, res, next) => {
   try {
     const [[row]] = await pool.query(`${BASE_SELECT} WHERE c.id = ?`, [req.params.id]);
     if (!row) return res.status(404).json({ error: 'Certificate not found' });
-    // The approving GM's e-signature (their profile signature), only once approved -- an unapproved
-    // certificate must not carry anyone's signature.
-    let signature = null;
-    if (row.status === 'approved' && row.approver_user_id) {
-      const [[u]] = await pool.query('SELECT signature_data FROM users WHERE id = ?', [row.approver_user_id]);
-      signature = u?.signature_data || null;
-    }
-    res.json({ ...parseRow(row), signature });
+    await printAnswer(row, res);
   } catch (err) { next(err); }
 });
 

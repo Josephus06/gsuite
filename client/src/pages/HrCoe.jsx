@@ -371,6 +371,7 @@ export default function HrCoe() {
   const [criteria, setCriteria] = useState([]);
   const [approvers, setApprovers] = useState([]);
   const [deciding, setDeciding] = useState(null); // { coe, approve }
+  const [viewing, setViewing] = useState(null); // the certificate shown as it will print (View)
   const [status, setStatus] = useState('');
   const [type, setType] = useState('');
   const [search, setSearch] = useState('');
@@ -470,6 +471,8 @@ export default function HrCoe() {
                     )}
                   </td>
                   <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+                    {/* View: the certificate as it will print, to review before approving (asked 2026-11-10). */}
+                    <button type="button" className="btn btn-sm" onClick={() => setViewing(r)}>View</button>{' '}
                     {canDecide(r) && (
                       <>
                         <button type="button" className="btn btn-sm btn-primary" onClick={() => setDeciding({ coe: r, approve: true })}>Approve</button>{' '}
@@ -495,6 +498,18 @@ export default function HrCoe() {
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); load(); }}
         />
+      )}
+      {viewing && (
+        <Modal title={`${viewing.coe_no} · ${viewing.employee_name}`} onClose={() => setViewing(null)} xl>
+          <iframe title="Certificate" src={`/hrd/coe/${viewing.id}/print?view=1`}
+            style={{ width: '100%', height: '75vh', border: '1px solid var(--border)', borderRadius: 6, background: '#f1f5f9' }} />
+          {canDecide(viewing) && (
+            <div className="modal-actions">
+              <button type="button" className="btn btn-danger" onClick={() => { setDeciding({ coe: viewing, approve: false }); setViewing(null); }}>Reject</button>
+              <button type="button" className="btn btn-primary" onClick={() => { setDeciding({ coe: viewing, approve: true }); setViewing(null); }}>Approve</button>
+            </div>
+          )}
+        </Modal>
       )}
       {deciding && (
         <DecisionModal
