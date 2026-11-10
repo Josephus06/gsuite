@@ -324,20 +324,37 @@ router.get('/item-receipts', requireAuth, requirePermission(RECEIPT_ROUTE, 'can_
     const asOf = locationRequestorFilters(where, params, req.query, 't');
     if (asOf) { where.push('r.date_created <= ?'); params.push(asOf); }
     dateRangeFilter(where, params, req.query, 'r.date_created');
-    if (search) { where.push('(r.receipt_no LIKE ? OR t.to_no LIKE ? OR f.fulfillment_no LIKE ?)'); params.push(`%${search}%`, `%${search}%`, `%${search}%`); }
+    // One row per item received (asked 2026-11-10, as the old system lists them): the search also
+    // reaches the item, its description and the job order.
+    if (search) {
+      where.push('(r.receipt_no LIKE ? OR t.to_no LIKE ? OR f.fulfillment_no LIKE ? OR i.item_code LIKE ? OR i.display_name LIKE ? OR jo.job_order_no LIKE ?)');
+      for (let n = 0; n < 6; n += 1) params.push(`%${search}%`);
+    }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-    const baseFrom = `FROM item_receipts r
+    const baseFrom = `FROM item_receipt_lines rl
+       JOIN item_receipts r ON r.id = rl.item_receipt_id
+       JOIN transfer_orders t ON t.id = r.transfer_order_id
+       JOIN item_fulfillments f ON f.id = r.item_fulfillment_id
+       LEFT JOIN transfer_order_lines tol ON tol.id = rl.transfer_order_line_id
+       LEFT JOIN inventories i ON i.id = rl.item_id
+       LEFT JOIN job_orders jo ON jo.id = COALESCE(tol.job_order_id, t.job_order_id)`;
+    // The count needs the item / job order joins only when the search reads them.
+    const countFrom = search ? baseFrom : `FROM item_receipt_lines rl
+       JOIN item_receipts r ON r.id = rl.item_receipt_id
        JOIN transfer_orders t ON t.id = r.transfer_order_id
        JOIN item_fulfillments f ON f.id = r.item_fulfillment_id`;
-    const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total ${baseFrom} ${whereSql}`, params);
+    const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total ${countFrom} ${whereSql}`, params);
 
     const pageNum = Math.max(1, Number(page) || 1);
     const limitNum = Math.min(100, Math.max(1, Number(limit) || 10));
     const offset = (pageNum - 1) * limitNum;
 
     const [rows] = await pool.query(
-      `SELECT r.id, r.receipt_no, r.date_created, r.memo, t.to_no, f.fulfillment_no,
+      `SELECT r.id, rl.id AS line_id, r.receipt_no, r.date_created, t.to_no, t.date_created AS to_date, f.fulfillment_no,
+              -- The TO's memo says which job it is for; the receipt's own when the TO has none.
+              COALESCE(NULLIF(t.memo, ''), r.memo) AS memo, jo.job_order_no,
+              i.item_code, i.display_name AS item_name, rl.qty_received, COALESCE(NULLIF(tol.unit, ''), tol.uom) AS units,
               wf.location_name AS withdraw_from_name, tt.location_name AS transfer_to_name,
               CONCAT(e.first_name, ' ', e.last_name) AS requestor_name
        ${baseFrom}
@@ -345,7 +362,7 @@ router.get('/item-receipts', requireAuth, requirePermission(RECEIPT_ROUTE, 'can_
        LEFT JOIN locations tt ON tt.id = t.transfer_to_location_id
        LEFT JOIN employees e ON e.id = t.requestor_id
        ${whereSql}
-       ORDER BY r.id DESC
+       ORDER BY rl.item_receipt_id DESC, rl.id
        ${xlsx ? '' : 'LIMIT ? OFFSET ?'}`,
       xlsx ? params : [...params, limitNum, offset]
     );
@@ -354,13 +371,26 @@ router.get('/item-receipts', requireAuth, requirePermission(RECEIPT_ROUTE, 'can_
         filename: 'item-receipts.xlsx',
         sheet: 'Item Receipts',
         columns: [
-          { header: 'Item Receipt #', key: 'receipt_no', width: 18 },
-          { header: 'Date Created', key: 'date', width: 13 },
-          { header: 'Item Fulfillment #', key: 'fulfillment_no', width: 18 },
-          ...LIST_COLUMNS,
-          { header: 'Memo', key: 'memo', width: 50 },
+          { header: 'IR #', key: 'receipt_no', width: 14 },
+          { header: 'IR Date', key: 'date', width: 12 },
+          { header: 'TO #', key: 'to_no', width: 14 },
+          { header: 'TO Date', key: 'to_day', width: 12 },
+          { header: 'IF #', key: 'fulfillment_no', width: 14 },
+          { header: 'JO #', key: 'job_order_no', width: 18 },
+          { header: 'Memo', key: 'memo', width: 44 },
+          { header: 'Item', key: 'item_code', width: 36 },
+          { header: 'Description', key: 'item_name', width: 36 },
+          { header: 'Qty', key: 'qty', width: 10 },
+          { header: 'Units', key: 'units', width: 8 },
+          { header: 'From Location', key: 'withdraw_from_name', width: 22 },
+          { header: 'To Location', key: 'transfer_to_name', width: 22 },
+          { header: 'Requestor', key: 'requestor_name', width: 24 },
         ],
-        rows: rows.map((r) => ({ ...r, date: day(r.date_created), memo: r.memo || '' })),
+        rows: rows.map((r) => ({
+          ...r, date: day(r.date_created), to_day: day(r.to_date), memo: r.memo || '', job_order_no: r.job_order_no || '',
+          item_code: r.item_code || '', item_name: r.item_name || '', qty: r.qty_received == null ? '' : Number(r.qty_received), units: r.units || '',
+          requestor_name: r.requestor_name || '',
+        })),
       });
       return;
     }
