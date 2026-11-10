@@ -112,6 +112,17 @@ export default function PlaceOrderForm() {
     setShowPicker(false);
     if (!selectedPrIds.size) return;
     const { data } = await api.get('/purchase-orders/canvass-lines', { params: { pr_ids: [...selectedPrIds].join(',') } });
+    // The PRs' own memos carry into the Purchase Order's Memo (asked 2026-11-10), each once, after
+    // whatever is typed there already; still editable before creating.
+    const prMemos = openPRs.filter((pr) => selectedPrIds.has(pr.id) && String(pr.memo || '').trim())
+      .map((pr) => String(pr.memo).trim());
+    if (prMemos.length) {
+      setMemo((cur) => {
+        const parts = cur.trim() ? [cur.trim()] : [];
+        for (const m of prMemos) if (!parts.some((p) => p.includes(m))) parts.push(m);
+        return parts.join(' / ');
+      });
+    }
     setRows((prev) => [
       ...prev,
       ...data
