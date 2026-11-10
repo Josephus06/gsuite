@@ -234,7 +234,10 @@ export default function ChatDock() {
               : b)));
             if (!mine && !countIt) markRead(other.id);
           } else if (!mine) {
-            open(other); // loads the thread, which already holds this message
+            // Opened MINIMIZED (asked 2026-11-10): a new message no longer springs a box open over
+            // the page -- in every tab at once -- it shows as a chat head counting the unread;
+            // clicking it opens and reads it.
+            open(other, { focus: false }); // loads the thread, which already holds this message
           }
           if (!mine) incoming = true;
         }
