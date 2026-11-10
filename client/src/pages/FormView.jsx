@@ -11,6 +11,7 @@ import StandaloneVendorBillModal from '../components/StandaloneVendorBillModal';
 import { useAuth } from '../context/useAuth';
 import { hoursMinutes, osMonthLabel, osQty, overtimeHours, statusLabel, MEMBER_FORMS, ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, leaveTypeLabel, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, clock, fmtDate, formBanks, money, pretty, BANK_LOAN_ROWS, bankLoanValue } from '../utils/requestForms';
 import OvertimeDecline from '../components/OvertimeDecline';
+import BankLoanFinish from '../components/BankLoanFinish';
 import { parseUtc } from '../utils/datetime';
 
 // A guard's Time OUT / Time IN (stored UTC), read in Philippine time.
@@ -469,7 +470,16 @@ export default function FormView() {
       {doc.type === 'bank_loan' && (
         <div className="card" style={{ marginTop: 16 }}>
           <h3>Request to Apply for a Bank Loan</h3>
+          {/* Approved, it waits for the bank's details and a Confirm (2026-11-10). */}
+          {doc.status === 'approved' && (
+            <div style={{ marginBottom: 8 }}>
+              {d.confirmed_at
+                ? <span className="badge badge-success">Confirmed{d.confirmed_by_name ? ` by ${d.confirmed_by_name}` : ''} · {fmtDate(d.confirmed_at)}</span>
+                : <span className="badge badge-warning">Approved · not yet confirmed</span>}
+            </div>
+          )}
           {BANK_LOAN_ROWS.map((r) => <Line key={r.key} label={r.label}>{bankLoanValue(r, d)}</Line>)}
+          {doc.can_finish_bank_loan && <BankLoanFinish key={doc.updated_at || doc.id} doc={doc} onDone={load} />}
         </div>
       )}
 

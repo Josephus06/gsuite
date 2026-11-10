@@ -455,8 +455,10 @@ async function loadFull(id) {
     doc.detail = d || null;
     doc.fuel_usage = await fuelUsage(doc.user_id, d?.fuel_date, doc.id);
   } else if (doc.type === 'bank_loan') {
-    const [[d]] = await pool.query('SELECT * FROM form_bank_loan_details WHERE form_request_id = ?', [id]).catch((e) => {
-      if (e.code === 'ER_NO_SUCH_TABLE') return [[null]];
+    const [[d]] = await pool.query(
+      `SELECT b.*, cu.display_name AS confirmed_by_name FROM form_bank_loan_details b
+         LEFT JOIN users cu ON cu.id = b.confirmed_by_user_id WHERE b.form_request_id = ?`, [id]).catch((e) => {
+      if (e.code === 'ER_NO_SUCH_TABLE' || e.code === 'ER_BAD_FIELD_ERROR') return pool.query('SELECT * FROM form_bank_loan_details WHERE form_request_id = ?', [id]).catch(() => [[null]]);
       throw e;
     });
     doc.detail = d || null;
@@ -1288,6 +1290,8 @@ router.get('/:id', requireAuth, async (req, res, next) => {
       }
     }
 
+    // Request to Apply for a Bank Loan: may this viewer fill in the bank's details and Confirm it?
+    if (doc.type === 'bank_loan') doc.can_finish_bank_loan = await mayFinishBankLoan(req.user.id, doc);
     // Employee Gate Pass: may this viewer record the guard's Time OUT / Time IN?
     if (doc.type === 'gate_pass') {
       doc.can_record_gate_time = (await userCan(req.user.id, GUARD_ROUTE, 'can_edit')) || (await isSystemAdmin(req.user.id));
@@ -2045,6 +2049,73 @@ router.post('/:id/cancel', requireAuth, async (req, res, next) => {
       ).catch((e) => console.error('[notifications] form cancel:', e.message));
     }
     return res.json({ ok: true, status: 'cancelled' });
+  } catch (err) { return next(err); }
+});
+
+/* -------------------------------------------------------------------------- */
+/* Request to Apply for a Bank Loan: after approval, until Confirmed (2026-11-10) */
+/* -------------------------------------------------------------------------- */
+//
+// Approval settles the loan asked for -- the amount, need-by date, purpose, borrower and bank. What
+// the bank sends once the loan is credited (doc stamp, advance interest, net proceeds, the
+// instruction, term of payment, journal entry no., PN #, notice, remarks) is filled in afterwards by
+// whoever filed the request (or a System Admin), and Confirm closes it; after that nothing changes.
+const BANK_LOAN_LATE_FIELDS = [
+  ['doc_stamp', 'bl_doc_stamp', 'money'], ['advance_interest', 'bl_advance_interest', 'money'], ['net_proceeds', 'bl_net_proceeds', 'money'],
+  ['proceeds_instruction', 'bl_proceeds_instruction', 500], ['term_of_payment', 'bl_term_of_payment', 255],
+  ['journal_entry_no', 'bl_journal_entry_no', 60], ['pn_no', 'bl_pn_no', 60], ['bank_notice', 'bl_bank_notice', 255], ['remarks', 'bl_remarks', 1000],
+];
+async function mayFinishBankLoan(userId, doc) {
+  if (doc.type !== 'bank_loan' || doc.status !== 'approved' || doc.detail?.confirmed_at) return false;
+  return Number(doc.user_id) === Number(userId) || isSystemAdmin(userId);
+}
+async function loadOpenBankLoan(req, res) {
+  const [[doc]] = await pool.query('SELECT id, type, status, user_id FROM form_requests WHERE id = ?', [req.params.id]);
+  if (!doc || doc.type !== 'bank_loan') { res.status(404).json({ error: 'Bank loan request not found.' }); return null; }
+  const [[d]] = await pool.query('SELECT * FROM form_bank_loan_details WHERE form_request_id = ?', [doc.id]);
+  doc.detail = d || null;
+  if (doc.status !== 'approved') { res.status(409).json({ error: 'Only an approved bank loan request is completed and confirmed.' }); return null; }
+  if (d?.confirmed_at) { res.status(409).json({ error: 'This bank loan request is already confirmed -- it can no longer change.' }); return null; }
+  if (!(await mayFinishBankLoan(req.user.id, doc))) { res.status(403).json({ error: 'Only whoever filed this request, or a System Admin, can complete and confirm it.' }); return null; }
+  return doc;
+}
+router.put('/:id/bank-loan-details', requireAuth, async (req, res, next) => {
+  try {
+    const doc = await loadOpenBankLoan(req, res);
+    if (!doc) return undefined;
+    const b = req.body || {};
+    const vals = {};
+    for (const [col, key, kind] of BANK_LOAN_LATE_FIELDS) {
+      if (kind === 'money') {
+        const v = num(b[key]);
+        if (v != null && !(v >= 0)) return res.status(400).json({ error: 'The amounts have to be numbers.' });
+        vals[col] = v;
+      } else vals[col] = trunc(b[key], kind);
+    }
+    // Net Proceeds left blank: the loan less the Doc Stamp and the Advance Interest, as on filing.
+    if (vals.net_proceeds == null && (vals.doc_stamp != null || vals.advance_interest != null)) {
+      vals.net_proceeds = Math.round((Number(doc.detail.loan_amount) - (vals.doc_stamp || 0) - (vals.advance_interest || 0)) * 100) / 100;
+    }
+    const cols = Object.keys(vals);
+    await pool.query(`UPDATE form_bank_loan_details SET ${cols.map((c) => `${c} = ?`).join(', ')} WHERE form_request_id = ?`, [...cols.map((c) => vals[c]), doc.id]);
+    for (const c of cols) {
+      const before = doc.detail[c] == null ? null : String(doc.detail[c]);
+      const after = vals[c] == null ? null : String(vals[c]);
+      if (before !== after && !(before != null && after != null && Number(before) === Number(after) && !Number.isNaN(Number(before)))) {
+        await logFormAudit(pool, doc.id, req.user.id, 'Updated', c, before, after);
+      }
+    }
+    return res.json({ ok: true });
+  } catch (err) { return next(err); }
+});
+router.post('/:id/bank-loan-confirm', requireAuth, async (req, res, next) => {
+  try {
+    const doc = await loadOpenBankLoan(req, res);
+    if (!doc) return undefined;
+    await pool.query('UPDATE form_bank_loan_details SET confirmed_at = NOW(), confirmed_by_user_id = ? WHERE form_request_id = ?', [req.user.id, doc.id]);
+    // audit_logs.event_type is an ENUM without 'Confirmed': recorded as a status change.
+    await logFormAudit(pool, doc.id, req.user.id, 'Status Change', 'Bank loan', 'Approved', 'Confirmed');
+    return res.json({ ok: true });
   } catch (err) { return next(err); }
 });
 

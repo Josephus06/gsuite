@@ -46,5 +46,14 @@ const pool = require('../db');
     )`);
     console.log('  created form_bank_loan_details');
   }
+  // Confirm (asked 2026-11-10): an approved loan request stays open for the details the bank sends
+  // once the loan is credited (doc stamp, interest, net proceeds, PN #, journal entry...) until
+  // someone confirms it; then it is final.
+  for (const [c, def] of [['confirmed_at', 'DATETIME NULL'], ['confirmed_by_user_id', 'BIGINT NULL']]) {
+    const [[has]] = await pool.query(
+      "SELECT COUNT(*) AS n FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'form_bank_loan_details' AND COLUMN_NAME = ?", [c]);
+    if (Number(has.n)) console.log(`  form_bank_loan_details.${c} already there -- skipped`);
+    else { await pool.query(`ALTER TABLE form_bank_loan_details ADD COLUMN ${c} ${def}`); console.log(`  added form_bank_loan_details.${c}`); }
+  }
   await pool.end();
 })().catch(async (e) => { console.error('Failed:', e.message); await pool.end(); process.exit(1); });
