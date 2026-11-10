@@ -256,11 +256,9 @@ function CoeModal({ criteria, approvers, existing, onClose, onSaved }) {
             {!edited ? (
               <>
                 <div className="muted" style={{ fontSize: 12, whiteSpace: 'pre-wrap', border: '1px solid var(--border)', borderRadius: 6, padding: 8, marginBottom: 6 }}>
-                  {standardWording.body.replace(/**/g, '')}{rating ? `
-
-[Performance Appraisal table, Mode of Separation, Clearance Status]
-
-${standardWording.closing.replace(/**/g, '')}` : ''}
+                  {/* The standard wording as it reads, without the ** bold marks. */}
+                  {standardWording.body.split('**').join('')}
+                  {rating ? `\n\n[Performance Appraisal table, Mode of Separation, Clearance Status]\n\n${standardWording.closing.split('**').join('')}` : ''}
                 </div>
                 <button type="button" className="btn btn-sm" onClick={() => set({ body_text: standardWording.body, body_closing: standardWording.closing })}>
                   Edit the wording
