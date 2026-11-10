@@ -1,6 +1,6 @@
 const express = require('express');
 const pool = require('../db');
-const { requireAuth, requirePermission, isSystemAdmin } = require('../middleware/auth');
+const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../middleware/auth');
 
 // HRD > Regularization and HRD > Salary Adjustment (2026-11-07). HR's letters to one employee on the
 // company's own templates; the setup and the reasons are in db/add-hr-personnel-letters.js.
@@ -181,6 +181,33 @@ function makeRouter(kind) {
       res.json(row);
     } catch (err) { next(err); }
   });
+
+  // View (asked 2026-11-10): the letter as it will print, read before approving -- for anyone who may
+  // see the list, and always for the General Manager it was sent to. Same answer as /print.
+  router.get('/:id/view', requireAuth, async (req, res, next) => {
+    try {
+      const row = await one(req.params.id);
+      if (!row) return res.status(404).json({ error: 'Letter not found' });
+      const allowed = Number(row.approver_user_id) === Number(req.user.id) || await userCan(req.user.id, ROUTE, 'can_view') || await isSystemAdmin(req.user.id);
+      if (!allowed) return res.status(403).json({ error: 'You do not have permission to view this letter.' });
+      req.letterRow = row;
+      return next();
+    } catch (err) { return next(err); }
+  }, (req, res, next) => printAnswer(req.letterRow, res).catch(next));
+
+  async function printAnswer(row, res) {
+    // E-signatures only once approved: the approving GM's and the preparer's (whoever wrote it).
+    let signature = null;
+    let preparerSignature = null;
+    if (row.status === 'approved') {
+      const ids = [row.approver_user_id, row.created_by_user_id].filter(Boolean);
+      const [sigs] = ids.length ? await pool.query('SELECT id, signature_data FROM users WHERE id IN (?)', [ids]) : [[]];
+      const sigOf = (id) => sigs.find((s) => Number(s.id) === Number(id))?.signature_data || null;
+      signature = sigOf(row.approver_user_id);
+      preparerSignature = sigOf(row.created_by_user_id);
+    }
+    res.json({ ...row, signature, preparer_signature: preparerSignature });
+  }
 
   router.get('/:id/print', requireAuth, requirePermission(ROUTE, 'can_print'), async (req, res, next) => {
     try {

@@ -293,6 +293,7 @@ export default function HrPersonnelLetters({ kind }) {
   const [error, setError] = useState('');
   const [editing, setEditing] = useState(null); // null = closed, {} = new, row = edit
   const [deciding, setDeciding] = useState(null); // { letter, approve }
+  const [viewing, setViewing] = useState(null); // the letter shown as it will print (View)
 
   const canAdd = can(L.route, 'can_add');
   const canEdit = can(L.route, 'can_edit');
@@ -372,6 +373,8 @@ export default function HrPersonnelLetters({ kind }) {
                     {r.status === 'rejected' && r.rejected_reason && <div style={{ fontSize: 11, color: '#b91c1c' }}>{r.rejected_reason}</div>}
                   </td>
                   <td style={{ whiteSpace: 'nowrap', textAlign: 'right' }}>
+                    {/* View: the letter as it will print, to review before approving (asked 2026-11-10). */}
+                    <button type="button" className="btn btn-sm" onClick={() => setViewing(r)}>View</button>{' '}
                     {canDecide(r) && (
                       <>
                         <button type="button" className="btn btn-sm btn-primary" onClick={() => setDeciding({ letter: r, approve: true })}>Approve</button>{' '}
@@ -392,6 +395,18 @@ export default function HrPersonnelLetters({ kind }) {
       {editing && (
         <LetterModal kind={kind} approvers={approvers} preparer={preparer} existing={editing.id ? editing : null}
           onClose={() => setEditing(null)} onSaved={() => { setEditing(null); load(); }} />
+      )}
+      {viewing && (
+        <Modal title={`${viewing.letter_no} · ${viewing.employee_name}`} onClose={() => setViewing(null)} xl>
+          <iframe title="Letter" src={`${L.route}/${viewing.id}/print?view=1`}
+            style={{ width: '100%', height: '75vh', border: '1px solid var(--border)', borderRadius: 6, background: '#f1f5f9' }} />
+          {canDecide(viewing) && (
+            <div className="modal-actions">
+              <button type="button" className="btn btn-danger" onClick={() => { setDeciding({ letter: viewing, approve: false }); setViewing(null); }}>Reject</button>
+              <button type="button" className="btn btn-primary" onClick={() => { setDeciding({ letter: viewing, approve: true }); setViewing(null); }}>Approve</button>
+            </div>
+          )}
+        </Modal>
       )}
       {deciding && (
         <DecisionModal kind={kind} letter={deciding.letter} approve={deciding.approve} signAs={signAsFor(deciding.letter)}

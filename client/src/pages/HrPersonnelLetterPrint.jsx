@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import header from '../assets/memo-header.jpeg';
@@ -25,20 +25,24 @@ const blank = (s, w = '30mm') => s || <span style={{ display: 'inline-block', wi
 export default function HrPersonnelLetterPrint({ kind }) {
   const L = LETTERS[kind];
   const { id } = useParams();
+  // ?view=1: the letter read before approval (the list's View) -- no Print button, and readable with
+  // View rights alone (GET /:id/view), not only Print.
+  const [params] = useSearchParams();
+  const viewOnly = params.get('view') === '1';
   const [doc, setDoc] = useState(null);
   const [error, setError] = useState('');
 
   useEffect(() => {
-    api.get(`${L.api}/${id}/print`)
+    api.get(`${L.api}/${id}/${viewOnly ? 'view' : 'print'}`)
       .then(({ data }) => setDoc(data))
       .catch((e) => setError(e.response?.data?.error || 'Could not load this letter.'));
-  }, [id, L.api]);
+  }, [id, L.api, viewOnly]);
   useEffect(() => { if (doc) document.title = `${doc.letter_no} ${doc.employee_name}`; }, [doc]);
 
   if (error) {
     return (
       <div style={{ maxWidth: 620, margin: '80px auto', padding: 24, textAlign: 'center', font: '14px/1.6 system-ui, sans-serif' }}>
-        <h2 style={{ marginBottom: 8 }}>Can&rsquo;t print this letter</h2>
+        <h2 style={{ marginBottom: 8 }}>{viewOnly ? 'Can\u2019t show this letter' : 'Can\u2019t print this letter'}</h2>
         <p style={{ color: '#64748b' }}>{error}</p>
       </div>
     );
@@ -102,7 +106,7 @@ export default function HrPersonnelLetterPrint({ kind }) {
             {doc.status === 'rejected' ? `Rejected: ${doc.rejected_reason || ''}` : `Waiting for ${doc.approver_name || 'the General Manager'} to approve.`}
           </span>
         )}
-        <button type="button" className="btn btn-primary" onClick={() => window.print()}>Print</button>
+        {!viewOnly && <button type="button" className="btn btn-primary" onClick={() => window.print()}>Print</button>}
       </div>
 
       <div className={`hrlp-sheet ${reg ? 'reg' : 'sal'}`}>
