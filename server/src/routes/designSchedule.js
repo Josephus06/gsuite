@@ -260,7 +260,14 @@ function visibilitySql(side) {
     params.push(side.userId);
     if (side.scope.length) params.push(side.scope);
   }
-  if (side.design) parts.push("ds.status <> 'Draft'");
+  // Design sees everything forwarded, and (2026-11-11) a Draft whose order was already assigned from its
+  // own page or finished -- it shows as Artist assigned / Layout done, so Design needs it on the calendar
+  // (JO-206351-1-1 was invisible and unsearchable for the Design Supervisor).
+  if (side.design) {
+    parts.push(`(ds.status <> 'Draft' OR COALESCE(jo.layout_ended_at, n.layout_ended_at) IS NOT NULL
+      OR (COALESCE(jo.artist_id, n.artist_employee_id) IS NOT NULL AND COALESCE(jo.sub_status, n.sub_status) IN (?)))`);
+    params.push(ARTIST_SUB_STATUSES);
+  }
   if (side.artistEmployeeId) {
     parts.push("(ds.status = 'Confirmed' AND COALESCE(jo.artist_id, n.artist_employee_id) = ?)");
     params.push(side.artistEmployeeId);
