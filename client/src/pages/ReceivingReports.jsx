@@ -45,15 +45,16 @@ export default function ReceivingReports() {
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   // Location, Department, Item and an As of / Period date (asked 2026-10-13).
-  const [dateMode, setDateMode] = useState('range');
-  const [asOf, setAsOf] = useState('');
+  // As of today by default (2026-11-11), as the source's Received Purchase Orders screen opens.
+  const [dateMode, setDateMode] = useState('as_of');
+  const [asOf, setAsOf] = useState(() => new Date().toLocaleDateString('en-CA'));
   const [locationId, setLocationId] = useHeadOfficeFilter(); // Head Office by default (2026-10-14); null until known
   const [departmentId, setDepartmentId] = useState('');
   const [item, setItem] = useState(null);
   const [options, setOptions] = useState({ locations: [], departments: [] });
   const [itemOptions, setItemOptions] = useState([]);
   const [page, setPage] = useState(1);
-  const limit = 10;
+  const limit = 20;
 
   const [suppliers, setSuppliers] = useState([]);
 
@@ -128,7 +129,7 @@ export default function ReceivingReports() {
 
   function clearFilters() {
     setSearch(''); setSupplier(null); setFrom(''); setTo('');
-    setAsOf(''); setDateMode('range'); setLocationId(''); setDepartmentId(''); setItem(null);
+    setAsOf(new Date().toLocaleDateString('en-CA')); setDateMode('as_of'); setLocationId(''); setDepartmentId(''); setItem(null);
     if (page === 1) load(); else setPage(1);
   }
 
@@ -153,7 +154,7 @@ export default function ReceivingReports() {
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && runSearch()}
-                placeholder="RR #, PO #, Supplier, Ref #"
+                placeholder="RR #, PO #, Supplier, Ref #, Memo, Item"
               />
             </div>
             <div className="field">
@@ -223,39 +224,52 @@ export default function ReceivingReports() {
             <div className="table-wrap">
               <table>
                 <thead>
+                  {/* One row per line received (2026-11-11), the source's Received Purchase Orders columns. */}
                   <tr>
                     <th>RR #</th>
-                    <th>Date</th>
-                    <th>PO #</th>
-                    <th>Supplier</th>
+                    <th>RR Date</th>
                     <th>Ref #</th>
-                    <th style={{ textAlign: 'right' }}>Items</th>
-                    <th style={{ textAlign: 'right' }}>Qty Received</th>
-                    <th style={{ textAlign: 'right' }}>Total</th>
+                    <th>PO #</th>
+                    <th>PO Date</th>
+                    <th>Name</th>
+                    <th>Memo</th>
+                    <th>Item</th>
+                    <th>Type</th>
+                    <th>Description</th>
+                    <th style={{ textAlign: 'right' }}>Qty</th>
+                    <th>Units</th>
+                    <th style={{ textAlign: 'right' }}>Rate</th>
+                    <th style={{ textAlign: 'right' }}>Discount</th>
+                    <th style={{ textAlign: 'right' }}>Amount</th>
+                    <th>Department</th>
+                    <th>Location</th>
+                    <th />
                   </tr>
                 </thead>
                 <tbody>
                   {rows.length === 0 && (
-                    <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 20 }}>No receiving reports found.</td></tr>
+                    <tr><td colSpan={18} className="muted" style={{ textAlign: 'center', padding: 20 }}>No receiving reports found.</td></tr>
                   )}
                   {rows.map((r) => (
-                    <tr key={r.id}>
-                      <td>
-                        <Link className="link-btn" to={`/receiving-reports/${r.id}`}>
-                          {r.receipt_no}
-                        </Link>
-                      </td>
-                      <td>{formatDate(r.date_created)}</td>
-                      <td>
-                        <Link className="link-btn" to={`/purchase-orders/${r.purchase_order_id}`}>
-                          {r.po_no}
-                        </Link>
-                      </td>
-                      <td>{r.supplier_name ? <SupplierLink id={r.supplier_id} name={r.supplier_name} /> : '—'}</td>
+                    <tr key={r.line_id}>
+                      <td style={{ whiteSpace: 'nowrap' }}><Link className="link-btn" to={`/receiving-reports/${r.id}`}>{r.receipt_no}</Link></td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{formatDate(r.date_created)}</td>
                       <td>{r.ref_no || ''}</td>
-                      <td style={{ textAlign: 'right' }}>{r.line_count}</td>
+                      <td style={{ whiteSpace: 'nowrap' }}><Link className="link-btn" to={`/purchase-orders/${r.purchase_order_id}`}>{r.po_no}</Link></td>
+                      <td style={{ whiteSpace: 'nowrap' }}>{formatDate(r.po_date)}</td>
+                      <td>{r.supplier_name ? <SupplierLink id={r.supplier_id} name={r.supplier_name} /> : '—'}</td>
+                      <td>{r.memo || ''}</td>
+                      <td>{r.item_name || ''}</td>
+                      <td>{r.item_type || ''}</td>
+                      <td>{r.description || ''}</td>
                       <td style={{ textAlign: 'right' }}>{qty(r.qty_received)}</td>
-                      <td style={{ textAlign: 'right' }}>{money(r.total_amount)}</td>
+                      <td>{r.units || ''}</td>
+                      <td style={{ textAlign: 'right' }}>{money(r.rate)}</td>
+                      <td style={{ textAlign: 'right' }}>{Number(r.disc_percent) ? qty(r.disc_percent) : ''}</td>
+                      <td style={{ textAlign: 'right' }}>{money(r.net_of_tax)}</td>
+                      <td>{r.department_name || ''}</td>
+                      <td>{r.location_name || ''}</td>
+                      <td><button type="button" className="btn btn-sm btn-primary" onClick={() => navigate(`/receiving-reports/${r.id}`)}>View</button></td>
                     </tr>
                   ))}
                 </tbody>
@@ -264,7 +278,7 @@ export default function ReceivingReports() {
 
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 12, flexWrap: 'wrap', gap: 8 }}>
               <span className="muted">
-                {total.toLocaleString()} receiving report{total === 1 ? '' : 's'} · {money(totalAmount)} total
+                {total.toLocaleString()} line{total === 1 ? '' : 's'} received · {money(totalAmount)} total (net of VAT)
               </span>
             </div>
 

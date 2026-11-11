@@ -70,7 +70,10 @@ router.get('/items', requireAuth, requirePermission(ROUTE, 'can_view'), async (r
   } catch (err) { next(err); }
 });
 
-// The list's filters as SQL -- shared by the list and its Extract.
+// The list is ONE ROW PER LINE RECEIVED (asked 2026-11-11, the source's Received Purchase Orders
+// screen): RR #, RR Date, Ref #, PO #, PO Date, supplier, memo, item, type, description, qty, units,
+// rate, discount, amount, department, location. Its filters as SQL -- shared by the list and its
+// Extract. Location / Department / Item narrow the lines themselves, not just the receipts.
 function listFilter(req) {
   const { search, supplier_id: supplierId } = req.query;
   // Date: As of (up to that day) or a From-To period (2026-10-13). from/to alone still work.
@@ -82,42 +85,46 @@ function listFilter(req) {
   const where = [];
   const params = [];
   if (search) {
-    where.push('(r.receipt_no LIKE ? OR po.po_no LIKE ? OR s.name LIKE ? OR r.ref_no LIKE ?)');
+    where.push(`(r.receipt_no LIKE ? OR po.po_no LIKE ? OR s.name LIKE ? OR r.ref_no LIKE ? OR r.memo LIKE ?
+                 OR i.display_name LIKE ? OR i.item_code LIKE ? OR pol.purchase_description LIKE ?)`);
     const like = `%${search}%`;
-    params.push(like, like, like, like);
+    params.push(like, like, like, like, like, like, like, like);
   }
   // Inclusive of the end date: date_created is a DATE, so a plain <= is what a user means
   // by "to 31 Aug".
   if (from) { where.push('r.date_created >= ?'); params.push(from); }
   if (to) { where.push('r.date_created <= ?'); params.push(to); }
   if (supplierId) { where.push('po.supplier_id = ?'); params.push(supplierId); }
-  // Location, Department, Item (2026-10-13): a receipt matches when any of its lines does.
-  const lineMatch = (cond, val) => {
-    where.push(`EXISTS (SELECT 1 FROM purchase_order_receipt_lines rlf
-                  LEFT JOIN purchase_order_lines polf ON polf.id = rlf.purchase_order_line_id
-                 WHERE rlf.purchase_order_receipt_id = r.id AND ${cond})`);
-    params.push(val);
-  };
-  if (Number(req.query.location_id) > 0) lineMatch('rlf.location_id = ?', Number(req.query.location_id));
-  if (Number(req.query.department_id) > 0) lineMatch('polf.department_id = ?', Number(req.query.department_id));
-  if (Number(req.query.item_id) > 0) lineMatch('rlf.item_id = ?', Number(req.query.item_id));
+  if (Number(req.query.location_id) > 0) { where.push('rl.location_id = ?'); params.push(Number(req.query.location_id)); }
+  if (Number(req.query.department_id) > 0) { where.push('pol.department_id = ?'); params.push(Number(req.query.department_id)); }
+  if (Number(req.query.item_id) > 0) { where.push('rl.item_id = ?'); params.push(Number(req.query.item_id)); }
   const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
   return { whereSql, params };
 }
 
-const LIST_SELECT = `SELECT r.id, r.receipt_no, r.date_created, r.ref_no, r.memo, r.is_on_hold,
-              r.subtotal, r.net_of_tax, r.tax_amount, r.total_amount,
-              po.id AS purchase_order_id, po.po_no,
-              po.supplier_id, s.name AS supplier_name,
-              u.display_name AS created_by_name,
-              (SELECT COUNT(*) FROM purchase_order_receipt_lines rl
-                WHERE rl.purchase_order_receipt_id = r.id) AS line_count,
-              (SELECT COALESCE(SUM(rl.qty_received), 0) FROM purchase_order_receipt_lines rl
-                WHERE rl.purchase_order_receipt_id = r.id) AS qty_received
-         FROM purchase_order_receipts r
+const LINE_FROM = `
+         FROM purchase_order_receipt_lines rl
+         JOIN purchase_order_receipts r ON r.id = rl.purchase_order_receipt_id
          JOIN purchase_orders po ON po.id = r.purchase_order_id
          LEFT JOIN suppliers s ON s.id = po.supplier_id
-         LEFT JOIN users u ON u.id = r.created_by_user_id`;
+         LEFT JOIN purchase_order_lines pol ON pol.id = rl.purchase_order_line_id
+         LEFT JOIN inventories i ON i.id = rl.item_id
+         LEFT JOIN departments d ON d.id = pol.department_id
+         LEFT JOIN locations loc ON loc.id = rl.location_id`;
+
+// Amount is the line's net of VAT (qty x rate less discount), as the source's column reads.
+const LIST_SELECT = `SELECT rl.id AS line_id, r.id, r.receipt_no, r.date_created, r.ref_no, r.memo,
+              po.id AS purchase_order_id, po.po_no, po.date_created AS po_date,
+              po.supplier_id, s.name AS supplier_name,
+              i.item_code, i.display_name AS item_name, i.item_type,
+              COALESCE(pol.purchase_description, i.display_name) AS description,
+              rl.qty_received, COALESCE(pol.purchase_unit, pol.unit_title) AS units, rl.rate,
+              rl.disc_percent, rl.disc_amount, rl.net_of_tax, rl.tax_amount, rl.ext_price,
+              d.name AS department_name, loc.location_name
+       ${LINE_FROM}`;
+
+// Type as the source writes it: Inventory / Non-Inventory / JIT / Service ...
+const typeLabel = (t) => (String(t || '').toUpperCase() === 'INVENTORY' ? 'Inventory' : t || '');
 
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
@@ -125,53 +132,57 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const offset = Math.max(Number(req.query.offset) || 0, 0);
     const { whereSql, params } = listFilter(req);
     const [rows] = await pool.query(
-      `${LIST_SELECT} ${whereSql} ORDER BY r.date_created DESC, r.id DESC LIMIT ? OFFSET ?`,
+      `${LIST_SELECT} ${whereSql} ORDER BY r.date_created DESC, r.id DESC, rl.id LIMIT ? OFFSET ?`,
       [...params, limit, offset]
     );
-
     const [[totals]] = await pool.query(
-      `SELECT COUNT(*) AS total, COALESCE(SUM(r.total_amount), 0) AS total_amount
-         FROM purchase_order_receipts r
-         JOIN purchase_orders po ON po.id = r.purchase_order_id
-         LEFT JOIN suppliers s ON s.id = po.supplier_id
-         ${whereSql}`,
+      `SELECT COUNT(*) AS total, COUNT(DISTINCT r.id) AS receipts, COALESCE(SUM(rl.net_of_tax), 0) AS total_amount
+       ${LINE_FROM} ${whereSql}`,
       params
     );
-
-    res.json({ rows, total: totals.total, total_amount: totals.total_amount, limit, offset });
+    res.json({
+      rows: rows.map((r) => ({ ...r, item_type: typeLabel(r.item_type) })),
+      total: totals.total, receipts: totals.receipts, total_amount: totals.total_amount, limit, offset,
+    });
   } catch (err) {
     next(err);
   }
 });
 
-// Extract (asked 2026-11-05): every receiving report under the list's filters, as a workbook.
+// Extract (asked 2026-11-05; per line since 2026-11-11): every line under the list's filters.
 // Registered before /:id.
 router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const { whereSql, params } = listFilter(req);
-    const [rows] = await pool.query(`${LIST_SELECT} ${whereSql} ORDER BY r.date_created DESC, r.id DESC`, params);
+    const [rows] = await pool.query(`${LIST_SELECT} ${whereSql} ORDER BY r.date_created DESC, r.id DESC, rl.id`, params);
     await sendXlsx(res, {
       filename: 'receiving-reports.xlsx',
       sheet: 'Receiving Reports',
       columns: [
-        { header: 'RR No', key: 'rr', width: 14 },
-        { header: 'Date', key: 'date', width: 12 },
-        { header: 'PO No', key: 'po', width: 14 },
-        { header: 'Supplier', key: 'supplier', width: 40 },
-        { header: 'Ref No', key: 'ref', width: 24 },
-        { header: 'Items', key: 'items', width: 8, numFmt: '#,##0' },
-        { header: 'Qty Received', key: 'qty', width: 14, numFmt: '#,##0.####' },
-        { header: 'Net of VAT', key: 'net', width: 15, money: true },
-        { header: 'Tax', key: 'tax', width: 13, money: true },
-        { header: 'Total', key: 'total', width: 15, money: true },
-        { header: 'Prepared By', key: 'by', width: 24 },
-        { header: 'Memo', key: 'memo', width: 50 },
+        { header: 'RR #', key: 'rr', width: 12 },
+        { header: 'RR Date', key: 'date', width: 12 },
+        { header: 'Ref #', key: 'ref', width: 18 },
+        { header: 'PO #', key: 'po', width: 12 },
+        { header: 'PO Date', key: 'po_date', width: 12 },
+        { header: 'Name', key: 'supplier', width: 36 },
+        { header: 'Memo', key: 'memo', width: 36 },
+        { header: 'Item', key: 'item', width: 36 },
+        { header: 'Type', key: 'type', width: 14 },
+        { header: 'Description', key: 'description', width: 36 },
+        { header: 'Qty', key: 'qty', width: 10, numFmt: '#,##0.####' },
+        { header: 'Units', key: 'units', width: 8 },
+        { header: 'Rate', key: 'rate', width: 12, numFmt: '#,##0.00##' },
+        { header: 'Discount', key: 'disc', width: 10, numFmt: '#,##0.##' },
+        { header: 'Amount', key: 'amount', width: 14, money: true },
+        { header: 'Department', key: 'department', width: 18 },
+        { header: 'Location', key: 'location', width: 20 },
       ],
       rows: rows.map((r) => ({
-        rr: r.receipt_no, date: day(r.date_created), po: r.po_no || '', supplier: r.supplier_name || '', ref: r.ref_no || '',
-        items: Number(r.line_count || 0), qty: Number(r.qty_received || 0),
-        net: Number(r.net_of_tax || 0), tax: Number(r.tax_amount || 0), total: Number(r.total_amount || 0),
-        by: r.created_by_name || '', memo: r.memo || '',
+        rr: r.receipt_no, date: day(r.date_created), ref: r.ref_no || '', po: r.po_no || '', po_date: day(r.po_date),
+        supplier: r.supplier_name || '', memo: r.memo || '', item: r.item_name || '', type: typeLabel(r.item_type),
+        description: r.description || '', qty: Number(r.qty_received || 0), units: r.units || '', rate: Number(r.rate || 0),
+        disc: Number(r.disc_percent) ? Number(r.disc_percent) : null, amount: Number(r.net_of_tax || 0),
+        department: r.department_name || '', location: r.location_name || '',
       })),
     });
   } catch (err) {
