@@ -90,6 +90,9 @@ export default function WarrantyCertificateForm() {
   }, [id]);
 
   const setH = (patch) => setHeader((h) => ({ ...h, ...patch }));
+  // Searched on the server (2026-11-11): the first load is only the newest 500 billed orders, so an
+  // older one (SO-67488) never showed when filtered in the browser.
+  const searchSos = (q) => api.get('/warranty-certificates/billable-sales-orders', { params: { search: q } }).then(({ data }) => setBilledSos(data));
   const setLine = (i, patch) => setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
   const delLine = (i) => setLines((ls) => ls.filter((_, idx) => idx !== i));
 
@@ -143,7 +146,7 @@ export default function WarrantyCertificateForm() {
               <label>SO # <span className="muted">(billed only)</span></label>
               <EntityPicker label="Sales Order" items={billedSos} value={header.sales_order_id} getLabel={(s) => s.sales_order_no}
                 columns={[{ key: 'sales_order_no', label: 'SO #' }, { key: 'customer_name', label: 'Customer' }, { key: 'contract_description', label: 'Project' }]}
-                searchKeys={['sales_order_no', 'customer_name']} placeholder={header.sales_order_no || '--Select--'} onSelect={onSelectSo} disabled={!!id} />
+                searchKeys={['sales_order_no', 'customer_name']} placeholder={header.sales_order_no || '--Select--'} onSelect={onSelectSo} onSearch={searchSos} disabled={!!id} />
             </div>
             <div className="field"><label>Customer</label><input value={billedSos.find((s) => String(s.id) === String(header.sales_order_id))?.customer_name || header.customer_name || ''} readOnly disabled /></div>
             <div className="field"><label>Contact Name</label><input value={header.contact_name} onChange={(e) => setH({ contact_name: e.target.value })} /></div>
