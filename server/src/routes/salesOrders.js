@@ -718,18 +718,22 @@ router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE
     // own Materials/Processes tabs -- this is where that data actually gets consumed
     // downstream, since Sales Order lines themselves stay flat (no nested process rows).
     if (line.estimate_job_order_id) {
+      // Process Location (2026-11-11): the estimate line's, else -- a line older than the column --
+      // its process's Default Location.
       const [processes] = await conn.query(
-        'SELECT * FROM estimate_job_order_processes WHERE estimate_job_order_id = ? ORDER BY line_no',
+        `SELECT p.*, COALESCE(p.location_id, pr.default_location_id) AS process_location_id
+           FROM estimate_job_order_processes p LEFT JOIN processes pr ON pr.id = p.process_id
+          WHERE p.estimate_job_order_id = ? ORDER BY p.line_no`,
         [line.estimate_job_order_id]
       );
       for (const p of processes) {
         await conn.query(
           `INSERT INTO job_order_processes
-             (job_order_id, line_no, process_id, process_qty, process_uom, category, parts, item_id, length, width, uom,
+             (job_order_id, line_no, process_id, process_qty, process_uom, category, parts, item_id, location_id, length, width, uom,
               qty, total, unit, remarks, memo, process_cost, material_cost, total_cost)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [jobOrderId, p.line_no, p.process_id, p.process_qty, p.process_uom, p.category, p.parts, p.item_id, p.length, p.width,
-            p.uom, p.qty, p.total, p.unit, p.remarks, p.memo, p.process_cost, p.material_cost, p.total_cost]
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [jobOrderId, p.line_no, p.process_id, p.process_qty, p.process_uom, p.category, p.parts, p.item_id, p.process_location_id,
+            p.length, p.width, p.uom, p.qty, p.total, p.unit, p.remarks, p.memo, p.process_cost, p.material_cost, p.total_cost]
         );
       }
     }

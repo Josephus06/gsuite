@@ -18,6 +18,7 @@ const { isAdvanceCopy, advanceCopySql, ADVANCE_COPY_REFUSAL } = require('../lib/
 const { PLANNER_COLUMNS, isPlanner } = require('../lib/plannerRoles');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { notifyGmApproval } = require('../lib/generalManagers');
+const { lineLocation } = require('../lib/processLocation');
 
 // Completing a process and building both move stock dated today (the Assembly Build row
 // is inserted with CURDATE()), so today's period is what has to be open for them.
@@ -1213,10 +1214,11 @@ router.post('/:id/rwip', requireAuth, async (req, res, next) => {
         // The mother's UOM for the same item, whatever was typed (lib/reworkUom.js).
         pr.uom = (await motherUomOf(conn, jo.id, pr.item_id)) || pr.uom;
         await conn.query(
-          `INSERT INTO job_order_processes (job_order_id, line_no, process_id, process_qty, process_uom, category, parts, item_id, length, width, uom, qty, unit, remarks)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO job_order_processes (job_order_id, line_no, process_id, process_qty, process_uom, category, parts, item_id, location_id, length, width, uom, qty, unit, remarks)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [rwipId, ln, pr.process_id || null, rwipNum(pr.process_qty), rwipTrunc(pr.process_uom, 50), rwipTrunc(pr.category, 100), rwipTrunc(pr.parts, 255),
-           pr.item_id || null, rwipDec(pr.length), rwipDec(pr.width), rwipTrunc(pr.uom, 50), rwipNum(pr.qty), rwipTrunc(pr.unit, 50), rwipTrunc(pr.remarks, 500)]
+           pr.item_id || null, await lineLocation(conn, pr.process_id || null, pr.location_id || null),
+           rwipDec(pr.length), rwipDec(pr.width), rwipTrunc(pr.uom, 50), rwipNum(pr.qty), rwipTrunc(pr.unit, 50), rwipTrunc(pr.remarks, 500)]
         );
       }
     }

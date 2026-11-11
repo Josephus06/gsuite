@@ -10,6 +10,7 @@ const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { isHeadOfficeUser } = require('../lib/userLocation');
 const { BILLABLE_ESTIMATE_SQL } = require('../lib/estimateBilling');
 const { headerDepartmentError } = require('../lib/requireDepartment');
+const { lineLocation, MISSING_LOCATION } = require('../lib/processLocation');
 
 const router = express.Router();
 
@@ -98,7 +99,7 @@ const JOB_ORDER_FIELDS = [
 ];
 
 const PROCESS_FIELDS = [
-  'process_id', 'process_qty', 'process_uom', 'category', 'parts', 'item_id', 'length', 'width', 'uom', 'qty',
+  'process_id', 'process_qty', 'process_uom', 'category', 'parts', 'item_id', 'location_id', 'length', 'width', 'uom', 'qty',
   'total', 'unit', 'process_price', 'process_disc_percent', 'process_disc_amount', 'disc_process_price',
   'material_price', 'material_disc_percent', 'material_disc_amount', 'disc_material_price', 'net_of_tax',
   'tax_code_id', 'tax_amount', 'gross_amount', 'shipping', 'remarks', 'memo', 'delivery_date', 'delivery_time',
@@ -254,6 +255,16 @@ async function generateSalesOrderFromEstimate(conn, estimateId) {
 
 function pick(body, fields) {
   return fields.map((f) => (body[f] === undefined ? null : body[f]));
+}
+
+// A process line's Process Location (2026-11-11): the one picked, else the process's Default
+// Location, set into `values` (a pick() of PROCESS_FIELDS). False when the line has a process and
+// still no location -- it cannot be saved.
+async function fillProcessLocation(conn, values) {
+  const at = PROCESS_FIELDS.indexOf('location_id');
+  const processId = values[PROCESS_FIELDS.indexOf('process_id')];
+  values[at] = await lineLocation(conn, processId, values[at] || null);
+  return !processId || !!values[at];
 }
 
 async function logAudit(conn, { estimateId, userId, eventType, fieldName = null, oldValue = null, newValue = null }) {
@@ -509,10 +520,11 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
         jo.disc_price_per_unit = Number((Number(jo.net_of_tax || 0) / qty).toFixed(4));
       }
       const [processes] = await pool.query(
-        `SELECT p.*, pr.process_name, i.display_name AS item_name, i.item_type
+        `SELECT p.*, pr.process_name, i.display_name AS item_name, i.item_type, loc.location_name
          FROM estimate_job_order_processes p
          LEFT JOIN processes pr ON pr.id = p.process_id
          LEFT JOIN inventories i ON i.id = p.item_id
+         LEFT JOIN locations loc ON loc.id = p.location_id
          WHERE p.estimate_job_order_id = ? ORDER BY p.line_no`,
         [jo.id]
       );
@@ -1062,6 +1074,29 @@ router.put('/:id/status', requireAuth, requireStatusChange, async (req, res, nex
           });
         }
       }
+      // Process Location on every process line (asked 2026-11-11) -- the job order takes it over.
+      // A line saved before the column existed gets its process's Default Location here; one whose
+      // process has none must be picked on the line first.
+      await conn.query(
+        `UPDATE estimate_job_order_processes p JOIN estimate_job_orders jo ON jo.id = p.estimate_job_order_id
+           JOIN processes pr ON pr.id = p.process_id
+            SET p.location_id = pr.default_location_id
+          WHERE jo.estimate_id = ? AND p.location_id IS NULL AND pr.default_location_id IS NOT NULL`,
+        [req.params.id]);
+      const [noProcLoc] = await conn.query(
+        `SELECT jo.line_no, p.line_no AS proc_no, pr.process_name
+           FROM estimate_job_order_processes p JOIN estimate_job_orders jo ON jo.id = p.estimate_job_order_id
+           LEFT JOIN processes pr ON pr.id = p.process_id
+          WHERE jo.estimate_id = ? AND p.process_id IS NOT NULL AND p.location_id IS NULL
+          ORDER BY jo.line_no, p.line_no`,
+        [req.params.id]);
+      if (noProcLoc.length) {
+        await conn.rollback();
+        const detail = noProcLoc.slice(0, 5).map((l) => `line ${l.line_no} process ${l.proc_no}${l.process_name ? ` (${l.process_name})` : ''}`).join('; ');
+        return res.status(400).json({
+          error: `Process Location is required on every process line before this estimate can be approved: ${detail}${noProcLoc.length > 5 ? `; and ${noProcLoc.length - 5} more` : ''}.`,
+        });
+      }
       // Tax Code on every job line (asked 2026-10-20): the Sales Order and the invoice take their
       // tax from it, and a line without one bills as untaxed.
       const [noTax] = await conn.query(
@@ -1410,6 +1445,7 @@ router.post('/:id/job-orders/:joId/processes', requireAuth, requirePermission(RO
       [req.params.joId]
     );
     const values = pick(req.body, PROCESS_FIELDS);
+    if (!await fillProcessLocation(conn, values)) { await conn.rollback(); return res.status(400).json({ error: MISSING_LOCATION }); }
     const [result] = await conn.query(
       `INSERT INTO estimate_job_order_processes (estimate_job_order_id, line_no, ${PROCESS_FIELDS.join(', ')})
        VALUES (?, ?, ${PROCESS_FIELDS.map(() => '?').join(', ')})`,
@@ -1444,6 +1480,7 @@ router.put('/:id/job-orders/:joId/processes/:procId', requireAuth, requirePermis
       return res.status(404).json({ error: 'Not found' });
     }
     const values = pick(req.body, PROCESS_FIELDS);
+    if (!await fillProcessLocation(conn, values)) { await conn.rollback(); return res.status(400).json({ error: MISSING_LOCATION }); }
     await conn.query(
       `UPDATE estimate_job_order_processes SET ${PROCESS_FIELDS.map((f) => `${f} = ?`).join(', ')}, updated_at = NOW() WHERE id = ?`,
       [...values, req.params.procId]

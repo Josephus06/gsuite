@@ -17,6 +17,7 @@ const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
 const { sendXlsx, day } = require('../lib/xlsxExport');
 const { shrinkFile } = require('../lib/shrinkFile');
+const { lineLocation, MISSING_LOCATION } = require('../lib/processLocation');
 const {
   notifyDesignSupervisors, notifyAssignedArtist, notifySalesRep, NOTIFY_TYPE_JO_REVISION,
 } = require('../lib/designNotifications');
@@ -658,6 +659,23 @@ router.put('/:id', requireAuth, requireJobOrderEdit, async (req, res, next) => {
       await conn.rollback();
       return res.status(400).json({ error: 'Planned End cannot be before Planned Start.' });
     }
+    // Process Location on every process line (asked 2026-11-11): a line saved without one takes its
+    // process's Default Location; one whose process has none must be picked before the JO saves.
+    await conn.query(
+      `UPDATE job_order_processes jop JOIN processes pr ON pr.id = jop.process_id
+          SET jop.location_id = pr.default_location_id
+        WHERE jop.job_order_id = ? AND jop.location_id IS NULL AND pr.default_location_id IS NOT NULL`,
+      [req.params.id]);
+    const [noProcLoc] = await conn.query(
+      `SELECT jop.line_no, pr.process_name FROM job_order_processes jop LEFT JOIN processes pr ON pr.id = jop.process_id
+        WHERE jop.job_order_id = ? AND jop.process_id IS NOT NULL AND jop.location_id IS NULL ORDER BY jop.line_no`,
+      [req.params.id]);
+    if (noProcLoc.length) {
+      await conn.rollback();
+      return res.status(400).json({
+        error: `Process Location is required on every process line: ${noProcLoc.map((l) => `line ${l.line_no}${l.process_name ? ` (${l.process_name})` : ''}`).join('; ')}.`,
+      });
+    }
     // This generic edit form resubmits artist_id on every save whether or not it
     // actually changed (it's just part of the form state) -- only enforce the assignment
     // right when the value is genuinely different from what's stored. Same check as the
@@ -1166,6 +1184,9 @@ router.post('/:id/processes', requireAuth, requireJobOrderEdit, async (req, res,
       }
     }
     const values = PROCESS_FIELDS.map((f) => (req.body[f] === undefined || req.body[f] === '' ? null : req.body[f]));
+    // Process Location (2026-11-11): a line added with a process starts at its Default Location. A
+    // blank line (Add) may go in empty -- the location is required once its process is set.
+    values[PROCESS_FIELDS.indexOf('location_id')] = await lineLocation(conn, values[PROCESS_FIELDS.indexOf('process_id')], values[PROCESS_FIELDS.indexOf('location_id')]);
     const [result] = await conn.query(
       `INSERT INTO job_order_processes (job_order_id, line_no, ${PROCESS_FIELDS.join(', ')})
        VALUES (?, ?, ${PROCESS_FIELDS.map(() => '?').join(', ')})`,
@@ -1204,6 +1225,9 @@ router.put('/:id/processes/:procId', requireAuth, requireJobOrderEdit, async (re
       }
     }
     const values = PROCESS_FIELDS.map((f) => (req.body[f] === undefined || req.body[f] === '' ? null : req.body[f]));
+    // Process Location (2026-11-11): the one picked, else the process's Default Location; required.
+    values[PROCESS_FIELDS.indexOf('location_id')] = await lineLocation(conn, values[PROCESS_FIELDS.indexOf('process_id')], values[PROCESS_FIELDS.indexOf('location_id')]);
+    if (values[PROCESS_FIELDS.indexOf('process_id')] && !values[PROCESS_FIELDS.indexOf('location_id')]) { await conn.rollback(); return res.status(400).json({ error: MISSING_LOCATION }); }
     await conn.query(
       `UPDATE job_order_processes SET ${PROCESS_FIELDS.map((f) => `${f} = ?`).join(', ')} WHERE id = ?`,
       [...values, req.params.procId]

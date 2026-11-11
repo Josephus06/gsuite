@@ -38,7 +38,7 @@ const PROCESS_COLUMNS = [
   { key: 'qty', label: 'Qty', type: 'number' },
   { key: 'total', label: 'Total', type: 'number', readOnly: true },
   { key: 'unit', label: 'Unit', type: 'text', readOnly: true },
-  { key: 'location_id', label: 'Location', type: 'picker-location' },
+  { key: 'location_id', label: 'Location *', type: 'picker-location' },
   { key: 'artist_remarks', label: 'Artist Remarks', type: 'text' },
   // Printed on the Job Order under the line, when filled in (2026-10-09).
   { key: 'remarks', label: 'Sales Remarks', type: 'text' },
@@ -166,6 +166,14 @@ export default function JobOrderEdit() {
       setError('Planned End cannot be before Planned Start.');
       return;
     }
+    // Every process line needs its Location (2026-11-11); one whose process has a Default Location
+    // is filled by the server, so only the ones without either are stopped here.
+    const noLoc = processes.map((p, i) => (p.process_id && !p.location_id
+      && !processesList.find((x) => x.id === Number(p.process_id))?.default_location_id ? i + 1 : null)).filter(Boolean);
+    if (noLoc.length) {
+      setError(`Pick the Location on process line ${noLoc.join(', ')} before saving.`);
+      return;
+    }
     setSaving(true);
     setError('');
     try {
@@ -189,8 +197,20 @@ export default function JobOrderEdit() {
 
   async function commitMaterial(procId, overrides = {}) {
     const row = { ...processes.find((p) => p.id === procId), ...overrides };
-    const { data } = await api.put(`/job-orders/${id}/processes/${procId}`, row);
-    setProcesses((prev) => prev.map((p) => (p.id === procId ? { ...p, ...data } : p)));
+    // Process Location is required (2026-11-11): a process with no Default Location waits on the
+    // screen until one is picked, instead of being refused by the server.
+    if (row.process_id && !row.location_id) {
+      setProcesses((prev) => prev.map((p) => (p.id === procId ? row : p)));
+      setError(`Line ${processes.findIndex((p) => p.id === procId) + 1}: pick its Location -- this process has no Default Location. The line is not saved until you do.`);
+      return;
+    }
+    try {
+      const { data } = await api.put(`/job-orders/${id}/processes/${procId}`, row);
+      setProcesses((prev) => prev.map((p) => (p.id === procId ? { ...p, ...data } : p)));
+      setError('');
+    } catch (err) {
+      setError(err.response?.data?.error || 'The line was not saved.');
+    }
   }
 
   // Recomputes Total and, when the Item changes, the UOM/Unit auto-fill -- the Estimate wizard's
@@ -240,7 +260,11 @@ export default function JobOrderEdit() {
           isSelectable={(p) => !!p.is_active}
           columns={[{ key: 'process_name', label: 'Process Name' }, { key: 'process_code', label: 'Code' }, { key: 'base_unit', label: 'Base Unit', render: (p) => unitLabel(p.base_unit_id) }]}
           searchKeys={['process_name', 'process_code']}
-          onSelect={(p) => commitMaterial(row.id, { process_id: p.id, process_uom: unitLabel(p.base_unit_id) })}
+          onSelect={(p) => commitMaterial(row.id, {
+            process_id: p.id, process_uom: unitLabel(p.base_unit_id),
+            // The process's Default Location, when it has one (2026-11-11).
+            ...(p.default_location_id ? { location_id: p.default_location_id } : {}),
+          })}
         />
       );
     }

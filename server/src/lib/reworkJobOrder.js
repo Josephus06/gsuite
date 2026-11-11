@@ -5,6 +5,7 @@
 // lifecycle as any production JO.
 const { nextDocNo } = require('./docNumber');
 const { costMissingLines } = require('./joProcessCosting');
+const { lineLocation } = require('./processLocation');
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 const trunc = (s, n) => (s == null ? null : String(s).slice(0, n));
 
@@ -34,10 +35,10 @@ async function createReworkJobOrder(conn, { mother, prefix, quantity, reason = n
     for (const pr of processes) {
       ln += 1;
       await conn.query(
-        `INSERT INTO job_order_processes (job_order_id, line_no, process_id, process_qty, process_uom, category, parts, item_id, length, width, uom, qty, unit, remarks)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO job_order_processes (job_order_id, line_no, process_id, process_qty, process_uom, category, parts, item_id, location_id, length, width, uom, qty, unit, remarks)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         [id, ln, pr.process_id || null, num(pr.process_qty), trunc(pr.process_uom, 50), trunc(pr.category, 100), trunc(pr.parts, 255),
-         pr.item_id || null, (pr.length === '' || pr.length == null ? null : Number(pr.length)), (pr.width === '' || pr.width == null ? null : Number(pr.width)),
+         pr.item_id || null, await lineLocation(conn, pr.process_id || null, pr.location_id || null), (pr.length === '' || pr.length == null ? null : Number(pr.length)), (pr.width === '' || pr.width == null ? null : Number(pr.width)),
          trunc(pr.uom, 50), num(pr.qty), trunc(pr.unit, 50), trunc(pr.remarks, 500)]
       );
     }

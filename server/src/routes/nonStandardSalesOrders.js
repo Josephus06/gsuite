@@ -49,6 +49,7 @@ async function linesLocked(conn, nssoId) {
 }
 
 const { relinkNsso } = require('../lib/nssoRelink');
+const { lineLocation } = require('../lib/processLocation');
 
 const TYPE_ABBR = { rma: 'RMA', rma_installation: 'INST', sample: 'SAM', internal: 'INT' };
 const num = (v) => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
@@ -956,10 +957,10 @@ router.post('/:id/lines/:lineId/create-jo', requireAuth, requirePermission(ROUTE
       for (const pr of processes) {
         ln += 1;
         await conn.query(
-          `INSERT INTO job_order_processes (job_order_id, line_no, process_id, process_qty, process_uom, category, parts, item_id, length, width, uom, qty, unit, remarks)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          `INSERT INTO job_order_processes (job_order_id, line_no, process_id, process_qty, process_uom, category, parts, item_id, location_id, length, width, uom, qty, unit, remarks)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
           [joId, ln, pr.process_id || null, num(pr.process_qty), trunc(pr.process_uom, 50), trunc(pr.category, 100), trunc(pr.parts, 255),
-           pr.item_id || null, decOrNull(pr.length), decOrNull(pr.width), trunc(pr.uom, 50), num(pr.qty), trunc(pr.unit, 50), trunc(pr.remarks, 500)]
+           pr.item_id || null, await lineLocation(conn, pr.process_id || null, pr.location_id || null), decOrNull(pr.length), decOrNull(pr.width), trunc(pr.uom, 50), num(pr.qty), trunc(pr.unit, 50), trunc(pr.remarks, 500)]
         );
       }
     } else if (src) {

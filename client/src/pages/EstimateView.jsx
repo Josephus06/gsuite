@@ -63,6 +63,7 @@ const PROCESS_VIEW_COLUMNS = [
   { key: 'process_qty', label: 'Process Qty' },
   { key: 'process_uom', label: 'Process UOM' },
   { key: 'item_name', label: 'Item' },
+  { key: 'location_name', label: 'Process Location' },
   { key: 'length', label: 'Length' },
   { key: 'width', label: 'Width' },
   { key: 'uom', label: 'UOM' },

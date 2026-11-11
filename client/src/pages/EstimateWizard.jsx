@@ -68,7 +68,7 @@ const EMPTY_JO = {
 };
 
 const EMPTY_PROC = {
-  process_id: '', process_qty: '', process_uom: '', item_id: '', length: '', width: '',
+  process_id: '', process_qty: '', process_uom: '', item_id: '', location_id: '', length: '', width: '',
   uom: '', qty: '', total: '', unit: '', process_price: '', process_disc_percent: '', process_disc_amount: '',
   disc_process_price: '', material_price: '', material_disc_percent: '', material_disc_amount: '',
   disc_material_price: '', net_of_tax: '', tax_amount: '', gross_amount: '',
@@ -128,6 +128,8 @@ const PROCESS_COLUMNS = [
   { key: 'process_qty', label: 'Process Qty', type: 'number' },
   { key: 'process_uom', label: 'Process UOM', type: 'text', readOnly: true },
   { key: 'item_id', label: 'Item', type: 'picker-item' },
+  // Where the process is done -- starts at the process's Default Location, required (2026-11-11).
+  { key: 'location_id', label: 'Process Location *', type: 'picker-proc-location' },
   { key: 'length', label: 'Length', type: 'number' },
   { key: 'width', label: 'Width', type: 'number' },
   { key: 'uom', label: 'UOM', type: 'select-uom' },
@@ -627,7 +629,8 @@ export default function EstimateWizard() {
   const qtyMissing = (v) => !(Number(v) > 0);
   function processQtyGaps(jo) {
     return (jo?.processes || []).map((p, pi) => {
-      const miss = [qtyMissing(p.process_qty) && 'Process Qty', p.item_id && qtyMissing(p.qty) && 'Material Qty'].filter(Boolean);
+      const miss = [qtyMissing(p.process_qty) && 'Process Qty', p.item_id && qtyMissing(p.qty) && 'Material Qty',
+        p.process_id && !p.location_id && 'Process Location'].filter(Boolean);
       return miss.length ? `process ${pi + 1} (${miss.join(', ')})` : null;
     }).filter(Boolean);
   }
@@ -673,6 +676,12 @@ export default function EstimateWizard() {
     const jo = jobOrdersRef.current[joIdx];
     const row = { ...jo?.processes?.[procIdx], ...overrides };
     if (!jo?.id || !row) return;
+    // Process Location is required (2026-11-11). A process with no Default Location waits here,
+    // unsaved, until one is picked on the line.
+    if (row.process_id && !row.location_id) {
+      setError(`Line ${joIdx + 1}, process ${procIdx + 1}: pick its Process Location -- this process has no Default Location. It is not saved until you do.`);
+      return;
+    }
     if (row.id) {
       try {
         await api.put(`/estimates/${estimateId}/job-orders/${jo.id}/processes/${row.id}`, toPayload(row, PROCESS_FIELDS));
@@ -1083,6 +1092,7 @@ export default function EstimateWizard() {
       return {
         _tempId: `pick-${pid}-${startIdx + n}`, id: null, ...EMPTY_PROC,
         process_id: pid, process_uom: proc ? unitLabel(proc.base_unit_id) : '',
+        location_id: proc?.default_location_id || '',
       };
     });
     setJobOrders((prev) => prev.map((r, i) => (i === joIdx
@@ -1179,8 +1189,21 @@ export default function EstimateWizard() {
           searchKeys={['process_name', 'process_code']}
           onSelect={(p) => {
             ensureAllowedMaterials(jobOrders[joIdx]?.job_type_id, p.id);
-            recalcAndCommitProcess(joIdx, procIdx, { process_id: p.id, process_uom: unitLabel(p.base_unit_id) });
+            recalcAndCommitProcess(joIdx, procIdx, {
+              process_id: p.id, process_uom: unitLabel(p.base_unit_id),
+              ...(p.default_location_id ? { location_id: p.default_location_id } : {}),
+            });
           }}
+        />
+      );
+    }
+    if (col.type === 'picker-proc-location') {
+      return (
+        <EntityPicker
+          label="Process Location" items={locations} value={val} getLabel={(l) => l.location_name}
+          columns={[{ key: 'location_name', label: 'Name' }, { key: 'location_code', label: 'Code' }]}
+          searchKeys={['location_name', 'location_code']}
+          onSelect={(l) => { setError(''); commitProcessRow(joIdx, procIdx, { location_id: l.id }); }}
         />
       );
     }
