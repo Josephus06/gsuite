@@ -63,8 +63,10 @@ export default function SupplierView() {
   // that date" -- so it sits under the Date column and defaults to today.
   const [filters, setFilters] = useState({
     doc_no: '', doc_type: '', status: '', reference_no: '', memo: '',
-    as_of: new Date().toISOString().slice(0, 10),
+    as_of: new Date().toISOString().slice(0, 10), date_from: '',
   });
+  // As of: up to the date. Period from: date_from .. as_of (2026-11-11), as on Sales Orders.
+  const [dateMode, setDateMode] = useState('as of');
 
   useEffect(() => {
     api.get(`/suppliers/${id}`)
@@ -77,11 +79,12 @@ export default function SupplierView() {
     setLedgerLoading(true);
     const params = { page, limit: PAGE_SIZE };
     Object.entries(filters).forEach(([k, v]) => { if (v) params[k] = v; });
+    if (dateMode !== 'period from') delete params.date_from;
     api.get(`/suppliers/${id}/transactions`, { params })
       .then(({ data }) => setLedger(data))
       .catch(() => setLedger({ rows: [], total: 0 }))
       .finally(() => setLedgerLoading(false));
-  }, [id, page, filters]);
+  }, [id, page, filters, dateMode]);
 
   useEffect(() => { if (tab === 'transactions') loadLedger(); }, [tab, loadLedger]);
 
@@ -180,8 +183,20 @@ export default function SupplierView() {
                     </select>
                   </th>
                   <th>
-                    <span className="muted" style={{ fontWeight: 400, marginRight: 6 }}>As of</span>
-                    <input type="date" value={filters.as_of} onChange={(e) => setFilter('as_of', e.target.value)} />
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', fontWeight: 400 }}>
+                      <select value={dateMode} style={{ flex: '0 0 auto' }} onChange={(e) => { setDateMode(e.target.value); setPage(1); }}>
+                        <option value="as of">As of</option>
+                        <option value="period from">Period from</option>
+                      </select>
+                      {dateMode === 'period from' && (
+                        <>
+                          <input type="date" value={filters.date_from} onChange={(e) => setFilter('date_from', e.target.value)} title="From" />
+                          <span className="muted">to</span>
+                        </>
+                      )}
+                      <input type="date" value={filters.as_of} onChange={(e) => setFilter('as_of', e.target.value)}
+                        title={dateMode === 'period from' ? 'To' : 'As of'} />
+                    </div>
                   </th>
                   <th><input style={{ width: 100 }} value={filters.status} onChange={(e) => setFilter('status', e.target.value)} /></th>
                   <th><input style={{ width: 120 }} value={filters.reference_no} onChange={(e) => setFilter('reference_no', e.target.value)} /></th>

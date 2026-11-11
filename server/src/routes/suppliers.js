@@ -233,13 +233,15 @@ const LEDGER_SQL = `
 
 router.get('/:id/transactions', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const { as_of: asOf, doc_no: docNo, status, reference_no: referenceNo, memo, doc_type: docType } = req.query;
+    const { as_of: asOf, date_from: dateFrom, doc_no: docNo, status, reference_no: referenceNo, memo, doc_type: docType } = req.query;
     const page = Math.max(1, Number(req.query.page) || 1);
     const limit = Math.min(200, Math.max(1, Number(req.query.limit) || 20));
 
     const id = req.params.id;
     const where = [];
     const params = [id, id, id, id];
+    // Period from (2026-11-11): date_from .. as_of, both inclusive; without it, As of alone.
+    if (dateFrom) { where.push('t.doc_date >= ?'); params.push(dateFrom); }
     if (asOf) { where.push('t.doc_date <= ?'); params.push(asOf); }
     if (docType) { where.push('t.doc_type = ?'); params.push(docType); }
     if (docNo) { where.push('t.doc_no LIKE ?'); params.push(`%${docNo}%`); }

@@ -11,6 +11,7 @@ const { isHeadOfficeUser } = require('../lib/userLocation');
 const { BILLABLE_ESTIMATE_SQL } = require('../lib/estimateBilling');
 const { headerDepartmentError } = require('../lib/requireDepartment');
 const { lineLocation, MISSING_LOCATION } = require('../lib/processLocation');
+const { sendEstimateXlsx } = require('../lib/estimateExtract');
 
 const router = express.Router();
 
@@ -447,89 +448,98 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   }
 });
 
+// The estimate as its page shows it: header, shipping addresses, job lines with their processes.
+// Null when it does not exist or is outside the user's sales scope. Shared by GET /:id and its Extract.
+async function loadEstimate(id, userId) {
+  const [[estimate]] = await pool.query(
+    `SELECT e.*, c.name AS customer_name, cc.contact_name,
+            sd.name AS sales_division_name, loc.location_name AS office_location_name,
+            bp.po_number AS blanket_po_no, so.sales_order_no, so.id AS linked_sales_order_id,
+            CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
+            CONCAT(pb.first_name, ' ', pb.last_name) AS prepared_by_name,
+            CONCAT(ap.first_name, ' ', ap.last_name) AS approved_by_name
+     FROM estimates e
+     LEFT JOIN customers c ON c.id = e.customer_id
+     LEFT JOIN customer_contacts cc ON cc.id = e.contact_person_id
+     LEFT JOIN sales_divisions sd ON sd.id = e.sales_division_id
+     LEFT JOIN locations loc ON loc.id = e.office_location_id
+     LEFT JOIN blanket_pos bp ON bp.id = e.blanket_po_id
+     LEFT JOIN employees sr ON sr.id = e.sales_rep_id
+     LEFT JOIN employees pb ON pb.id = e.prepared_by_id
+     LEFT JOIN employees ap ON ap.id = e.approved_by_id
+     -- The estimate's own sales_order_id, or -- for the ~70,800 migrated estimates whose order
+     -- points at them but which were never pointed back (2026-10-08, EST-107678 / SO-71152) --
+     -- the order that names this estimate: the latest one not cancelled, else the latest.
+     LEFT JOIN sales_orders so ON so.id = COALESCE(e.sales_order_id,
+       (SELECT so2.id FROM sales_orders so2 WHERE so2.estimate_id = e.id
+         ORDER BY (so2.status = 'cancelled'), so2.id DESC LIMIT 1))
+     WHERE e.id = ?`,
+    [id]
+  );
+  if (!estimate) return null;
+  if (!estimate.sales_order_id && estimate.linked_sales_order_id) estimate.sales_order_id = estimate.linked_sales_order_id;
+  delete estimate.linked_sales_order_id;
+  // Defense in depth -- a scoped user (Account Officer/Supervisor) can't view someone
+  // else's estimate just by guessing/pasting its URL, even though the list already
+  // filters it out.
+  const scope = await getSalesRepEmployeeScope(userId, ROUTE);
+  if (scope && !scope.includes(estimate.sales_rep_id)) return null;
+
+  const [shippingAddresses] = await pool.query('SELECT * FROM estimate_shipping_addresses WHERE estimate_id = ? ORDER BY id', [id]);
+  const [jobOrders] = await pool.query(
+    `SELECT jo.*, jt.display_name AS job_type_name, jt.gp_rate_head AS passing_gp_rate,
+            loc.location_name AS job_location_name, t.code AS tax_code, t.rate AS tax_rate
+     FROM estimate_job_orders jo
+     LEFT JOIN job_types jt ON jt.id = jo.job_type_id
+     LEFT JOIN locations loc ON loc.id = jo.job_location_id
+     LEFT JOIN taxes t ON t.id = jo.tax_code_id
+     WHERE jo.estimate_id = ? ORDER BY jo.line_no`,
+    [id]
+  );
+  for (const jo of jobOrders) {
+    // The two per-unit columns, both tax-exclusive and either side of the discount:
+    //
+    //   Price/Unit      = Subtotal   / Qty
+    //   Disc Price/Unit = Net of Tax / Qty
+    //
+    // Derived on read rather than backfilled. They are pure functions of columns on the same
+    // row, so a stored copy could only ever go stale, and this way every estimate answers the
+    // same way whether it was raised today or last year -- Disc Price/Unit was NULL on all
+    // 4,743 lines, and Price/Unit was stored as Gross / Qty, which included tax and so could
+    // not be compared with the discounted figure printed beside it.
+    //
+    // Price/Unit x Qty is the Subtotal. Disc Price/Unit = Price/Unit - Disc Amt per piece =
+    // Net of Tax / Qty, so Net of Tax = Qty x Disc Price/Unit (the user's rule, 2026-10-01;
+    // matches the client's perUnitFor).
+    //
+    // Sales Orders and invoices converted from an estimate keep their OWN copies, taken at
+    // conversion time; this changes what the estimate screen and the quotation print show, not
+    // what any document downstream was built from.
+    const qty = Number(jo.quantity) || 0;
+    if (qty) {
+      const sub = Number(jo.subtotal || 0);
+      jo.price_per_unit = Number((sub / qty).toFixed(4));
+      jo.disc_price_per_unit = Number((Number(jo.net_of_tax || 0) / qty).toFixed(4));
+    }
+    const [processes] = await pool.query(
+      `SELECT p.*, pr.process_name, i.display_name AS item_name, i.item_type, loc.location_name
+       FROM estimate_job_order_processes p
+       LEFT JOIN processes pr ON pr.id = p.process_id
+       LEFT JOIN inventories i ON i.id = p.item_id
+       LEFT JOIN locations loc ON loc.id = p.location_id
+       WHERE p.estimate_job_order_id = ? ORDER BY p.line_no`,
+      [jo.id]
+    );
+    jo.processes = processes;
+  }
+  return { estimate, shippingAddresses, jobOrders };
+}
+
 router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const [[estimate]] = await pool.query(
-      `SELECT e.*, c.name AS customer_name, cc.contact_name,
-              sd.name AS sales_division_name, loc.location_name AS office_location_name,
-              bp.po_number AS blanket_po_no, so.sales_order_no, so.id AS linked_sales_order_id,
-              CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
-              CONCAT(pb.first_name, ' ', pb.last_name) AS prepared_by_name,
-              CONCAT(ap.first_name, ' ', ap.last_name) AS approved_by_name
-       FROM estimates e
-       LEFT JOIN customers c ON c.id = e.customer_id
-       LEFT JOIN customer_contacts cc ON cc.id = e.contact_person_id
-       LEFT JOIN sales_divisions sd ON sd.id = e.sales_division_id
-       LEFT JOIN locations loc ON loc.id = e.office_location_id
-       LEFT JOIN blanket_pos bp ON bp.id = e.blanket_po_id
-       LEFT JOIN employees sr ON sr.id = e.sales_rep_id
-       LEFT JOIN employees pb ON pb.id = e.prepared_by_id
-       LEFT JOIN employees ap ON ap.id = e.approved_by_id
-       -- The estimate's own sales_order_id, or -- for the ~70,800 migrated estimates whose order
-       -- points at them but which were never pointed back (2026-10-08, EST-107678 / SO-71152) --
-       -- the order that names this estimate: the latest one not cancelled, else the latest.
-       LEFT JOIN sales_orders so ON so.id = COALESCE(e.sales_order_id,
-         (SELECT so2.id FROM sales_orders so2 WHERE so2.estimate_id = e.id
-           ORDER BY (so2.status = 'cancelled'), so2.id DESC LIMIT 1))
-       WHERE e.id = ?`,
-      [req.params.id]
-    );
-    if (!estimate) return res.status(404).json({ error: 'Not found' });
-    if (!estimate.sales_order_id && estimate.linked_sales_order_id) estimate.sales_order_id = estimate.linked_sales_order_id;
-    delete estimate.linked_sales_order_id;
-    // Defense in depth -- a scoped user (Account Officer/Supervisor) can't view someone
-    // else's estimate just by guessing/pasting its URL, even though the list already
-    // filters it out.
-    const scope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
-    if (scope && !scope.includes(estimate.sales_rep_id)) return res.status(404).json({ error: 'Not found' });
-
-    const [shippingAddresses] = await pool.query('SELECT * FROM estimate_shipping_addresses WHERE estimate_id = ? ORDER BY id', [req.params.id]);
-    const [jobOrders] = await pool.query(
-      `SELECT jo.*, jt.display_name AS job_type_name, jt.gp_rate_head AS passing_gp_rate,
-              loc.location_name AS job_location_name, t.code AS tax_code, t.rate AS tax_rate
-       FROM estimate_job_orders jo
-       LEFT JOIN job_types jt ON jt.id = jo.job_type_id
-       LEFT JOIN locations loc ON loc.id = jo.job_location_id
-       LEFT JOIN taxes t ON t.id = jo.tax_code_id
-       WHERE jo.estimate_id = ? ORDER BY jo.line_no`,
-      [req.params.id]
-    );
-    for (const jo of jobOrders) {
-      // The two per-unit columns, both tax-exclusive and either side of the discount:
-      //
-      //   Price/Unit      = Subtotal   / Qty
-      //   Disc Price/Unit = Net of Tax / Qty
-      //
-      // Derived on read rather than backfilled. They are pure functions of columns on the same
-      // row, so a stored copy could only ever go stale, and this way every estimate answers the
-      // same way whether it was raised today or last year -- Disc Price/Unit was NULL on all
-      // 4,743 lines, and Price/Unit was stored as Gross / Qty, which included tax and so could
-      // not be compared with the discounted figure printed beside it.
-      //
-      // Price/Unit x Qty is the Subtotal. Disc Price/Unit = Price/Unit - Disc Amt per piece =
-      // Net of Tax / Qty, so Net of Tax = Qty x Disc Price/Unit (the user's rule, 2026-10-01;
-      // matches the client's perUnitFor).
-      //
-      // Sales Orders and invoices converted from an estimate keep their OWN copies, taken at
-      // conversion time; this changes what the estimate screen and the quotation print show, not
-      // what any document downstream was built from.
-      const qty = Number(jo.quantity) || 0;
-      if (qty) {
-        const sub = Number(jo.subtotal || 0);
-        jo.price_per_unit = Number((sub / qty).toFixed(4));
-        jo.disc_price_per_unit = Number((Number(jo.net_of_tax || 0) / qty).toFixed(4));
-      }
-      const [processes] = await pool.query(
-        `SELECT p.*, pr.process_name, i.display_name AS item_name, i.item_type, loc.location_name
-         FROM estimate_job_order_processes p
-         LEFT JOIN processes pr ON pr.id = p.process_id
-         LEFT JOIN inventories i ON i.id = p.item_id
-         LEFT JOIN locations loc ON loc.id = p.location_id
-         WHERE p.estimate_job_order_id = ? ORDER BY p.line_no`,
-        [jo.id]
-      );
-      jo.processes = processes;
-    }
+    const loaded = await loadEstimate(req.params.id, req.user.id);
+    if (!loaded) return res.status(404).json({ error: 'Not found' });
+    const { estimate, shippingAddresses, jobOrders } = loaded;
 
     // Who raised it, so the view can offer the creator the one action that is theirs to take
     // (recording the customer's answer) without also handing them the Edit form.
@@ -560,6 +570,15 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
   } catch (err) {
     next(err);
   }
+});
+
+// Extract (2026-11-11): the estimate as an Excel sheet -- lib/estimateExtract.js has the layout.
+router.get('/:id/extract', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const loaded = await loadEstimate(req.params.id, req.user.id);
+    if (!loaded) return res.status(404).json({ error: 'Not found' });
+    await sendEstimateXlsx(res, loaded);
+  } catch (err) { next(err); }
 });
 
 router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {

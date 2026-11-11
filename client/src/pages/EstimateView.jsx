@@ -13,6 +13,7 @@ import { displayDateTime, displayAuditTime } from '../utils/dates';
 import { CustomerLink } from '../components/PartyLink';
 import ButtonMenu from '../components/ButtonMenu';
 import { isPrintSelected } from '../utils/estimatePrintSelected';
+import { downloadFile } from '../utils/downloadFile';
 
 // Read-only counterpart to EstimateWizard (which stays the create/edit form): mirrors
 // the real system's estimate detail screen -- a summary banner with status-driven
@@ -107,6 +108,7 @@ export default function EstimateView() {
   const [tab, setTab] = useState('job');
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [extracting, setExtracting] = useState(false);
   const [showApproval, setShowApproval] = useState(false);
   const [emailOpen, setEmailOpen] = useState(false);
   const [emailInfo, setEmailInfo] = useState(null);
@@ -345,6 +347,12 @@ ${estimate.estimate_no} will be CANCELLED. The new estimate will have you as its
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <Link className="btn btn-sm" to={'/estimates'}>Back</Link>
+          <button type="button" className="btn btn-sm" disabled={extracting} onClick={async () => {
+            setExtracting(true);
+            try { await downloadFile(`/estimates/${id}/extract`, {}, `${estimate.estimate_no || 'estimate'}.xlsx`); }
+            catch { alert('Extract failed. Please try again.'); }
+            finally { setExtracting(false); }
+          }}>{extracting ? 'Extracting...' : 'Extract'}</button>
           {canEditContent && <Link className="btn btn-sm btn-primary" to={`/estimates/${id}/edit`}>Edit</Link>}
           {/* Three quotations, as the source's Print menu: the plain one, and the two listing each job's
               Print Selected items -- with the discount hidden (net prices) or shown. */}
