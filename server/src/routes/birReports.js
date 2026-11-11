@@ -603,11 +603,12 @@ async function withheldDocs(from, to) {
        FROM cheques ch
        LEFT JOIN suppliers s ON ch.payee_type IN ('VENDOR', 'supplier') AND s.id = ch.payee_id
       WHERE ch.date_created BETWEEN ? AND ? AND ch.status <> 'void' AND ch.withholding_tax_amount > 0`, [from, to]);
+  const options = await atcOptions();
+  const advances = await advanceChequeDocs(from, to, options);
   // Documents with no withholding tax chosen (every imported bill, every cheque) get an ATC
   // SUGGESTED from their effective rate: the Lookups withholding tax of that rate (the first by id
   // when two share it, e.g. WC160 / WI120 at 2%). Accounting confirms or changes it on the form.
-  const options = await atcOptions();
-  return [...bills, ...credits, ...cheques].map((r) => {
+  return [...bills, ...credits, ...cheques, ...advances].map((r) => {
     const base = r2(r.tax_base); const tax = r2(r.wtax_amount);
     const atc = r.atc ? String(r.atc).replace(/\s+/g, '') : '';
     const effRate = base ? Math.round((tax / base) * 10000) / 100 : null;
@@ -619,6 +620,105 @@ async function withheldDocs(from, to) {
       tax_base: base, wtax_amount: tax, payee_key: payeeKey(r),
     };
   });
+}
+
+// Advance cheques with no Vendor Bill yet (asked 2026-11-11). A cheque paid in advance (a line on
+// Advances To Suppliers, 13100) is paid net of the supplier's withholding, but records none: the tax
+// only appears on the Vendor Bill made later, so until there is one the payment was missing from the
+// 2307. A line counts as billed when a PO it names (PO-19618, "PO-19476/19553") has a Vendor Bill
+// that is not cancelled; a line naming no PO, when the cheque's advance credit has been applied to a
+// bill. Once billed the cheque drops out and the bill carries the withholding, so it is never counted
+// twice.
+//
+// The tax is worked out at the supplier's usual rate -- that of its latest bill with withholding --
+// with the PO's VAT (the bill's when no PO is named): paid = base x (1 + VAT - rate). PO-19753's
+// 6,739.29 advance gives base 6,071.43 and 60.71 withheld, as its bill VB-23785 did. A supplier we
+// have never withheld from is left out.
+async function advanceChequeDocs(from, to, options) {
+  const [[acct]] = await pool.query("SELECT id FROM chart_of_accounts WHERE account_code = '13100' LIMIT 1");
+  if (!acct) return [];
+  const [lines] = await pool.query(
+    `SELECT ch.id, ch.cheque_no, ch.date_created, ch.cheque_number, ch.payee_id AS supplier_id,
+            s.name AS supplier_name, s.tin AS supplier_tin, s.address AS supplier_address,
+            cl.description, cl.amount,
+            (SELECT COALESCE(SUM(bc.applied_amount), 0) FROM bill_credits bc WHERE bc.cheque_id = ch.id AND bc.status <> 'voided') AS credit_applied
+       FROM cheque_lines cl
+       JOIN cheques ch ON ch.id = cl.cheque_id
+       JOIN suppliers s ON s.id = ch.payee_id
+      WHERE ch.date_created BETWEEN ? AND ? AND ch.status <> 'void' AND ch.payee_type IN ('VENDOR', 'supplier')
+        AND COALESCE(ch.withholding_tax_amount, 0) = 0 AND cl.account_id = ? AND cl.amount > 0
+      ORDER BY ch.id, cl.line_no`, [from, to, acct.id]);
+  if (!lines.length) return [];
+
+  // "PO-19476/19553" names two POs: the bare number after a slash takes the PO- prefix. A child PO
+  // ("PO-19639-1") is looked up as written first, then as its parent when no such PO exists.
+  const poRefsOf = (text) => {
+    const out = [];
+    for (const m of String(text || '').toUpperCase().matchAll(/PO-?\s*(\d{4,}(?:-\d{1,2}(?!\d))?)((?:\s*\/\s*\d{4,})*)/g)) {
+      out.push([`PO-${m[1]}`, `PO-${m[1].replace(/-\d+$/, '')}`]);
+      for (const n of (m[2].match(/\d{4,}/g) || [])) out.push([`PO-${n}`]);
+    }
+    return out;
+  };
+  const allPoNos = [...new Set(lines.flatMap((l) => poRefsOf(l.description).flat()))];
+  const pos = new Map();
+  if (allPoNos.length) {
+    const [rows] = await pool.query(
+      `SELECT po.po_no, po.net_of_tax, po.tax_amount,
+              EXISTS (SELECT 1 FROM vendor_bills vb WHERE vb.purchase_order_id = po.id AND vb.status <> 'cancelled') AS billed
+         FROM purchase_orders po WHERE po.po_no IN (?)`, [allPoNos]);
+    for (const r of rows) pos.set(r.po_no, r);
+  }
+
+  const supplierIds = [...new Set(lines.map((l) => l.supplier_id))];
+  const [usual] = await pool.query(
+    `SELECT t.sup_id AS supplier_id, COALESCE(w.atc_code, w.code) AS atc, COALESCE(w.name, t.wtax_description) AS nature, w.rate,
+            t.wtax_amount, COALESCE(wl.base, t.net_of_tax) AS base, t.net_of_tax, t.tax_amount
+       FROM (SELECT vb.*, COALESCE(po.supplier_id, vb.supplier_id) AS sup_id,
+                    ROW_NUMBER() OVER (PARTITION BY COALESCE(po.supplier_id, vb.supplier_id) ORDER BY vb.date_created DESC, vb.id DESC) AS rn
+               FROM vendor_bills vb LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id
+              WHERE vb.status <> 'cancelled' AND vb.wtax_amount > 0 AND COALESCE(po.supplier_id, vb.supplier_id) IN (?)) t
+       LEFT JOIN withholding_taxes w ON w.id = t.wtax_id
+       LEFT JOIN (SELECT vendor_bill_id, SUM(net_of_tax) AS base FROM vendor_bill_lines WHERE is_withhold = 1 GROUP BY vendor_bill_id) wl
+              ON wl.vendor_bill_id = t.id
+      WHERE t.rn = 1`, [supplierIds]);
+  const rateOf = new Map();
+  for (const u of usual) {
+    const eff = Number(u.base) ? (Number(u.wtax_amount) / Number(u.base)) * 100 : null;
+    // The Lookups rate when the bill has one; otherwise its effective rate, snapped to a Lookups rate.
+    const known = u.rate != null ? Number(u.rate) : (eff != null ? (options.find((o) => Math.abs(o.rate - eff) <= 0.05) || {}).rate : null);
+    if (!known) continue;
+    rateOf.set(u.supplier_id, {
+      rate: known, atc: u.atc ? String(u.atc).replace(/\s+/g, '') : null, nature: u.nature || null,
+      vat: Number(u.net_of_tax) ? Number(u.tax_amount) / Number(u.net_of_tax) : 0,
+    });
+  }
+
+  const byCheque = new Map();
+  for (const l of lines) {
+    const usualRate = rateOf.get(l.supplier_id);
+    if (!usualRate) continue;
+    const named = poRefsOf(l.description).map((alts) => alts.map((n) => pos.get(n)).find(Boolean)).filter(Boolean);
+    if (named.length ? named.some((p) => Number(p.billed)) : Number(l.credit_applied) > 0) continue;
+    const po = named[0];
+    const vat = po && Number(po.net_of_tax) ? Number(po.tax_amount) / Number(po.net_of_tax) : usualRate.vat;
+    const base = Number(l.amount) / (1 + vat - usualRate.rate / 100);
+    if (!byCheque.has(l.id)) {
+      byCheque.set(l.id, {
+        doc_type: 'Advance Cheque', id: l.id, doc_no: l.cheque_no, date_created: l.date_created,
+        refs: [], supplier_id: l.supplier_id, supplier_name: l.supplier_name, supplier_tin: l.supplier_tin,
+        supplier_address: l.supplier_address, atc: usualRate.atc, nature: usualRate.nature, rate: usualRate.rate,
+        tax_base: 0, wtax_amount: 0, cheque_number: l.cheque_number,
+      });
+    }
+    const d = byCheque.get(l.id);
+    d.tax_base += base; d.wtax_amount += base * (usualRate.rate / 100);
+    const ref = String(l.description || '').trim();
+    if (ref && !d.refs.includes(ref)) d.refs.push(ref);
+  }
+  return [...byCheque.values()].map(({ refs, cheque_number: chequeNumber, ...d }) => ({
+    ...d, reference_no: [refs.join('; '), chequeNumber ? `Check ${chequeNumber}` : ''].filter(Boolean).join(' · ') || null,
+  }));
 }
 
 // Lookups > Withholding Taxes, as ATC choices for the form.
