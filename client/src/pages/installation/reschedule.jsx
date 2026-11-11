@@ -25,7 +25,9 @@ export const rangeLabel = (f, t) => {
 // After a drag: confirm the new dates, give the reason, forward to the SBU.
 export function RescheduleModal({ project, newFrom, newTo, onClose, onSaved }) {
   const [reasons, setReasons] = useState(null);
-  const [form, setForm] = useState({ new_date_from: newFrom, new_date_to: newTo, reason_id: '', remarks: '' });
+  const hasPhases = (project.phases || []).length > 0;
+  const [form, setForm] = useState({ new_date_from: newFrom, new_date_to: newTo, reason_id: '', remarks: '', move_phases: hasPhases });
+  const [preview, setPreview] = useState(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const set = (patch) => setForm((f) => ({ ...f, ...patch }));
@@ -33,6 +35,12 @@ export function RescheduleModal({ project, newFrom, newTo, onClose, onSaved }) {
   const oldTo = day10(project.date_to || project.date_from);
 
   useEffect(() => { api.get(`${API}/reschedule-reasons`).then(({ data }) => setReasons(data)).catch((err) => setError(errorOf(err))); }, []);
+  // Work phases (2026-11-11): what moving the phases and crew along would do -- by the start's shift.
+  useEffect(() => {
+    if (!hasPhases || !form.move_phases) { setPreview(null); return; }
+    api.post(`${API}/projects/${project.id}/reschedules/preview`, { new_date_from: form.new_date_from, new_date_to: form.new_date_to })
+      .then(({ data }) => setPreview(data)).catch(() => setPreview(null));
+  }, [form.new_date_from, form.new_date_to, form.move_phases]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function forward(e) {
     e.preventDefault();
@@ -78,6 +86,17 @@ export function RescheduleModal({ project, newFrom, newTo, onClose, onSaved }) {
         <div className="field"><label>Remarks</label>
           <textarea rows={3} maxLength={1000} value={form.remarks} placeholder="e.g. the site is not available on the 10th"
             onChange={(e) => set({ remarks: e.target.value })} /></div>
+        {hasPhases && (
+          <div className="card" style={{ padding: 10, marginBottom: 10 }}>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center', margin: 0, cursor: 'pointer' }}>
+              <input type="checkbox" checked={form.move_phases} onChange={(e) => set({ move_phases: e.target.checked })} style={{ width: 16, height: 16, minHeight: 0, flex: 'none', margin: 0 }} />
+              <strong style={{ fontSize: 13 }}>Move the work phases and crew along</strong>
+            </label>
+            {!form.move_phases ? (
+              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>The phases and crew slots keep their days -- any left outside the new dates have to be fixed on the project.</div>
+            ) : preview && <ShiftPreview plan={preview} />}
+          </div>
+        )}
         <p className="muted" style={{ fontSize: 12 }}>The calendar keeps the current dates until the SBU approves.</p>
         <div style={{ display: 'flex', gap: 8 }}>
           <button type="submit" className="btn btn-primary" disabled={busy || !changed || !form.reason_id}>
@@ -87,6 +106,36 @@ export function RescheduleModal({ project, newFrom, newTo, onClose, onSaved }) {
         </div>
       </form>
     </Modal>
+  );
+}
+
+// What a delay or a drag would move (from the server's preview): the phases' new days, how many crew
+// slots go with them, and the ones that cannot (that person / vehicle is busy then) and need rebooking.
+export function ShiftPreview({ plan }) {
+  const moves = plan.phase_moves || [];
+  const slots = plan.slot_moves || [];
+  const clashes = plan.clashes || [];
+  if (plan.days === 0 && !moves.length) return <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>The start does not move, so the phases and crew keep their days.</div>;
+  return (
+    <div style={{ fontSize: 12, marginTop: 6, display: 'grid', gap: 3 }}>
+      {plan.days != null && plan.days !== 0 && <div className="muted">Everything shifts {Math.abs(plan.days)} day(s) {plan.days > 0 ? 'later' : 'earlier'}.</div>}
+      {moves.map((m) => (
+        <div key={m.id}><strong>{m.work_type}</strong>: {rangeLabel(m.date_from, m.date_to)} → <strong>{rangeLabel(m.new_from, m.new_to)}</strong></div>
+      ))}
+      {moves.length === 0 && <div className="muted">No phase moves.</div>}
+      <div>{slots.length ? `${slots.length} crew slot(s) move with them, same hours.` : 'No crew slots to move.'}</div>
+      {clashes.length > 0 && (
+        <div style={{ color: 'var(--color-danger-text, #b91c1c)' }}>
+          <strong>Cannot move -- removed, rebook them:</strong>
+          {clashes.map((c) => <div key={c.id}>{c.name} · {displayDate(c.date)} {c.time} → {displayDate(c.new_date)} is taken by {c.with}</div>)}
+        </div>
+      )}
+      {(plan.outside || []).length > 0 && (
+        <div style={{ color: 'var(--color-warning-text, #b45309)' }}>
+          {plan.outside.map((m) => m.work_type).join(', ')} would end up outside the new dates -- widen them, or fix the phase after.
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -103,7 +152,7 @@ export function DecisionModal({ request: r, onClose, onDone }) {
     try { await api.post(`${API}/reschedules/${r.id}/${verdict}`, { note }); onDone(); } catch (err) { setError(errorOf(err)); setBusy(false); }
   }
   return (
-    <Modal title={`Reschedule · ${r.project_no}`} onClose={onClose}>
+    <Modal title={`${r.kind === 'delay' ? 'Delay' : 'Reschedule'} · ${r.project_no}`} onClose={onClose}>
       {error && <div className="error-banner">{error}</div>}
       <div style={{ marginBottom: 8 }}>
         <Link to={`/installation-planner/projects/${r.project_id}`}><strong>{r.project_title}</strong></Link>
@@ -113,7 +162,15 @@ export function DecisionModal({ request: r, onClose, onDone }) {
       <div className="card" style={{ padding: 10, display: 'grid', gridTemplateColumns: 'auto 1fr', gap: '4px 12px', fontSize: 13 }}>
         <span className="muted">From</span><span>{rangeLabel(r.old_date_from, r.old_date_to)}</span>
         <span className="muted">To</span><strong>{rangeLabel(r.new_date_from, r.new_date_to)}</strong>
+        {r.kind === 'delay' && (
+          <>
+            <span className="muted">Delayed</span>
+            <span><strong>{r.work_type_name}</strong> not worked {rangeLabel(r.lost_from, r.lost_to)} · pushed back {r.shift_days} day(s), with the later phases and their crew</span>
+          </>
+        )}
+        {r.kind !== 'delay' && r.move_phases ? <><span className="muted">Phases</span><span>The work phases and crew move along</span></> : null}
         <span className="muted">Reason</span><span>{r.reason_name}</span>
+        {r.result_note && <><span className="muted">Result</span><span style={{ whiteSpace: 'pre-wrap' }}>{r.result_note}</span></>}
         {r.remarks && <><span className="muted">Remarks</span><span style={{ whiteSpace: 'pre-wrap' }}>{r.remarks}</span></>}
         <span className="muted">Asked by</span><span>{r.requested_by_name || '—'} · {displayDateTime(r.requested_at)}</span>
         {r.decided_at && <><span className="muted">{RESCHEDULE_LABEL[r.status]}</span><span>{r.decided_by_name || '—'} · {displayDateTime(r.decided_at)}{r.decision_note ? ` · ${r.decision_note}` : ''}</span></>}

@@ -16,6 +16,9 @@ const TITLE = 64; // title block
 const PAD = 20;
 const FONT = '"Segoe UI", Roboto, Arial, sans-serif';
 
+// A block's colour is its Job Order's (each job its own colour); the work (Assembling / Installation,
+// 2026-11-11) is a tag on it in the work type's colour.
+const blockKey = (s) => s.job_order_no || s.project_no;
 const minutesOf = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + (m || 0); };
 const hourLabel = (h) => `${h % 12 || 12}:00 ${h < 12 ? 'AM' : 'PM'}`;
 
@@ -57,7 +60,7 @@ export function renderDayPng({ dayKey, kind, people, slots }) {
   const columns = [...cols.values()].sort((a, b) => a.name.localeCompare(b.name));
   const colorOf = new Map();
   for (const s of [...daySlots].sort((a, b) => minutesOf(a.start_time) - minutesOf(b.start_time))) {
-    const key = s.job_order_no || s.project_no;
+    const key = blockKey(s);
     if (!colorOf.has(key)) colorOf.set(key, JOB_COLORS[colorOf.size % JOB_COLORS.length]);
   }
 
@@ -135,22 +138,36 @@ export function renderDayPng({ dayKey, kind, people, slots }) {
     for (const s of c.slots) {
       const y0 = gridTop + (minutesOf(s.start_time) / 60) * HOUR;
       const h = Math.max(20, ((minutesOf(s.end_time) - minutesOf(s.start_time)) / 60) * HOUR);
-      ctx.fillStyle = colorOf.get(s.job_order_no || s.project_no);
+      ctx.fillStyle = colorOf.get(blockKey(s));
       ctx.fillRect(x + 3, y0 + 1, COL - 6, h - 2);
       ctx.strokeStyle = 'rgba(0,0,0,0.25)';
       ctx.strokeRect(x + 3.5, y0 + 1.5, COL - 7, h - 3);
       ctx.save();
       ctx.beginPath(); ctx.rect(x + 3, y0 + 1, COL - 6, h - 2); ctx.clip();
       ctx.fillStyle = '#111827';
+      // The work (Assembling / Installation) on top when the slot has one, as on the planners' sheet.
+      let ty = y0 + 5;
+      if (s.work_type) {
+        ctx.font = `700 11px ${FONT}`;
+        const tw = ctx.measureText(s.work_type).width + 10;
+        ctx.fillStyle = s.work_color || '#b4c7e7';
+        ctx.fillRect(x + 7, ty - 1, tw, 15);
+        ctx.strokeStyle = 'rgba(0,0,0,0.3)';
+        ctx.strokeRect(x + 7.5, ty - 0.5, tw - 1, 14);
+        ctx.fillStyle = '#111827';
+        ctx.fillText(s.work_type, x + 12, ty + 1);
+        ty += 17;
+      }
       ctx.font = `11px ${FONT}`;
-      ctx.fillText(`${timeText(s.start_time)} – ${timeText(s.end_time)}`, x + 8, y0 + 5);
+      ctx.fillText(`${timeText(s.start_time)} – ${timeText(s.end_time)}`, x + 8, ty);
       ctx.font = `700 12px ${FONT}`;
       const label = `(${s.job_order_no || s.project_no})`;
-      // the JO at the foot of a tall block, on the second line of a short one
-      ctx.fillText(label, x + 8, h > 40 ? y0 + h - 18 : y0 + 18);
-      if (h > 60 && s.project_title) {
+      // the JO at the foot of a tall block, on the next line of a short one
+      ctx.fillText(label, x + 8, h > 40 + (ty - y0 - 5) ? y0 + h - 18 : ty + 13);
+      const titleTop = ty + 16;
+      if (h - (titleTop - y0) > 34 && s.project_title) {
         ctx.font = `11px ${FONT}`;
-        wrap(ctx, s.project_title, COL - 18, Math.floor((h - 44) / 14)).forEach((l, j) => ctx.fillText(l, x + 8, y0 + 21 + j * 14));
+        wrap(ctx, s.project_title, COL - 18, Math.floor((h - (titleTop - y0) - 22) / 14)).forEach((l, j) => ctx.fillText(l, x + 8, titleTop + j * 14));
       }
       ctx.restore();
     }

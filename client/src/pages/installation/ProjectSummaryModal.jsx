@@ -5,7 +5,7 @@ import Modal from '../../components/Modal';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import { useAuth } from '../../context/useAuth';
 import { displayDate } from '../../utils/dates';
-import { API, StatusBadge, errorOf, personName, resourceName, timeText } from './common';
+import { API, StatusBadge, WorkChip, errorOf, personName, resourceName, timeText } from './common';
 
 const ROLE_LABEL = { installer: 'Installer', subcon: 'Subcon', driver: 'Driver', vehicle: 'Vehicle' };
 
@@ -52,11 +52,21 @@ export default function ProjectSummaryModal({ projectId, onClose }) {
           {row('Subcons', names(p.subcons))}
           {row('Driver', p.driver_name)}
 
+          {(p.phases || []).length > 0 && (
+            <>
+              <h4 style={{ margin: '16px 0 6px' }}>Work Phases</h4>
+              <div style={{ display: 'grid', gap: 4 }}>
+                {p.phases.map((x) => (
+                  <div key={x.id}><WorkChip name={x.work_type} color={x.work_color} /> {displayDate(String(x.date_from).slice(0, 10))} – {displayDate(String(x.date_to).slice(0, 10))}</div>
+                ))}
+              </div>
+            </>
+          )}
           <h4 style={{ margin: '16px 0 6px' }}>Crew &amp; Vehicle Schedule</h4>
           {p.crew_slots.length ? (
             <div className="table-wrap">
               <table>
-                <thead><tr><th>Date</th><th>Time</th><th>As</th><th>Who / Vehicle</th><th>Note</th></tr></thead>
+                <thead><tr><th>Date</th><th>Time</th><th>As</th><th>Who / Vehicle</th><th>Work</th><th>Note</th></tr></thead>
                 <tbody>
                   {p.crew_slots.map((s) => (
                     <tr key={s.id}>
@@ -64,6 +74,7 @@ export default function ProjectSummaryModal({ projectId, onClose }) {
                       <td style={{ whiteSpace: 'nowrap' }}>{timeText(s.start_time)} – {timeText(s.end_time)}</td>
                       <td>{ROLE_LABEL[s.role] || s.role}</td>
                       <td>{resourceName(s)}</td>
+                      <td><WorkChip name={s.work_type} color={s.work_color} /></td>
                       <td>{s.note}</td>
                     </tr>
                   ))}

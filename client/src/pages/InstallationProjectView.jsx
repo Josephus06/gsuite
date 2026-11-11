@@ -5,9 +5,9 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import Modal from '../components/Modal';
 import { displayDate, displayDateTime } from '../utils/dates';
 import {
-  API, BOM_LABEL, BlobImage, Check, ProgressBar, RESOURCES, StatusBadge, resourceList, resourceName, errorOf, filePayload, openBlob, personName, slotHours, timeText, vehicleLabel,
+  API, BOM_LABEL, BlobImage, Check, ProgressBar, RESOURCES, StatusBadge, WorkChip, resourceList, resourceName, errorOf, filePayload, openBlob, personName, slotHours, timeText, vehicleLabel,
 } from './installation/common';
-import { DecisionModal, RESCHEDULE_BADGE, RESCHEDULE_LABEL, rangeLabel } from './installation/reschedule';
+import { DecisionModal, RESCHEDULE_BADGE, RESCHEDULE_LABEL, ShiftPreview, rangeLabel } from './installation/reschedule';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const ROLE_BADGE = { installer: 'badge-info', subcon: 'badge-warning', driver: 'badge-success', vehicle: 'badge-muted' };
@@ -125,6 +125,9 @@ export default function InstallationProjectView() {
         {/* RIGHT */}
         <div style={{ display: 'grid', gap: 12, flex: '2 1 480px', minWidth: 0 }}>
           {(p.reschedules || []).length > 0 && <Reschedules list={p.reschedules} onOpen={(request) => setModal({ kind: 'decision', request })} />}
+          <WorkPhases p={p} busy={busy} canEdit={r.can_edit} call={call}
+            onAdd={() => setModal({ kind: 'phase' })} onEdit={(phase) => setModal({ kind: 'phase', phase })}
+            onDelay={(phase) => setModal({ kind: 'delay', phase })} />
           <CrewSchedule p={p} busy={busy} canEdit={r.can_edit} call={call}
             onAdd={(day) => setModal({ kind: 'slot', day })} onEdit={(slot) => setModal({ kind: 'slot', slot })} />
           <Checklist p={p} busy={busy} canTick={r.can_update} call={call} />
@@ -136,6 +139,12 @@ export default function InstallationProjectView() {
 
       {modal?.kind === 'decision' && (
         <DecisionModal request={modal.request} onClose={() => setModal(null)} onDone={() => { setModal(null); load(); }} />
+      )}
+      {modal?.kind === 'phase' && (
+        <PhaseModal p={p} phase={modal.phase} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} />
+      )}
+      {modal?.kind === 'delay' && (
+        <DelayModal p={p} phase={modal.phase} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} />
       )}
       {modal?.kind === 'slot' && (
         <SlotModal p={p} slot={modal.slot} day={modal.day} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} />
@@ -162,7 +171,7 @@ function Reschedules({ list, onOpen }) {
   return (
     <div className="card">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', flexWrap: 'wrap', gap: 8 }}>
-        <h3 style={{ margin: 0 }}>Reschedules</h3>
+        <h3 style={{ margin: 0 }}>Reschedules &amp; Delays</h3>
         {waiting && <span className={`badge ${waiting.may_decide ? 'badge-danger' : 'badge-warning'}`}>{waiting.may_decide ? 'Waiting on you' : 'Waiting for the SBU'}</span>}
       </div>
       <div className="table-wrap" style={{ marginTop: 10 }}>
@@ -174,7 +183,11 @@ function Reschedules({ list, onOpen }) {
                 <td style={{ whiteSpace: 'nowrap' }}>{displayDateTime(x.requested_at)}<div className="muted" style={{ fontSize: 12 }}>{x.requested_by_name}</div></td>
                 <td>{rangeLabel(x.old_date_from, x.old_date_to)}</td>
                 <td><strong>{rangeLabel(x.new_date_from, x.new_date_to)}</strong></td>
-                <td>{x.reason_name}{x.remarks && <div className="muted" style={{ fontSize: 12 }}>{x.remarks}</div>}</td>
+                <td>
+                  {x.kind === 'delay' && <div><span className="badge badge-warning">Delay</span> <strong>{x.work_type_name}</strong> not worked {rangeLabel(x.lost_from, x.lost_to)}</div>}
+                  {x.reason_name}{x.remarks && <div className="muted" style={{ fontSize: 12 }}>{x.remarks}</div>}
+                  {x.result_note && <div className="muted" style={{ fontSize: 12 }}>{x.result_note}</div>}
+                </td>
                 <td>
                   <span className={`badge ${RESCHEDULE_BADGE[x.status]}`}>{RESCHEDULE_LABEL[x.status]}</span>
                   {x.decided_by_name && <div className="muted" style={{ fontSize: 12 }}>{x.decided_by_name}{x.decision_note ? ` · ${x.decision_note}` : ''}</div>}
@@ -185,6 +198,247 @@ function Reschedules({ list, onOpen }) {
         </table>
       </div>
     </div>
+  );
+}
+
+// Work Phases (asked 2026-11-11): the timeline split into the kinds of work, e.g. Nov 11-14 -> Assembling
+// Nov 11-13, Installation Nov 12-14. Overlaps are fine; the crew slots then say which phase they work.
+// A bar per phase over the project's days, then the list.
+function WorkPhases({ p, busy, canEdit, call, onAdd, onEdit, onDelay }) {
+  const days = daysBetween(day10(p.date_from), day10(p.date_to));
+  const phases = p.phases || [];
+  const types = p.work_types || [];
+  const unused = types.filter((t) => t.is_active && !phases.some((x) => Number(x.work_type_id) === Number(t.id)));
+  const outside = (x) => days.length && (day10(x.date_from) < days[0] || day10(x.date_to) > days[days.length - 1]);
+  const remove = (x) => window.confirm(`Remove the ${x.work_type} phase (${rangeLabel(x.date_from, x.date_to)})?`)
+    && call(() => api.delete(`${API}/projects/${p.id}/phases/${x.id}`));
+  return (
+    <div className="card">
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+        <h3 style={{ margin: 0 }}>Work Phases <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>what work is done on which days</span></h3>
+        {canEdit && days.length > 0 && unused.length > 0 && <button type="button" className="btn btn-sm btn-primary" onClick={onAdd}>+ Add Phase</button>}
+      </div>
+      {days.length === 0 ? <p className="muted">Set the project's Timeline From / To (Edit) first.</p>
+        : phases.length === 0 ? (
+          <p className="muted" style={{ marginBottom: 0 }}>
+            No phases yet -- the crew is booked without saying the work.{' '}
+            {types.length ? `Add ${types.map((t) => t.name).join(' / ')} to split the timeline.` : "This project's category has no work types -- add them on Installation Categories."}
+          </p>
+        ) : (
+          <>
+            <div className="table-wrap" style={{ marginTop: 10 }}>
+              <table style={{ tableLayout: 'fixed', minWidth: 140 + days.length * 44 }}>
+                <thead>
+                  <tr>
+                    <th style={{ width: 140 }} />
+                    {days.map((k) => <th key={k} style={{ textAlign: 'center', fontSize: 11, padding: 4 }}>{weekday(k)}<div style={{ fontWeight: 400 }}>{displayDate(k).replace(/,?\s*\d{4}$/, '')}</div></th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {phases.map((x) => (
+                    <tr key={x.id}>
+                      <td><WorkChip name={x.work_type} color={x.work_color} /></td>
+                      {days.map((k) => {
+                        const on = k >= day10(x.date_from) && k <= day10(x.date_to);
+                        return <td key={k} style={{ padding: 2 }}><div style={{ height: 18, borderRadius: 3, background: on ? x.work_color : 'transparent', border: on ? '1px solid rgba(0,0,0,0.15)' : 'none' }} /></td>;
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="table-wrap" style={{ marginTop: 8 }}>
+              <table>
+                <thead><tr><th>Work</th><th>Days</th><th>Crew Slots</th><th>Note</th>{canEdit && <th />}</tr></thead>
+                <tbody>
+                  {phases.map((x) => (
+                    <tr key={x.id}>
+                      <td><WorkChip name={x.work_type} color={x.work_color} /></td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        {rangeLabel(x.date_from, x.date_to)}
+                        {outside(x) && <span className="badge badge-danger" style={{ marginLeft: 6 }}>Outside the timeline -- Edit it</span>}
+                      </td>
+                      <td>{Number(x.slot_count) || <span className="muted">0</span>}</td>
+                      <td>{x.note || ''}</td>
+                      {canEdit && (
+                        <td style={{ whiteSpace: 'nowrap', width: 180 }}>
+                          <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onDelay(x)} title="Not worked on a day (weather, site not ready...) -- push it back">Delay</button>{' '}
+                          <button type="button" className="btn btn-sm" disabled={busy} onClick={() => onEdit(x)}>Edit</button>{' '}
+                          <button type="button" className="btn btn-sm btn-danger" disabled={busy} onClick={() => remove(x)}>✕</button>
+                        </td>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+    </div>
+  );
+}
+
+function PhaseModal({ p, phase, onClose, onSaved }) {
+  const days = daysBetween(day10(p.date_from), day10(p.date_to));
+  const taken = new Set((p.phases || []).filter((x) => x.id !== phase?.id).map((x) => Number(x.work_type_id)));
+  const types = (p.work_types || []).filter((t) => !taken.has(Number(t.id)) && (t.is_active || Number(t.id) === Number(phase?.work_type_id)));
+  const [form, setForm] = useState({
+    work_type_id: phase ? String(phase.work_type_id) : String(types[0]?.id || ''),
+    date_from: phase ? day10(phase.date_from) : days[0],
+    date_to: phase ? day10(phase.date_to) : days[days.length - 1],
+    note: phase?.note || '',
+  });
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  async function save(e) {
+    e.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      if (phase) await api.put(`${API}/projects/${p.id}/phases/${phase.id}`, form);
+      else await api.post(`${API}/projects/${p.id}/phases`, form);
+      onSaved();
+    } catch (err) { setError(errorOf(err)); setBusy(false); }
+  }
+  return (
+    <Modal title={phase ? `Change ${phase.work_type}` : 'Add Work Phase'} onClose={onClose}>
+      {error && <div className="error-banner">{error}</div>}
+      <form onSubmit={save}>
+        <div className="field">
+          <label>Work *</label>
+          <select required value={form.work_type_id} onChange={(e) => set({ work_type_id: e.target.value })}>
+            <option value="">-- Select --</option>
+            {types.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+          </select>
+          <div className="muted" style={{ fontSize: 12 }}>From the category's work types (Installation Categories). A later one in the order cannot start before an earlier one starts.</div>
+        </div>
+        <div className="filter-grid">
+          <div className="field">
+            <label>From *</label>
+            <select value={form.date_from} onChange={(e) => set({ date_from: e.target.value, date_to: form.date_to < e.target.value ? e.target.value : form.date_to })}>
+              {days.map((k) => <option key={k} value={k}>{weekday(k)}, {displayDate(k)}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label>To *</label>
+            <select value={form.date_to} onChange={(e) => set({ date_to: e.target.value })}>
+              {days.filter((k) => k >= form.date_from).map((k) => <option key={k} value={k}>{weekday(k)}, {displayDate(k)}</option>)}
+            </select>
+          </div>
+        </div>
+        <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>Within the project's timeline, {rangeLabel(p.date_from, p.date_to)}. Phases may overlap.</div>
+        <div className="field"><label>Note</label><input maxLength={500} value={form.note} onChange={(e) => set({ note: e.target.value })} /></div>
+        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+          <button type="submit" className="btn btn-primary" disabled={busy}>{busy ? 'Saving...' : 'Save'}</button>
+          <button type="button" className="btn" onClick={onClose}>Cancel</button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// Delay a phase (asked 2026-11-11): it could not be worked on a day -- bad weather, site not ready. The
+// day(s) lost and the reason are recorded; the phase from that day on, every later phase and their crew
+// slots move back N days (same hours). Inside the timeline it applies at once; past the end date it goes
+// to the SBU, like a reschedule. The preview shows what moves and who must be rebooked.
+function DelayModal({ p, phase, onClose, onSaved }) {
+  const phaseDays = daysBetween(day10(phase.date_from), day10(phase.date_to));
+  const now = new Date();
+  const todayKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  const first = phaseDays.includes(todayKey) ? todayKey : phaseDays[0];
+  const [form, setForm] = useState({ lost_from: first, lost_to: first, shift_days: 1, reason_id: '', remarks: '' });
+  const [shiftTouched, setShiftTouched] = useState(false);
+  const [reasons, setReasons] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
+  const lostCount = daysBetween(form.lost_from, form.lost_to).length;
+
+  useEffect(() => { api.get(`${API}/reschedule-reasons`).then(({ data }) => setReasons(data)).catch((err) => setError(errorOf(err))); }, []);
+  // Push back by the days lost unless the planner set it.
+  useEffect(() => { if (!shiftTouched) set({ shift_days: lostCount }); }, [lostCount]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const body = { phase_id: phase.id, lost_from: form.lost_from, lost_to: form.lost_to, shift_days: form.shift_days };
+    api.post(`${API}/projects/${p.id}/delays/preview`, body)
+      .then(({ data }) => { setPreview(data); setError(''); })
+      .catch((err) => { setPreview(null); setError(errorOf(err)); });
+  }, [form.lost_from, form.lost_to, form.shift_days]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function save(e) {
+    e.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const { data } = await api.post(`${API}/projects/${p.id}/delays`, { ...form, phase_id: phase.id });
+      if (data.applied && data.result_note) window.alert(`Delay applied.\n\n${data.result_note}`);
+      onSaved();
+    } catch (err) { setError(errorOf(err)); setBusy(false); }
+  }
+
+  return (
+    <Modal title={`Delay ${phase.work_type}`} onClose={onClose}>
+      {error && <div className="error-banner">{error}</div>}
+      <div className="muted" style={{ fontSize: 13, marginBottom: 10 }}>
+        <WorkChip name={phase.work_type} color={phase.work_color} /> {rangeLabel(phase.date_from, phase.date_to)} · project {rangeLabel(p.date_from, p.date_to)}
+      </div>
+      <form onSubmit={save}>
+        <div className="filter-grid">
+          <div className="field">
+            <label>Not worked from *</label>
+            <select value={form.lost_from} onChange={(e) => set({ lost_from: e.target.value, lost_to: form.lost_to < e.target.value ? e.target.value : form.lost_to })}>
+              {phaseDays.map((k) => <option key={k} value={k}>{weekday(k)}, {displayDate(k)}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label>to *</label>
+            <select value={form.lost_to} onChange={(e) => set({ lost_to: e.target.value })}>
+              {phaseDays.filter((k) => k >= form.lost_from).map((k) => <option key={k} value={k}>{weekday(k)}, {displayDate(k)}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label>Push back by (days) *</label>
+            <input type="number" min={1} max={90} required value={form.shift_days}
+              onChange={(e) => { setShiftTouched(true); set({ shift_days: e.target.value === '' ? '' : Number(e.target.value) }); }} />
+          </div>
+        </div>
+        <div className="field">
+          <label>Reason *</label>
+          <select required value={form.reason_id} onChange={(e) => set({ reason_id: e.target.value })} disabled={!reasons}>
+            <option value="">{reasons ? '-- Select Reason --' : 'Loading...'}</option>
+            {(reasons || []).map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}
+          </select>
+          {reasons && reasons.length === 0 && (
+            <div className="muted" style={{ fontSize: 12 }}>No reasons yet -- add them in <Link to="/lookups">Lookups &gt; Reasons</Link> with Type <strong>Reschedule</strong> (e.g. Bad weather).</div>
+          )}
+        </div>
+        <div className="field"><label>Remarks</label>
+          <textarea rows={2} maxLength={1000} value={form.remarks} placeholder="e.g. heavy rain all morning, the site was flooded" onChange={(e) => set({ remarks: e.target.value })} /></div>
+
+        {preview && (
+          <div className="card" style={{ padding: 10, marginBottom: 10 }}>
+            <strong style={{ fontSize: 13 }}>What happens</strong>
+            <ShiftPreview plan={preview} />
+            <div style={{ fontSize: 12, marginTop: 6 }}>
+              Timeline: {rangeLabel(preview.old_date_from, preview.old_date_to)}
+              {preview.new_date_to !== preview.old_date_to ? <> → <strong>{rangeLabel(preview.new_date_from, preview.new_date_to)}</strong></> : ' (unchanged)'}
+            </div>
+            <div style={{ fontSize: 12, marginTop: 4 }}>
+              {preview.needs_approval
+                ? <span className="badge badge-warning">The end date moves -- needs SBU approval; nothing moves until then</span>
+                : <span className="badge badge-success">Fits inside the timeline -- applied now</span>}
+            </div>
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button type="submit" className="btn btn-primary" disabled={busy || !preview || !form.reason_id}>
+            {busy ? 'Saving...' : preview?.needs_approval ? 'Forward to SBU for approval' : 'Apply delay'}
+          </button>
+          <button type="button" className="btn" onClick={onClose}>Cancel</button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
@@ -209,6 +463,7 @@ function CrewSchedule({ p, busy, canEdit, call, onAdd, onEdit }) {
     <tr key={s.id}>
       <td><span className={`badge ${ROLE_BADGE[s.role] || 'badge-muted'}`}>{RESOURCES[s.role]?.one || s.role}</span></td>
       <td><strong>{resourceName(s)}</strong>{flag && <span className="badge badge-danger" style={{ marginLeft: 6 }}>{flag}</span>}</td>
+      <td><WorkChip name={s.work_type} color={s.work_color} /></td>
       <td style={{ whiteSpace: 'nowrap' }}>{timeText(s.start_time)} – {timeText(s.end_time)}</td>
       <td style={{ whiteSpace: 'nowrap' }}>{hoursText(slotHours(s))}</td>
       <td>{s.note || ''}</td>
@@ -229,11 +484,11 @@ function CrewSchedule({ p, busy, canEdit, call, onAdd, onEdit }) {
       {days.length === 0 ? <p className="muted">Set the project's Timeline From / To (Edit) to schedule the crew and vehicles on its days.</p> : (
         <div className="table-wrap" style={{ marginTop: 10 }}>
           <table>
-            <thead><tr><th>As</th><th>Who / What</th><th>Time</th><th>Hours</th><th>Note</th>{canEdit && <th />}</tr></thead>
+            <thead><tr><th>As</th><th>Who / What</th><th>Work</th><th>Time</th><th>Hours</th><th>Note</th>{canEdit && <th />}</tr></thead>
             <tbody>
               {days.map((k) => [
                 <tr key={k}>
-                  <th colSpan={canEdit ? 6 : 5} style={{ background: 'var(--border)' }}>
+                  <th colSpan={canEdit ? 7 : 6} style={{ background: 'var(--border)' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
                       <span>{weekday(k)}, {displayDate(k)}</span>
                       {canEdit && <button type="button" className="btn btn-sm" onClick={() => onAdd(k)}>+ Add</button>}
@@ -241,11 +496,11 @@ function CrewSchedule({ p, busy, canEdit, call, onAdd, onEdit }) {
                   </th>
                 </tr>,
                 ...(byDay.get(k).length ? byDay.get(k).map((s) => row(s)) : [
-                  <tr key={`${k}-none`}><td colSpan={canEdit ? 6 : 5} className="muted">Nobody scheduled.</td></tr>,
+                  <tr key={`${k}-none`}><td colSpan={canEdit ? 7 : 6} className="muted">Nobody scheduled.</td></tr>,
                 ]),
               ])}
               {outside.length > 0 && [
-                <tr key="outside"><th colSpan={canEdit ? 6 : 5} style={{ background: 'var(--border)' }}>Outside the timeline (the dates were changed)</th></tr>,
+                <tr key="outside"><th colSpan={canEdit ? 7 : 6} style={{ background: 'var(--border)' }}>Outside the timeline (the dates were changed)</th></tr>,
                 ...outside.map((s) => row(s, displayDate(s.work_date))),
               ]}
             </tbody>
@@ -265,7 +520,15 @@ function CrewSchedule({ p, busy, canEdit, call, onAdd, onEdit }) {
 // project's days at once (e.g. Nov 8-10, 8:00 AM - 11:30 AM). Shows what the installer already has on
 // the day, on every project, so a free window is easy to see.
 function SlotModal({ p, slot, day, onClose, onSaved }) {
-  const days = daysBetween(day10(p.date_from), day10(p.date_to));
+  const timeline = daysBetween(day10(p.date_from), day10(p.date_to));
+  // Work phases (2026-11-11): with phases on the project the slot says which work it is, and only that
+  // phase's days are offered. The first phase running on the day it was opened from is the default.
+  const phases = p.phases || [];
+  const startDay = slot ? day10(slot.work_date) : day;
+  const covers = (x, k) => k >= day10(x.date_from) && k <= day10(x.date_to);
+  const [phaseId, setPhaseId] = useState(String(slot?.phase_id || phases.find((x) => covers(x, startDay))?.id || ''));
+  const phase = phases.find((x) => String(x.id) === phaseId);
+  const days = phase ? timeline.filter((k) => covers(phase, k)) : timeline;
   const [meta, setMeta] = useState(null);
   const [role, setRole] = useState(slot?.role || 'installer');
   const [form, setForm] = useState({
@@ -317,7 +580,7 @@ function SlotModal({ p, slot, day, onClose, onSaved }) {
     setBusy(true);
     setError('');
     const body = (work_date) => ({
-      role, start_time: form.start_time, end_time: form.end_time, note: form.note, work_date,
+      role, start_time: form.start_time, end_time: form.end_time, note: form.note, work_date, phase_id: phaseId || null,
       [isVehicle ? 'asset_id' : 'employee_id']: form.who,
     });
     if (slot) {
@@ -369,6 +632,25 @@ function SlotModal({ p, slot, day, onClose, onSaved }) {
             </div>
             {options.length === 0 && <div className="muted" style={{ fontSize: 12 }}>{R.none}</div>}
           </div>
+          {phases.length > 0 && (
+            <div className="field">
+              <label>Work *</label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {phases.map((x) => (
+                  <button key={x.id} type="button" className={`btn btn-sm ${phaseId === String(x.id) ? 'btn-primary' : ''}`}
+                    onClick={() => {
+                      setPhaseId(String(x.id));
+                      const inIt = picked.filter((k) => covers(x, k));
+                      setPicked(inIt.length ? inIt : [timeline.find((k) => covers(x, k)) || day10(x.date_from)]);
+                    }}>
+                    <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 2, background: x.work_color, marginRight: 6, border: '1px solid rgba(0,0,0,0.2)' }} />
+                    {x.work_type} <span style={{ fontWeight: 400, opacity: 0.8 }}>· {rangeLabel(x.date_from, x.date_to).replace(/\s*\(.*\)$/, '')}</span>
+                  </button>
+                ))}
+              </div>
+              {!phase && <div className="muted" style={{ fontSize: 12 }}>Pick the work this slot is for -- its days are offered below.</div>}
+            </div>
+          )}
           <div className="field">
             <label>{slot ? 'Day *' : 'Day(s) *'}</label>
             {slot ? (

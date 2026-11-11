@@ -326,6 +326,27 @@ export default function InstallationPlanner({ readOnly = false }) {
               <span style={{ width: 10, height: 10, borderRadius: 3, background: STATUS_COLOR[k], display: 'inline-block' }} />{l}
             </span>
           ))}
+          {(view === 'month' || view === 'week') && events.some((ev) => (ev.delays || []).length) && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              <span style={{ width: 10, height: 10, borderRadius: 3, background: DELAY_RED, display: 'inline-block' }} /><strong>Delayed</strong> (day not worked)
+            </span>
+          )}
+          {(view === 'month' || view === 'week') && (() => {
+            // The work phases on the bars shown (their colour fills the bar on those days).
+            const works = new Map();
+            for (const ev of events) for (const x of ev.phases || []) if (!works.has(x.work_type)) works.set(x.work_type, x.color);
+            return works.size ? (
+              <span style={{ display: 'inline-flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}>
+                <span className="muted">· work:</span>
+                {[...works].map(([name, c]) => (
+                  <span key={name} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                    <span style={{ width: 10, height: 10, borderRadius: 3, background: c, border: '1px solid rgba(0,0,0,0.25)', display: 'inline-block' }} />{name}
+                  </span>
+                ))}
+                <span className="muted">(status = stripe under the bar)</span>
+              </span>
+            ) : null;
+          })()}
           <span className="muted">
             · dashed = reschedule waiting for the SBU{rights?.can_edit && !readOnly ? ' · drag the end of a bar to move its start or finish, its middle to shift it' : ''}
           </span>
@@ -408,6 +429,7 @@ export default function InstallationPlanner({ readOnly = false }) {
 // the finish, anywhere else shifts the whole range; the drop opens the reschedule dialog. A ghost (dashed)
 // is a reschedule waiting for the SBU -- clicking it opens the request.
 const BAR_H = 19;
+const DELAY_RED = '#dc2626';
 // Week: room for the whole title (up to three lines) and the project / JO line under it (asked 2026-11-10).
 const BAR_H_WEEK = 80;
 const CLAMP3 = { display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' };
@@ -419,7 +441,19 @@ function EventBar({ e, dayKey, weekStart, wrap, draggable, onOpen }) {
   const last = dayKey === end;
   const label = first || weekStart || wrap;
   const color = STATUS_COLOR[e.status] || '#64748b';
+  // Work phases (2026-11-11): on a day a phase runs, the bar is that phase's colour (Assembling yellow,
+  // Installation orange); two phases on one day split it top / bottom. A day with no phase keeps the
+  // status colour.
+  const today = e.ghost ? [] : (e.phases || []).filter((x) => dayKey >= x.date_from && dayKey <= x.date_to);
+  // A day lost to a delay (bad weather, site not ready) is red and says DELAYED, over any phase colour.
+  const lost = e.ghost ? null : (e.delays || []).find((x) => dayKey >= x.date_from && dayKey <= x.date_to);
+  const fill = lost ? DELAY_RED : !today.length ? color
+    : today.length === 1 ? today[0].color
+      : `linear-gradient(to bottom, ${today.map((x, i) => `${x.color} ${(i * 100) / today.length}% ${((i + 1) * 100) / today.length}%`).join(', ')})`;
   const range = `${displayDate(start)}${end !== start ? ` – ${displayDate(end)}` : ''}`;
+  const work = (today.length ? ` · ${today.map((x) => x.work_type).join(' + ')}` : '')
+    + (lost ? ` · DELAYED: ${lost.work_type} not worked -- ${lost.reason}${lost.status === 'for_approval' ? ' (waiting for the SBU)' : ''}` : '');
+  const lostText = lost ? `DELAYED${lost.status === 'for_approval' ? ' (for SBU)' : ''} · ${lost.reason}` : '';
   const startDrag = (ev, mode) => {
     ev.stopPropagation();
     ev.dataTransfer.effectAllowed = 'move';
@@ -430,13 +464,15 @@ function EventBar({ e, dayKey, weekStart, wrap, draggable, onOpen }) {
       draggable={draggable} onDragStart={(ev) => startDrag(ev, 'move')}
       title={e.ghost
         ? `Proposed: ${range} · ${e.pending_reason || ''} · waiting for the SBU -- click to open`
-        : `${e.project_no} · ${e.title} (${STATUS_LABEL[e.status]}) · ${range} · ${e.progress}%${e.pending_id ? ' · reschedule waiting for the SBU' : ''}${draggable ? ' · drag to reschedule' : ''}`}
+        : `${e.project_no} · ${e.title} (${STATUS_LABEL[e.status]}) · ${range}${work} · ${e.progress}%${e.pending_id ? ' · reschedule waiting for the SBU' : ''}${draggable ? ' · drag to reschedule' : ''}`}
       style={{
         position: 'relative',
         display: 'block', width: wrap ? '100%' : 'calc(100% + 8px)', margin: wrap ? '3px 0 0' : '3px -4px 0', textAlign: 'left',
         cursor: draggable ? 'grab' : 'pointer',
-        background: e.ghost ? 'transparent' : color, color: e.ghost ? color : '#fff',
-        border: e.ghost ? `1px dashed ${color}` : 'none', fontSize: wrap ? 12 : 11, lineHeight: 1.35,
+        background: e.ghost ? 'transparent' : fill, color: e.ghost ? color : today.length && !lost ? '#1f2937' : '#fff',
+        border: e.ghost ? `1px dashed ${color}` : 'none',
+        // the status stays readable on a phase-coloured bar: a stripe of its colour along the bottom
+        boxShadow: today.length || lost ? `inset 0 -3px 0 ${color}` : 'none', fontSize: wrap ? 12 : 11, lineHeight: 1.35,
         padding: wrap ? '4px 8px' : '2px 6px', whiteSpace: wrap ? 'normal' : 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
         // One fixed height per view: a continuation day carries no text (it collapsed to a thin line), and
         // bars of different heights would not line up across the week's lanes.
@@ -449,7 +485,9 @@ function EventBar({ e, dayKey, weekStart, wrap, draggable, onOpen }) {
       {draggable && last && <span draggable onDragStart={(ev) => startDrag(ev, 'end')} title="Drag to move the finish" style={{ ...GRIP, right: 0 }} />}
       {(() => {
         const text = label ? (e.ghost ? `⇄ Proposed: ${e.job_order_no || e.project_no}` : `${e.pending_id ? '⇄ ' : ''}${e.title} (${(STATUS_LABEL[e.status] || e.status).toUpperCase()})`) : '\u00a0';
-        return wrap ? <div style={{ ...CLAMP3, fontWeight: 600 }}>{text}</div> : text;
+        // the delayed day always says so, even mid-bar
+        const shown = lost ? (label && !e.ghost ? `${lostText} · ${text}` : lostText) : text;
+        return wrap ? <div style={{ ...CLAMP3, fontWeight: 600 }}>{shown}</div> : (lost ? <strong>{shown}</strong> : shown);
       })()}
       {wrap && !e.ghost && <div style={{ opacity: 0.9, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{e.project_no}{e.job_order_no ? ` · ${e.job_order_no}` : ''} · {e.progress}%</div>}
     </div>
@@ -525,13 +563,18 @@ function DayView({ dayKey, slots, people, kind, onOpen }) {
                   const height = Math.max(18, ((minutesOf(s.end_time) - minutesOf(s.start_time)) / 60) * HOUR_PX);
                   return (
                     <button key={s.id} type="button" onClick={() => onOpen(s)}
-                      title={`${timeText(s.start_time)} – ${timeText(s.end_time)} · ${s.project_no} · ${s.project_title}${s.note ? ` · ${s.note}` : ''}`}
+                      title={`${s.work_type ? `${s.work_type} · ` : ''}${timeText(s.start_time)} – ${timeText(s.end_time)} · ${s.project_no} · ${s.project_title}${s.note ? ` · ${s.note}` : ''}`}
                       style={{
                         position: 'absolute', top, height, left: 3, right: 3, overflow: 'hidden', textAlign: 'left', cursor: 'pointer',
                         background: colorOf.get(s.job_order_no || s.project_no), color: '#1f2937', border: '1px solid rgba(0,0,0,0.15)',
                         borderRadius: 4, padding: '3px 6px', fontSize: 11, lineHeight: 1.3, display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
                       }}>
-                      <span>{timeText(s.start_time)} – {timeText(s.end_time)}</span>
+                      <span>
+                        {s.work_type && (
+                          <strong style={{ display: 'inline-block', fontSize: 11, marginBottom: 2, padding: '0 5px', borderRadius: 3, background: s.work_color, border: '1px solid rgba(0,0,0,0.2)' }}>{s.work_type}</strong>
+                        )}
+                        <span style={{ display: 'block' }}>{timeText(s.start_time)} – {timeText(s.end_time)}</span>
+                      </span>
                       <strong style={{ fontSize: 12 }}>({s.job_order_no || s.project_no})</strong>
                     </button>
                   );
@@ -603,6 +646,7 @@ function CrewView({ days, slots, people: everyone, kind, todayKey, onOpen, onDay
                         }}>
                         <strong>{timeText(s.start_time)} – {timeText(s.end_time)}</strong>
                         <div>{s.job_order_no || s.project_no}</div>
+                        {s.work_type && <div style={{ marginTop: 2 }}><span style={{ background: s.work_color, color: '#1f2937', borderRadius: 3, padding: '0 4px', fontWeight: 600 }}>{s.work_type}</span></div>}
                       </button>
                     ))}
                   </td>

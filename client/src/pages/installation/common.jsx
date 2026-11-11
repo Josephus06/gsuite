@@ -85,6 +85,16 @@ export function Check({ checked, onChange, children, style }) {
   );
 }
 
+// A work type's chip (2026-11-11): its colour and name -- Assembling, Installation, ...
+export function WorkChip({ name, color }) {
+  if (!name) return <span className="muted">—</span>;
+  return (
+    <span style={{ display: 'inline-block', padding: '1px 8px', borderRadius: 4, fontSize: 12, fontWeight: 600, background: color || '#b4c7e7', color: '#1f2937', border: '1px solid rgba(0,0,0,0.15)', whiteSpace: 'nowrap' }}>
+      {name}
+    </span>
+  );
+}
+
 export function StatusBadge({ status }) {
   return <span className={`badge ${STATUS_BADGE[status] || 'badge-muted'}`}>{STATUS_LABEL[status] || status}</span>;
 }

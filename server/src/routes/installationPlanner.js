@@ -202,6 +202,15 @@ const PROJECT_SELECT = `
     LEFT JOIN employees d ON d.id = p.driver_employee_id
     LEFT JOIN employees so ON so.id = p.safety_officer_employee_id`;
 
+// A project's work phases (2026-11-11, db/add-installation-work-phases.js) with their work type and how
+// many crew slots work each.
+const PHASE_SELECT = `
+  SELECT ph.id, ph.project_id, ph.work_type_id, ph.date_from, ph.date_to, ph.note,
+         wt.name AS work_type, wt.color AS work_color, wt.sort_order AS work_order,
+         (SELECT COUNT(*) FROM installation_crew_slots s WHERE s.phase_id = ph.id) AS slot_count
+    FROM installation_project_phases ph
+    JOIN installation_work_types wt ON wt.id = ph.work_type_id`;
+
 async function projectOr404(req, res) {
   const [[p]] = await pool.query('SELECT * FROM installation_projects WHERE id = ?', [req.params.id]);
   if (!p) errorOut(res, 404, 'Project not found');
@@ -312,6 +321,23 @@ router.get('/events', requireAuth, requireCalendarRead, async (req, res, next) =
          LEFT JOIN installation_reschedule_requests rr ON rr.project_id = p.id AND rr.status = 'for_approval'
         WHERE ${where.join(' AND ')}
         ORDER BY p.date_from, p.id`, params);
+    // Each project's work phases (2026-11-11): the month bar takes the phase's colour on its days.
+    const [phases] = rows.length
+      ? await pool.query(`${PHASE_SELECT} WHERE ph.project_id IN (?) ORDER BY wt.sort_order, ph.date_from`, [rows.map((r) => r.id)])
+      : [[]];
+    // And its delays (2026-11-11): the days lost show red, "DELAYED", on the bar -- recorded ones and ones
+    // still waiting for the SBU.
+    const [delays] = rows.length
+      ? await pool.query(
+        `SELECT project_id, work_type_name, lost_from, lost_to, reason_name, status FROM installation_reschedule_requests
+          WHERE kind = 'delay' AND status IN ('approved', 'for_approval') AND project_id IN (?) ORDER BY lost_from`, [rows.map((r) => r.id)])
+      : [[]];
+    for (const r of rows) {
+      r.phases = phases.filter((x) => x.project_id === r.id)
+        .map((x) => ({ work_type: x.work_type, color: x.work_color, date_from: dayText(x.date_from), date_to: dayText(x.date_to) }));
+      r.delays = delays.filter((x) => x.project_id === r.id)
+        .map((x) => ({ work_type: x.work_type_name, date_from: dayText(x.lost_from), date_to: dayText(x.lost_to), reason: x.reason_name, status: x.status }));
+    }
     res.json(rows);
   } catch (err) { next(err); }
 });
@@ -349,7 +375,9 @@ router.get('/projects/:id/summary', requireAuth, requireCalendarRead, async (req
                    WHERE x.project_id = ? ORDER BY e.first_name, e.last_name`, [p.id]),
       pool.query(`${CREW_SELECT} WHERE s.project_id = ? ORDER BY s.work_date, s.start_time, e.first_name`, [p.id]),
     ]);
+    const [phases] = await pool.query(`${PHASE_SELECT} WHERE ph.project_id = ? ORDER BY wt.sort_order, ph.date_from, ph.id`, [p.id]);
     res.json({
+      phases,
       id: p.id, project_no: p.project_no, title: p.title, description: p.description, site_address: p.site_address,
       status: p.status, progress: p.progress, date_from: p.date_from, date_to: p.date_to,
       category_name: p.category_name, job_order_id: p.job_order_id, job_order_no: p.job_order_no,
@@ -364,7 +392,7 @@ router.get('/projects/:id', requireAuth, requirePermission(ROUTE, 'can_view'), a
     const [[p]] = await pool.query(`${PROJECT_SELECT} WHERE p.id = ?`, [req.params.id]);
     if (!p) return errorOut(res, 404, 'Project not found');
     const id = p.id;
-    const [[installers], [subconSuppliers], [vehicles], [files], [checklist], [bom], [updates], [crew], [reschedules], [subcons]] = await Promise.all([
+    const [[installers], [subconSuppliers], [vehicles], [files], [checklist], [bom], [updates], [crew], [reschedules], [subcons], [phases], [workTypes]] = await Promise.all([
       pool.query(
         `SELECT e.id, e.first_name, e.last_name FROM installation_project_installers x JOIN employees e ON e.id = x.employee_id
           WHERE x.project_id = ? ORDER BY e.first_name, e.last_name`, [id]),
@@ -396,9 +424,17 @@ router.get('/projects/:id', requireAuth, requirePermission(ROUTE, 'can_view'), a
       pool.query(
         `SELECT e.id, e.first_name, e.last_name FROM installation_project_subcon_employees x JOIN employees e ON e.id = x.employee_id
           WHERE x.project_id = ? ORDER BY e.first_name, e.last_name`, [id]),
+      pool.query(`${PHASE_SELECT} WHERE ph.project_id = ? ORDER BY wt.sort_order, ph.date_from, ph.id`, [id]),
+      // The category's work types to add as phases, plus any a phase already uses (category changed since,
+      // or the type set inactive).
+      pool.query(
+        `SELECT id, category_id, name, color, sort_order, is_active FROM installation_work_types
+          WHERE (category_id = ? AND is_active = 1) OR id IN (SELECT work_type_id FROM installation_project_phases WHERE project_id = ?)
+          ORDER BY sort_order, name`, [p.category_id || 0, id]),
     ]);
     res.json({
       ...p, installers, subcons, subcon_suppliers: subconSuppliers, vehicles, checklist, bom_items: bom, updates, crew_slots: crew,
+      phases, work_types: workTypes,
       reschedules: await withActions(reschedules, req.user.id),
       files: Object.fromEntries(files.map((f) => [f.kind, f])),
       rights: await rightsOf(req.user.id),
@@ -708,7 +744,8 @@ const TIME = /^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/;
 const hm = (t) => String(t).slice(0, 5);
 const ampm = (t) => { const [h, m] = hm(t).split(':').map(Number); return `${h % 12 || 12}:${String(m).padStart(2, '0')} ${h < 12 ? 'AM' : 'PM'}`; };
 const CREW_SELECT = `
-  SELECT s.id, s.project_id, s.role, s.employee_id, s.asset_id, s.work_date, s.start_time, s.end_time, s.note,
+  SELECT s.id, s.project_id, s.phase_id, s.role, s.employee_id, s.asset_id, s.work_date, s.start_time, s.end_time, s.note,
+         wt.name AS work_type, wt.color AS work_color, wt.sort_order AS work_order,
          e.first_name, e.last_name, p.project_no, p.title AS project_title, p.status AS project_status,
          jo.job_order_no, vd.plate_no, COALESCE(vd.make, va.brand) AS make, COALESCE(vd.model, va.model) AS model, vai.display_name AS asset_name, va.reference_no
     FROM installation_crew_slots s
@@ -717,7 +754,9 @@ const CREW_SELECT = `
     LEFT JOIN job_orders jo ON jo.id = p.job_order_id
     LEFT JOIN assets va ON va.id = s.asset_id
     LEFT JOIN asset_items vai ON vai.id = va.asset_item_id
-    LEFT JOIN vehicle_details vd ON vd.asset_id = s.asset_id`;
+    LEFT JOIN vehicle_details vd ON vd.asset_id = s.asset_id
+    LEFT JOIN installation_project_phases ph ON ph.id = s.phase_id
+    LEFT JOIN installation_work_types wt ON wt.id = ph.work_type_id`;
 
 // Every slot in [from, to] (the Crew calendar), optionally one installer's.
 router.get('/crew', requireAuth, requireCalendarRead, async (req, res, next) => {
@@ -752,7 +791,26 @@ function readSlot(body, project) {
   const to = project.date_to ? String(project.date_to).slice(0, 10) : from;
   if (!from) return { error: "Set the project's Timeline From / To first -- the crew and vehicles are scheduled on its days." };
   if (body.work_date < from || body.work_date > to) return { error: `Pick a day within the project's timeline (${from} to ${to}).` };
-  return { values: { role, employee_id: employeeId, asset_id: assetId, work_date: body.work_date, start_time: start, end_time: end, note: trunc(body.note, 500) } };
+  return { values: { role, phase_id: idOrNull(body.phase_id), employee_id: employeeId, asset_id: assetId, work_date: body.work_date, start_time: start, end_time: end, note: trunc(body.note, 500) } };
+}
+
+// Work phases (2026-11-11): once the project has phases, every slot says which one it works (Assembling,
+// Installation, ...) and its day must fall in that phase. A project with no phases books as before.
+async function phaseProblem(conn, projectId, phaseId, workDate) {
+  const [phases] = await conn.query(`${PHASE_SELECT} WHERE ph.project_id = ? ORDER BY wt.sort_order`, [projectId]);
+  if (!phases.length) return phaseId ? 'This project has no work phases -- add them first, or leave Work empty.' : null;
+  if (!phaseId) {
+    const today = phases.filter((x) => dayText(x.date_from) <= workDate && dayText(x.date_to) >= workDate);
+    return today.length
+      ? `Choose the work (${today.map((x) => x.work_type).join(' / ')}) this slot is for.`
+      : `No work phase runs on ${workDate} -- the phases are ${phases.map((x) => `${x.work_type} ${rangeText(x.date_from, x.date_to)}`).join(', ')}.`;
+  }
+  const ph = phases.find((x) => Number(x.id) === Number(phaseId));
+  if (!ph) return 'That work phase is not on this project.';
+  if (workDate < dayText(ph.date_from) || workDate > dayText(ph.date_to)) {
+    return `${ph.work_type} runs ${rangeText(ph.date_from, ph.date_to)} -- ${workDate} is outside it.`;
+  }
+  return null;
 }
 
 // Saves a slot (new, or slotId) after checking the installer is free then. Locks that installer's day
@@ -778,6 +836,8 @@ async function saveSlot(req, res, slotId) {
     } else if (!(await isFleetVehicle(conn, v.asset_id))) {
       return errorOut(res, 400, 'That is not one of the vehicles in Assets > Fleet.');
     }
+    const badPhase = await phaseProblem(conn, p.id, v.phase_id, v.work_date);
+    if (badPhase) return errorOut(res, 400, badPhase);
     await conn.beginTransaction();
     if (slotId) {
       const [[mine]] = await conn.query('SELECT id FROM installation_crew_slots WHERE id = ? AND project_id = ? FOR UPDATE', [slotId, p.id]);
@@ -826,6 +886,244 @@ router.delete('/projects/:id/crew/:slotId', requireAuth, requirePermission(ROUTE
   try {
     await pool.query('DELETE FROM installation_crew_slots WHERE id = ? AND project_id = ?', [req.params.slotId, req.params.id]);
     res.status(204).send();
+  } catch (err) { next(err); }
+});
+
+// ---------------------------------------------------------------- work phases
+
+// The planner splits the timeline into the kinds of work (asked 2026-11-11): JO-1231-3-3, Nov 11-14 ->
+// Assembling Nov 11-13, Installation Nov 12-14. Phases sit inside the timeline and may overlap, but follow
+// their work types' order: a phase may not start before an earlier-ordered one starts (Installation
+// cannot start before Assembling). One phase per work type per project.
+async function savePhase(req, res, phaseId) {
+  const p = await projectOr404(req, res);
+  if (!p) return;
+  if (p.status === 'cancelled') return errorOut(res, 409, 'This project is cancelled.');
+  const body = req.body || {};
+  const workTypeId = idOrNull(body.work_type_id);
+  if (!workTypeId) return errorOut(res, 400, 'Choose the work.');
+  const { date_from: from, date_to: to } = body;
+  if (!isDate(from) || !isDate(to)) return errorOut(res, 400, 'Enter the From and To days.');
+  if (to < from) return errorOut(res, 400, 'To must be on or after From.');
+  if (!p.date_from) return errorOut(res, 400, "Set the project's Timeline From / To first.");
+  const tFrom = dayText(p.date_from);
+  const tTo = dayText(p.date_to || p.date_from);
+  if (from < tFrom || to > tTo) return errorOut(res, 400, `Keep the phase within the project's timeline (${rangeText(tFrom, tTo)}).`);
+
+  const [[wt]] = await pool.query('SELECT * FROM installation_work_types WHERE id = ?', [workTypeId]);
+  const [phases] = await pool.query(`${PHASE_SELECT} WHERE ph.project_id = ?`, [p.id]);
+  const mine = phaseId ? phases.find((x) => Number(x.id) === Number(phaseId)) : null;
+  if (phaseId && !mine) return errorOut(res, 404, 'Work phase not found');
+  const keepsType = mine && Number(mine.work_type_id) === workTypeId;
+  if (!wt || (!keepsType && (Number(wt.category_id) !== Number(p.category_id) || !wt.is_active))) {
+    return errorOut(res, 400, "That work is not one of this project's category work types (Installation Categories).");
+  }
+  const others = phases.filter((x) => Number(x.id) !== Number(phaseId));
+  const twin = others.find((x) => Number(x.work_type_id) === workTypeId);
+  if (twin) return errorOut(res, 409, `${wt.name} is already a phase here (${rangeText(twin.date_from, twin.date_to)}) -- change that one.`);
+  for (const o of others) {
+    const oFrom = dayText(o.date_from);
+    if (Number(o.work_order) < Number(wt.sort_order) && from < oFrom) {
+      return errorOut(res, 400, `${wt.name} cannot start before ${o.work_type} starts (${displayDay(oFrom)}).`);
+    }
+    if (Number(o.work_order) > Number(wt.sort_order) && oFrom < from) {
+      return errorOut(res, 400, `${o.work_type} starts ${displayDay(oFrom)} -- ${wt.name} has to start on or before that.`);
+    }
+  }
+  if (mine) {
+    const [[out]] = await pool.query(
+      'SELECT COUNT(*) AS n, MIN(work_date) AS first, MAX(work_date) AS last FROM installation_crew_slots WHERE phase_id = ? AND (work_date < ? OR work_date > ?)',
+      [mine.id, from, to]);
+    if (out.n) {
+      return errorOut(res, 409, `${out.n} crew slot(s) of ${mine.work_type} fall outside ${rangeText(from, to)} (${rangeText(out.first, out.last)}) -- move or remove them first.`);
+    }
+  }
+  const values = { work_type_id: workTypeId, date_from: from, date_to: to, note: trunc(body.note, 500) };
+  if (mine) await pool.query('UPDATE installation_project_phases SET ? WHERE id = ?', [values, mine.id]);
+  else await pool.query('INSERT INTO installation_project_phases SET ?', [{ ...values, project_id: p.id, created_by_user_id: req.user.id }]);
+  res.status(mine ? 200 : 201).json({ ok: true });
+}
+const displayDay = (d) => { const [y, m, dd] = dayText(d).split('-').map(Number); return new Date(y, m - 1, dd).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); };
+
+router.post('/projects/:id/phases', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  try { await savePhase(req, res, null); } catch (err) { next(err); }
+});
+
+router.put('/projects/:id/phases/:phaseId', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  try { await savePhase(req, res, Number(req.params.phaseId)); } catch (err) { next(err); }
+});
+
+router.delete('/projects/:id/phases/:phaseId', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  try {
+    const [[ph]] = await pool.query(`${PHASE_SELECT} WHERE ph.id = ? AND ph.project_id = ?`, [req.params.phaseId, req.params.id]);
+    if (!ph) return errorOut(res, 404, 'Work phase not found');
+    if (Number(ph.slot_count)) return errorOut(res, 409, `${ph.slot_count} crew slot(s) work ${ph.work_type} -- remove them first.`);
+    await pool.query('DELETE FROM installation_project_phases WHERE id = ?', [ph.id]);
+    res.status(204).send();
+  } catch (err) { next(err); }
+});
+
+// ---------------------------------------------------------------- shifting phases + crew (delays, drags)
+
+// YYYY-MM-DD + n days
+function addDays(k, n) {
+  const [y, m, d] = dayText(k).split('-').map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d + n));
+  return t.toISOString().slice(0, 10);
+}
+const daysDiff = (a, b) => Math.round((Date.parse(`${dayText(b)}T00:00:00Z`) - Date.parse(`${dayText(a)}T00:00:00Z`)) / 86400000);
+
+// What moves when the project's work is pushed `days` days (asked 2026-11-11):
+//   a delay   cutoff = the first day lost, fromOrder = the delayed phase's work order: that phase and every
+//             later-ordered one move what lies on or after the cutoff (a phase already under way keeps its
+//             start and ends later); their crew slots on or after the cutoff move with them, same hours.
+//   a drag    cutoff = null: every phase and every slot moves.
+// A slot whose person / vehicle is already booked elsewhere at the new day and hours does not move: it is
+// listed as a clash and removed, so nobody is double-booked; the planner rebooks it.
+async function planShift(conn, projectId, { cutoff, days, fromOrder }) {
+  const [phases] = await conn.query(`${PHASE_SELECT} WHERE ph.project_id = ? ORDER BY wt.sort_order, ph.date_from`, [projectId]);
+  const hits = (k) => cutoff == null || dayText(k) >= cutoff;
+  const moving = phases.filter((x) => fromOrder == null || Number(x.work_order) >= fromOrder);
+  const movingIds = new Set(moving.map((x) => Number(x.id)));
+  const phaseMoves = [];
+  for (const x of moving) {
+    const nf = hits(x.date_from) ? addDays(x.date_from, days) : dayText(x.date_from);
+    const nt = hits(x.date_to) ? addDays(x.date_to, days) : dayText(x.date_to);
+    if (nf !== dayText(x.date_from) || nt !== dayText(x.date_to)) {
+      phaseMoves.push({ id: x.id, work_type: x.work_type, date_from: dayText(x.date_from), date_to: dayText(x.date_to), new_from: nf, new_to: nt });
+    }
+  }
+  const [slots] = await conn.query(`${CREW_SELECT} WHERE s.project_id = ? ORDER BY s.work_date, s.start_time`, [projectId]);
+  const toMove = days === 0 ? [] : slots.filter((s) => hits(s.work_date)
+    && (fromOrder == null || s.phase_id == null || movingIds.has(Number(s.phase_id))));
+  const movingSlotIds = toMove.map((s) => s.id);
+  const slotMoves = [];
+  const clashes = [];
+  for (const s of toMove) {
+    const nd = addDays(s.work_date, days);
+    const who = s.role === 'vehicle' ? 's.asset_id = ?' : 's.employee_id = ?';
+    const [[c]] = await conn.query(
+      `${CREW_SELECT} WHERE ${who} AND s.work_date = ? AND s.start_time < ? AND s.end_time > ?
+          AND p.status <> 'cancelled' AND s.id NOT IN (?) LIMIT 1`,
+      [s.role === 'vehicle' ? s.asset_id : s.employee_id, nd, s.end_time, s.start_time, movingSlotIds]);
+    const row = { id: s.id, name: s.role === 'vehicle' ? vehicleName(s) : `${s.first_name} ${s.last_name}`, work_type: s.work_type,
+      date: dayText(s.work_date), new_date: nd, time: `${ampm(s.start_time)} – ${ampm(s.end_time)}` };
+    if (c) clashes.push({ ...row, with: `${c.project_no}${c.job_order_no ? ` (${c.job_order_no})` : ''} ${ampm(c.start_time)} – ${ampm(c.end_time)}` });
+    else slotMoves.push(row);
+  }
+  return { phaseMoves, slotMoves, clashes };
+}
+
+async function applyShift(conn, plan) {
+  for (const m of plan.phaseMoves) await conn.query('UPDATE installation_project_phases SET date_from = ?, date_to = ? WHERE id = ?', [m.new_from, m.new_to, m.id]);
+  for (const m of plan.slotMoves) await conn.query('UPDATE installation_crew_slots SET work_date = ? WHERE id = ?', [m.new_date, m.id]);
+  if (plan.clashes.length) await conn.query('DELETE FROM installation_crew_slots WHERE id IN (?)', [plan.clashes.map((c) => c.id)]);
+  const parts = [];
+  if (plan.phaseMoves.length) parts.push(`Phases: ${plan.phaseMoves.map((m) => `${m.work_type} ${rangeText(m.date_from, m.date_to)} -> ${rangeText(m.new_from, m.new_to)}`).join('; ')}.`);
+  if (plan.slotMoves.length) parts.push(`${plan.slotMoves.length} crew slot(s) moved with them.`);
+  if (plan.clashes.length) parts.push(`Not moved -- rebook: ${plan.clashes.map((c) => `${c.name} ${c.date} ${c.time} (busy on ${c.with} on ${c.new_date})`).join('; ')}.`);
+  return parts.join(' ') || null;
+}
+
+// The delay asked for, checked, and what it would do.
+async function readDelay(conn, p, body) {
+  const phaseId = idOrNull(body.phase_id);
+  const [[ph]] = await conn.query(`${PHASE_SELECT} WHERE ph.id = ? AND ph.project_id = ?`, [phaseId || 0, p.id]);
+  if (!ph) return { error: 'Choose the phase that was delayed.' };
+  const lostFrom = body.lost_from;
+  const lostTo = body.lost_to || body.lost_from;
+  if (!isDate(lostFrom) || !isDate(lostTo)) return { error: 'Enter the day(s) not worked.' };
+  if (lostTo < lostFrom) return { error: 'The last day lost is before the first.' };
+  if (lostFrom < dayText(ph.date_from) || lostTo > dayText(ph.date_to)) {
+    return { error: `The days lost must be within ${ph.work_type} (${rangeText(ph.date_from, ph.date_to)}).` };
+  }
+  const lostDays = daysDiff(lostFrom, lostTo) + 1;
+  const shift = body.shift_days === '' || body.shift_days == null ? lostDays : Number(body.shift_days);
+  if (!Number.isInteger(shift) || shift < 1 || shift > 90) return { error: 'Push back by 1 to 90 days.' };
+  const plan = await planShift(conn, p.id, { cutoff: lostFrom, days: shift, fromOrder: Number(ph.work_order) });
+  const oldFrom = dayText(p.date_from);
+  const oldTo = dayText(p.date_to || p.date_from);
+  let newTo = oldTo;
+  for (const m of plan.phaseMoves) if (m.new_to > newTo) newTo = m.new_to;
+  for (const m of plan.slotMoves) if (m.new_date > newTo) newTo = m.new_date;
+  return { ph, lostFrom, lostTo, lostDays, shift, plan, oldFrom, oldTo, newTo, needsApproval: newTo > oldTo };
+}
+const delaySummary = (d) => ({
+  work_type: d.ph.work_type, lost_from: d.lostFrom, lost_to: d.lostTo, lost_days: d.lostDays, shift_days: d.shift,
+  old_date_from: d.oldFrom, old_date_to: d.oldTo, new_date_from: d.oldFrom, new_date_to: d.newTo, needs_approval: d.needsApproval,
+  phase_moves: d.plan.phaseMoves, slot_moves: d.plan.slotMoves, clashes: d.plan.clashes,
+});
+
+async function reasonOf(reasonId) {
+  if (!idOrNull(reasonId)) return null;
+  const [[reason]] = await pool.query("SELECT id, name FROM reasons WHERE id = ? AND is_active = 1 AND reason_type = 'Reschedule'", [reasonId]);
+  return reason || null;
+}
+
+router.post('/projects/:id/delays/preview', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  try {
+    const p = await projectOr404(req, res);
+    if (!p) return;
+    const d = await readDelay(pool, p, req.body || {});
+    if (d.error) return errorOut(res, 400, d.error);
+    res.json(delaySummary(d));
+  } catch (err) { next(err); }
+});
+
+// Record a delay. Inside the current timeline it is applied now; past the end date it waits for the SBU
+// like a reschedule, and moves only once approved (the plan is worked out again then).
+router.post('/projects/:id/delays', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const p = await projectOr404(req, res);
+    if (!p) return;
+    if (['done', 'cancelled'].includes(p.status)) return errorOut(res, 409, `This project is ${p.status}.`);
+    const reason = await reasonOf(req.body?.reason_id);
+    if (!reason) return errorOut(res, 400, 'Choose the reason for the delay (Lookups > Reasons, type Reschedule).');
+    const [[open]] = await conn.query("SELECT id FROM installation_reschedule_requests WHERE project_id = ? AND status = 'for_approval'", [p.id]);
+    if (open) return errorOut(res, 409, 'A reschedule or delay of this project is already waiting for the SBU -- it has to be decided or cancelled first.');
+    await conn.beginTransaction();
+    await conn.query('SELECT id FROM installation_projects WHERE id = ? FOR UPDATE', [p.id]);
+    const d = await readDelay(conn, p, req.body || {});
+    if (d.error) { await conn.rollback(); return errorOut(res, 400, d.error); }
+    const row = {
+      project_id: p.id, kind: 'delay', phase_id: d.ph.id, work_type_name: d.ph.work_type, lost_from: d.lostFrom, lost_to: d.lostTo,
+      shift_days: d.shift, old_date_from: d.oldFrom, old_date_to: d.oldTo, new_date_from: d.oldFrom, new_date_to: d.newTo,
+      reason_id: reason.id, reason_name: reason.name, remarks: trunc(req.body?.remarks, 1000), requested_by_user_id: req.user.id,
+    };
+    if (!d.needsApproval) {
+      const note = await applyShift(conn, d.plan);
+      await conn.query('INSERT INTO installation_reschedule_requests SET ?', [{
+        ...row, status: 'approved', decided_by_user_id: req.user.id, decided_at: new Date(),
+        decision_note: 'Within the timeline -- applied by the planner', result_note: note,
+      }]);
+      await conn.commit();
+      return res.status(201).json({ applied: true, result_note: note });
+    }
+    const [ins] = await conn.query('INSERT INTO installation_reschedule_requests SET ?', [row]);
+    await conn.commit();
+    const [[r]] = await pool.query(`${RESCHEDULE_SELECT} WHERE r.id = ?`, [ins.insertId]);
+    insertFor(await deciders(r.department_id), {
+      type: 'installation_reschedule',
+      title: `Delay for approval: ${p.project_no}${r.job_order_no ? ` (${r.job_order_no})` : ''}`,
+      message: `${d.ph.work_type} not worked ${rangeText(d.lostFrom, d.lostTo)} · ${reason.name} · end ${dayText(d.oldTo)} -> ${d.newTo}`,
+      relatedType: 'installation_project', relatedId: p.id,
+    }, req.user.id).catch(() => {});
+    res.status(201).json({ applied: false, id: ins.insertId });
+  } catch (err) { await conn.rollback().catch(() => {}); next(err); } finally { conn.release(); }
+});
+
+// What a drag would carry along when its phases and crew move with it (by the start's shift).
+router.post('/projects/:id/reschedules/preview', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
+  try {
+    const p = await projectOr404(req, res);
+    if (!p) return;
+    const { new_date_from: from, new_date_to: to } = req.body || {};
+    if (!isDate(from) || !isDate(to) || !p.date_from) return res.json({ phase_moves: [], slot_moves: [], clashes: [], days: 0 });
+    const days = daysDiff(p.date_from, from);
+    const plan = await planShift(pool, p.id, { cutoff: null, days, fromOrder: null });
+    const outside = plan.phaseMoves.filter((m) => m.new_from < from || m.new_to > to);
+    res.json({ days, phase_moves: days ? plan.phaseMoves : [], slot_moves: plan.slotMoves, clashes: plan.clashes, outside });
   } catch (err) { next(err); }
 });
 
@@ -917,9 +1215,10 @@ router.post('/projects/:id/reschedules', requireAuth, requirePermission(ROUTE, '
     if (open) return errorOut(res, 409, 'A reschedule of this project is already waiting for the SBU -- cancel it first to ask for different dates.');
     const [ins] = await pool.query(
       `INSERT INTO installation_reschedule_requests
-         (project_id, old_date_from, old_date_to, new_date_from, new_date_to, reason_id, reason_name, remarks, requested_by_user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [p.id, p.date_from, p.date_to || p.date_from, from, to, reason.id, reason.name, trunc(req.body?.remarks, 1000), req.user.id]);
+         (project_id, old_date_from, old_date_to, new_date_from, new_date_to, reason_id, reason_name, remarks, requested_by_user_id, move_phases)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [p.id, p.date_from, p.date_to || p.date_from, from, to, reason.id, reason.name, trunc(req.body?.remarks, 1000), req.user.id,
+        bool(req.body?.move_phases) ? 1 : 0]);
     const [[row]] = await pool.query(`${RESCHEDULE_SELECT} WHERE r.id = ?`, [ins.insertId]);
     insertFor(await deciders(row.department_id), {
       type: 'installation_reschedule',
@@ -949,8 +1248,24 @@ async function decide(req, res, verdict) {
     await conn.query(
       'UPDATE installation_reschedule_requests SET status = ?, decided_by_user_id = ?, decided_at = NOW(), decision_note = ? WHERE id = ?',
       [verdict, req.user.id, note, r.id]);
+    let resultNote = null;
     if (verdict === 'approved') {
-      await conn.query('UPDATE installation_projects SET date_from = ?, date_to = ? WHERE id = ?', [r.new_date_from, r.new_date_to, r.project_id]);
+      let newFrom = dayText(r.new_date_from);
+      let newTo = dayText(r.new_date_to);
+      if (r.kind === 'delay') {
+        // Worked out again now: the crew may have changed since it was asked.
+        const [[p]] = await conn.query('SELECT * FROM installation_projects WHERE id = ? FOR UPDATE', [r.project_id]);
+        const d = await readDelay(conn, p, { phase_id: r.phase_id, lost_from: dayText(r.lost_from), lost_to: dayText(r.lost_to), shift_days: r.shift_days });
+        if (d.error) { await conn.rollback(); return errorOut(res, 409, `This delay no longer fits the project (${d.error}) -- reject it and record it again.`); }
+        resultNote = await applyShift(conn, d.plan);
+        newFrom = dayText(p.date_from);
+        if (d.newTo > newTo) newTo = d.newTo;
+      } else if (r.move_phases) {
+        const days = daysDiff(r.old_date_from, r.new_date_from);
+        if (days) resultNote = await applyShift(conn, await planShift(conn, r.project_id, { cutoff: null, days, fromOrder: null }));
+      }
+      await conn.query('UPDATE installation_projects SET date_from = ?, date_to = ? WHERE id = ?', [newFrom, newTo, r.project_id]);
+      await conn.query('UPDATE installation_reschedule_requests SET new_date_from = ?, new_date_to = ?, result_note = ? WHERE id = ?', [newFrom, newTo, resultNote, r.id]);
     }
     await conn.commit();
     if (verdict !== 'cancelled') {
@@ -1027,7 +1342,10 @@ router.get('/categories', requireAuth, requirePermission(CAT_ROUTE, 'can_view'),
       `SELECT c.*, (SELECT COUNT(*) FROM installation_projects p WHERE p.category_id = c.id) AS project_count
          FROM installation_categories c ORDER BY c.name`);
     const [items] = await pool.query('SELECT * FROM installation_checklist_items ORDER BY category_id, sort_order, id');
-    res.json(cats.map((c) => ({ ...c, items: items.filter((i) => i.category_id === c.id) })));
+    const [types] = await pool.query(
+      `SELECT t.*, (SELECT COUNT(*) FROM installation_project_phases ph WHERE ph.work_type_id = t.id) AS phase_count
+         FROM installation_work_types t ORDER BY t.category_id, t.sort_order, t.name`);
+    res.json(cats.map((c) => ({ ...c, items: items.filter((i) => i.category_id === c.id), work_types: types.filter((t) => t.category_id === c.id) })));
   } catch (err) { next(err); }
 });
 
@@ -1044,6 +1362,9 @@ router.post('/categories', requireAuth, requirePermission(CAT_ROUTE, 'can_add'),
     const r = readCategory(req.body || {});
     if (r.error) return errorOut(res, 400, r.error);
     const [ins] = await pool.query('INSERT INTO installation_categories SET ?', [r.values]);
+    // A new category starts with the usual two kinds of work; delete or add to them after.
+    await pool.query('INSERT INTO installation_work_types (category_id, name, color, sort_order) VALUES ?',
+      [[[ins.insertId, 'Assembling', '#ffff00', 1], [ins.insertId, 'Installation', '#f4b183', 2]]]);
     res.status(201).json({ id: ins.insertId });
   } catch (err) { if (!dupName(err, res)) next(err); }
 });
@@ -1105,6 +1426,52 @@ router.put('/checklist-items/:itemId', requireAuth, requirePermission(CAT_ROUTE,
 router.delete('/checklist-items/:itemId', requireAuth, requirePermission(CAT_ROUTE, 'can_delete'), async (req, res, next) => {
   try {
     await pool.query('DELETE FROM installation_checklist_items WHERE id = ?', [req.params.itemId]);
+    res.status(204).send();
+  } catch (err) { next(err); }
+});
+
+// Work types (2026-11-11): the kinds of work a category's projects are split into -- Assembling,
+// Installation, ... Order decides which may start first; colour is the block's on the Day view.
+function readWorkType(body) {
+  const name = trunc(body.name, 100);
+  if (!name) return { error: 'Enter the work name (e.g. Assembling).' };
+  const color = /^#[0-9a-f]{6}$/i.test(String(body.color || '')) ? String(body.color).toLowerCase() : '#b4c7e7';
+  const sort = Number(body.sort_order);
+  return {
+    values: {
+      name, color, sort_order: Number.isInteger(sort) && sort >= 0 ? sort : 0,
+      is_active: body.is_active === undefined || bool(body.is_active) ? 1 : 0,
+    },
+  };
+}
+const dupWorkType = (err, res) => (err.code === 'ER_DUP_ENTRY' ? (errorOut(res, 409, 'This category already has work by that name.'), true) : false);
+
+router.post('/categories/:id/work-types', requireAuth, requirePermission(CAT_ROUTE, 'can_edit'), async (req, res, next) => {
+  try {
+    const r = readWorkType(req.body || {});
+    if (r.error) return errorOut(res, 400, r.error);
+    const [[c]] = await pool.query('SELECT id FROM installation_categories WHERE id = ?', [req.params.id]);
+    if (!c) return errorOut(res, 404, 'Category not found');
+    const [ins] = await pool.query('INSERT INTO installation_work_types SET ?', [{ ...r.values, category_id: c.id }]);
+    res.status(201).json({ id: ins.insertId });
+  } catch (err) { if (!dupWorkType(err, res)) next(err); }
+});
+
+router.put('/work-types/:typeId', requireAuth, requirePermission(CAT_ROUTE, 'can_edit'), async (req, res, next) => {
+  try {
+    const r = readWorkType(req.body || {});
+    if (r.error) return errorOut(res, 400, r.error);
+    const [u] = await pool.query('UPDATE installation_work_types SET ? WHERE id = ?', [r.values, req.params.typeId]);
+    if (!u.affectedRows) return errorOut(res, 404, 'Work type not found');
+    res.json({ ok: true });
+  } catch (err) { if (!dupWorkType(err, res)) next(err); }
+});
+
+router.delete('/work-types/:typeId', requireAuth, requirePermission(CAT_ROUTE, 'can_delete'), async (req, res, next) => {
+  try {
+    const [[used]] = await pool.query('SELECT COUNT(*) AS n FROM installation_project_phases WHERE work_type_id = ?', [req.params.typeId]);
+    if (used.n) return errorOut(res, 409, `${used.n} project phase(s) use this work -- set it inactive instead.`);
+    await pool.query('DELETE FROM installation_work_types WHERE id = ?', [req.params.typeId]);
     res.status(204).send();
   } catch (err) { next(err); }
 });

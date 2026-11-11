@@ -3,7 +3,7 @@ import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Modal from '../components/Modal';
 import { useAuth } from '../context/useAuth';
-import { Check, errorOf } from './installation/common';
+import { Check, WorkChip, errorOf } from './installation/common';
 
 // Production > Installation Categories -- PLANNER's Project Categories with their quality checklists.
 // A project takes its checklist from its category; each project ticks its own copy.
@@ -47,15 +47,46 @@ export default function InstallationCategories() {
                   style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', textAlign: 'left', color: 'inherit' }}>
                   <strong style={{ fontSize: 16 }}>{openId === c.id ? '▾' : '▸'} {c.name}</strong>
                   {!c.is_active && <span className="badge badge-muted" style={{ marginLeft: 6 }}>Inactive</span>}
-                  <span className="muted" style={{ fontSize: 12, marginLeft: 8 }}>{c.items.length} checklist item(s) · {c.project_count} project(s)</span>
+                  <span className="muted" style={{ fontSize: 12, marginLeft: 8 }}>{c.items.length} checklist item(s) · {(c.work_types || []).length} work type(s) · {c.project_count} project(s)</span>
                   {c.description && <div className="muted" style={{ fontSize: 13 }}>{c.description}</div>}
                 </button>
                 <div style={{ display: 'flex', gap: 6 }}>
+                  {canEdit && <button type="button" className="btn btn-sm" onClick={() => setModal({ kind: 'work', category: c, row: null })}>+ Work Type</button>}
                   {canEdit && <button type="button" className="btn btn-sm" onClick={() => setModal({ kind: 'item', category: c, row: null })}>+ Checklist Item</button>}
                   {canEdit && <button type="button" className="btn btn-sm" onClick={() => setModal({ kind: 'category', row: c })}>Edit</button>}
                   {canDelete && <button type="button" className="btn btn-sm btn-danger" onClick={() => del(`${API}/categories/${c.id}`, `category "${c.name}" and its checklist`)}>Delete</button>}
                 </div>
               </div>
+              {openId === c.id && (
+                <div style={{ marginTop: 10 }}>
+                  <strong style={{ fontSize: 13 }}>Work Types</strong>
+                  <span className="muted" style={{ fontSize: 12 }}> -- the phases a project's timeline is split into; a later one in the order cannot start before an earlier one</span>
+                  {(c.work_types || []).length === 0 ? <p className="muted" style={{ margin: '4px 0 0' }}>None -- this category's projects book the crew without saying the work.</p> : (
+                    <div className="table-wrap" style={{ marginTop: 6 }}>
+                      <table>
+                        <thead><tr><th style={{ width: 60 }}>Order</th><th>Work</th><th>Active</th><th>Used</th>{(canEdit || canDelete) && <th style={{ width: 130 }} />}</tr></thead>
+                        <tbody>
+                          {c.work_types.map((t) => (
+                            <tr key={t.id}>
+                              <td>{t.sort_order}</td>
+                              <td><WorkChip name={t.name} color={t.color} /></td>
+                              <td>{t.is_active ? 'Yes' : <span className="muted">No</span>}</td>
+                              <td>{t.phase_count ? `${t.phase_count} project(s)` : <span className="muted">—</span>}</td>
+                              {(canEdit || canDelete) && (
+                                <td style={{ whiteSpace: 'nowrap' }}>
+                                  {canEdit && <button type="button" className="btn btn-sm" onClick={() => setModal({ kind: 'work', category: c, row: t })}>Edit</button>}{' '}
+                                  {canDelete && <button type="button" className="btn btn-sm btn-danger" onClick={() => del(`${API}/work-types/${t.id}`, `work type "${t.name}"`)}>Delete</button>}
+                                </td>
+                              )}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  <strong style={{ fontSize: 13, display: 'block', marginTop: 12 }}>Quality Checklist</strong>
+                </div>
+              )}
               {openId === c.id && (
                 c.items.length === 0 ? <p className="muted">No checklist items yet.</p> : (
                   <div className="table-wrap" style={{ marginTop: 10 }}>
@@ -86,11 +117,57 @@ export default function InstallationCategories() {
         </div>
       )}
       {modal?.kind === 'category' && <CategoryModal row={modal.row} onClose={() => setModal(null)} onSaved={() => { setModal(null); load(); }} />}
+      {modal?.kind === 'work' && (
+        <WorkTypeModal category={modal.category} row={modal.row} onClose={() => setModal(null)}
+          onSaved={() => { setOpenId(modal.category.id); setModal(null); load(); }} />
+      )}
       {modal?.kind === 'item' && (
         <ItemModal category={modal.category} row={modal.row} onClose={() => setModal(null)}
           onSaved={() => { setOpenId(modal.category.id); setModal(null); load(); }} />
       )}
     </div>
+  );
+}
+
+// A kind of work (2026-11-11): its name, its order (which may start first) and its colour on the Day
+// view and the day report.
+function WorkTypeModal({ category, row, onClose, onSaved }) {
+  const list = category.work_types || [];
+  const nextOrder = list.reduce((m, t) => Math.max(m, Number(t.sort_order) || 0), 0) + 1;
+  const [form, setForm] = useState({
+    name: row?.name || '', color: row?.color || '#b4c7e7', sort_order: row ? row.sort_order : nextOrder, is_active: row ? !!row.is_active : true,
+  });
+  const [error, setError] = useState('');
+  async function save(e) {
+    e.preventDefault();
+    try {
+      if (row) await api.put(`${API}/work-types/${row.id}`, form); else await api.post(`${API}/categories/${category.id}/work-types`, form);
+      onSaved();
+    } catch (err) { setError(errorOf(err)); }
+  }
+  return (
+    <Modal title={`${row ? 'Edit' : 'Add'} Work Type · ${category.name}`} onClose={onClose}>
+      {error && <div className="error-banner">{error}</div>}
+      <form onSubmit={save}>
+        <div className="field"><label>Work *</label><input required maxLength={100} placeholder="e.g. Assembling" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
+        <div className="filter-grid">
+          <div className="field">
+            <label>Order</label>
+            <input type="number" min={0} value={form.sort_order} onChange={(e) => setForm({ ...form, sort_order: e.target.value })} />
+            <div className="muted" style={{ fontSize: 12 }}>Lower goes first: Assembling 1, Installation 2. Same number = no order between them.</div>
+          </div>
+          <div className="field">
+            <label>Colour</label>
+            <input type="color" value={form.color} onChange={(e) => setForm({ ...form, color: e.target.value })} style={{ height: 36, padding: 2 }} />
+          </div>
+        </div>
+        <Check checked={form.is_active} onChange={(v) => setForm({ ...form, is_active: v })} style={{ display: 'flex' }}>Active (offered on projects)</Check>
+        <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+          <button type="submit" className="btn btn-primary">Save</button>
+          <button type="button" className="btn" onClick={onClose}>Cancel</button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
