@@ -183,18 +183,20 @@ export default function SupplierView() {
                     </select>
                   </th>
                   <th>
-                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', fontWeight: 400 }}>
-                      <select value={dateMode} style={{ flex: '0 0 auto' }} onChange={(e) => { setDateMode(e.target.value); setPage(1); }}>
+                    {/* Fixed widths: a header-row select/input otherwise stretches to the cell and the
+                        date boxes spill into the next column. */}
+                    <div style={{ display: 'flex', gap: 6, alignItems: 'center', fontWeight: 400, whiteSpace: 'nowrap' }}>
+                      <select value={dateMode} style={{ width: 120, flex: '0 0 120px' }} onChange={(e) => { setDateMode(e.target.value); setPage(1); }}>
                         <option value="as of">As of</option>
                         <option value="period from">Period from</option>
                       </select>
                       {dateMode === 'period from' && (
                         <>
-                          <input type="date" value={filters.date_from} onChange={(e) => setFilter('date_from', e.target.value)} title="From" />
+                          <input type="date" style={{ width: 140, flex: '0 0 140px' }} value={filters.date_from} onChange={(e) => setFilter('date_from', e.target.value)} title="From" />
                           <span className="muted">to</span>
                         </>
                       )}
-                      <input type="date" value={filters.as_of} onChange={(e) => setFilter('as_of', e.target.value)}
+                      <input type="date" style={{ width: 140, flex: '0 0 140px' }} value={filters.as_of} onChange={(e) => setFilter('as_of', e.target.value)}
                         title={dateMode === 'period from' ? 'To' : 'As of'} />
                     </div>
                   </th>
