@@ -228,14 +228,6 @@ function dateRangeFilter(where, params, query, column) {
   if (to && YMD.test(to)) { where.push(`${column} <= ?`); params.push(to); }
 }
 
-// format=xlsx on either list: every row under the current filters (no paging), as a workbook.
-const LIST_COLUMNS = [
-  { header: 'TO No.', key: 'to_no', width: 16 },
-  { header: 'Withdraw From', key: 'withdraw_from_name', width: 24 },
-  { header: 'Transfer To', key: 'transfer_to_name', width: 24 },
-  { header: 'Requestor', key: 'requestor_name', width: 26 },
-];
-
 // Paginated: this list holds 41,001 fulfilments after the transfer-order migration, and it
 // used to return every one of them, with a second query fanning out to all their lines to
 // derive a status.
@@ -248,19 +240,35 @@ router.get('/item-fulfillments', requireAuth, requirePermission(FULFILLMENT_ROUT
     const asOf = locationRequestorFilters(where, params, req.query, 't');
     if (asOf) { where.push('f.date_created <= ?'); params.push(asOf); }
     dateRangeFilter(where, params, req.query, 'f.date_created');
-    if (search) { where.push('(f.fulfillment_no LIKE ? OR t.to_no LIKE ?)'); params.push(`%${search}%`, `%${search}%`); }
+    // One row per item fulfilled, with the same columns as the Saved Item Receipts list
+    // (asked 2026-11-11): the search also reaches the item, its description and the job order.
+    if (search) {
+      where.push('(f.fulfillment_no LIKE ? OR t.to_no LIKE ? OR i.item_code LIKE ? OR i.display_name LIKE ? OR jo.job_order_no LIKE ?)');
+      for (let n = 0; n < 5; n += 1) params.push(`%${search}%`);
+    }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-    const baseFrom = `FROM item_fulfillments f
+    const baseFrom = `FROM item_fulfillment_lines fl
+       JOIN item_fulfillments f ON f.id = fl.item_fulfillment_id
+       JOIN transfer_orders t ON t.id = f.transfer_order_id
+       LEFT JOIN transfer_order_lines tol ON tol.id = fl.transfer_order_line_id
+       LEFT JOIN inventories i ON i.id = fl.item_id
+       LEFT JOIN job_orders jo ON jo.id = COALESCE(tol.job_order_id, t.job_order_id)`;
+    // The count needs the item / job order joins only when the search reads them.
+    const countFrom = search ? baseFrom : `FROM item_fulfillment_lines fl
+       JOIN item_fulfillments f ON f.id = fl.item_fulfillment_id
        JOIN transfer_orders t ON t.id = f.transfer_order_id`;
-    const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total ${baseFrom} ${whereSql}`, params);
+    const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total ${countFrom} ${whereSql}`, params);
 
     const pageNum = Math.max(1, Number(page) || 1);
     const limitNum = Math.min(100, Math.max(1, Number(limit) || 10));
     const offset = (pageNum - 1) * limitNum;
 
     const [rows] = await pool.query(
-      `SELECT f.id, f.fulfillment_no, f.date_created, f.memo, t.to_no,
+      `SELECT f.id, fl.id AS line_id, f.fulfillment_no, f.date_created, t.to_no, t.date_created AS to_date,
+              -- The TO's memo says which job it is for; the fulfilment's own when the TO has none.
+              COALESCE(NULLIF(t.memo, ''), f.memo) AS memo, jo.job_order_no,
+              i.item_code, i.display_name AS item_name, fl.qty_fulfilled, COALESCE(NULLIF(tol.unit, ''), tol.uom) AS units,
               wf.location_name AS withdraw_from_name, tt.location_name AS transfer_to_name,
               CONCAT(e.first_name, ' ', e.last_name) AS requestor_name
        ${baseFrom}
@@ -268,43 +276,34 @@ router.get('/item-fulfillments', requireAuth, requirePermission(FULFILLMENT_ROUT
        LEFT JOIN locations tt ON tt.id = t.transfer_to_location_id
        LEFT JOIN employees e ON e.id = t.requestor_id
        ${whereSql}
-       ORDER BY f.id DESC
+       ORDER BY fl.item_fulfillment_id DESC, fl.id
        ${xlsx ? '' : 'LIMIT ? OFFSET ?'}`,
       xlsx ? params : [...params, limitNum, offset]
     );
-
-    if (rows.length) {
-      const lineRows = [];
-      const ids = rows.map((r) => r.id);
-      for (let i = 0; i < ids.length; i += 5000) {
-        const [chunk] = await pool.query(
-          'SELECT item_fulfillment_id, qty_fulfilled, received FROM item_fulfillment_lines WHERE item_fulfillment_id IN (?)',
-          [ids.slice(i, i + 5000)]
-        );
-        lineRows.push(...chunk);
-      }
-      const linesByFulfillment = new Map();
-      for (const l of lineRows) {
-        if (!linesByFulfillment.has(l.item_fulfillment_id)) linesByFulfillment.set(l.item_fulfillment_id, []);
-        linesByFulfillment.get(l.item_fulfillment_id).push(l);
-      }
-      for (const r of rows) {
-        const lines = linesByFulfillment.get(r.id) || [];
-        r.status = lines.length && lines.every((l) => Number(l.received || 0) >= Number(l.qty_fulfilled || 0)) ? 'CLOSED' : 'OPEN';
-      }
-    }
     if (xlsx) {
       await sendXlsx(res, {
         filename: 'item-fulfillments.xlsx',
         sheet: 'Item Fulfillments',
         columns: [
-          { header: 'Item Fulfillment #', key: 'fulfillment_no', width: 18 },
-          { header: 'Date Created', key: 'date', width: 13 },
-          ...LIST_COLUMNS,
-          { header: 'Status', key: 'status', width: 10 },
-          { header: 'Memo', key: 'memo', width: 50 },
+          { header: 'IF #', key: 'fulfillment_no', width: 14 },
+          { header: 'IF Date', key: 'date', width: 12 },
+          { header: 'TO #', key: 'to_no', width: 14 },
+          { header: 'TO Date', key: 'to_day', width: 12 },
+          { header: 'JO #', key: 'job_order_no', width: 18 },
+          { header: 'Memo', key: 'memo', width: 44 },
+          { header: 'Item', key: 'item_code', width: 36 },
+          { header: 'Description', key: 'item_name', width: 36 },
+          { header: 'Qty', key: 'qty', width: 10 },
+          { header: 'Units', key: 'units', width: 8 },
+          { header: 'From Location', key: 'withdraw_from_name', width: 22 },
+          { header: 'To Location', key: 'transfer_to_name', width: 22 },
+          { header: 'Requestor', key: 'requestor_name', width: 24 },
         ],
-        rows: rows.map((r) => ({ ...r, date: day(r.date_created), memo: r.memo || '' })),
+        rows: rows.map((r) => ({
+          ...r, date: day(r.date_created), to_day: day(r.to_date), memo: r.memo || '', job_order_no: r.job_order_no || '',
+          item_code: r.item_code || '', item_name: r.item_name || '', qty: r.qty_fulfilled == null ? '' : Number(r.qty_fulfilled), units: r.units || '',
+          requestor_name: r.requestor_name || '',
+        })),
       });
       return;
     }

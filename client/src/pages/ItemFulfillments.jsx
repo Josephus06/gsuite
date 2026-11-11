@@ -106,7 +106,7 @@ export default function ItemFulfillments() {
         <div className="filter-grid">
           <div className="field">
             <label>General Searching</label>
-            <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="IF No. or TO No..." />
+            <SearchInput value={search} onChange={(e) => setSearch(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && runSearch()} placeholder="IF No., TO No., JO No. or item..." />
           </div>
           <div className="field">
             <label>Withdraw From</label>
@@ -169,31 +169,40 @@ export default function ItemFulfillments() {
             <table className="responsive-cards">
               <thead>
                 <tr>
-                  <th>Item Fulfillment #</th>
-                  <th>Date Created</th>
-                  <th>TO No.</th>
-                  <th>Withdraw From</th>
-                  <th>Transfer To</th>
-                  <th>Requestor</th>
-                  <th>Status</th>
+                  <th>IF #</th>
+                  <th>IF Date</th>
+                  <th>TO #</th>
+                  <th>TO Date</th>
+                  <th>JO #</th>
                   <th>Memo</th>
+                  <th>Item</th>
+                  <th>Description</th>
+                  <th style={{ textAlign: 'right' }}>Qty</th>
+                  <th>Units</th>
+                  <th>From Location</th>
+                  <th>To Location</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 && (
-                  <tr><td colSpan={9} className="muted" style={{ textAlign: 'center', padding: 20 }}>No item fulfillments found.</td></tr>
+                  <tr><td colSpan={13} className="muted" style={{ textAlign: 'center', padding: 20 }}>No item fulfillments found.</td></tr>
                 )}
                 {rows.map((row) => (
-                  <tr key={row.id}>
-                    <td data-label="Item Fulfillment #">{row.fulfillment_no}</td>
-                    <td data-label="Date Created">{formatDate(row.date_created)}</td>
-                    <td data-label="TO No.">{row.to_no}</td>
-                    <td data-label="Withdraw From">{row.withdraw_from_name}</td>
-                    <td data-label="Transfer To">{row.transfer_to_name}</td>
-                    <td data-label="Requestor">{row.requestor_name || '—'}</td>
-                    <td data-label="Status">{row.status}</td>
+                  // One row per item fulfilled, the same columns as Saved Item Receipts (asked 2026-11-11).
+                  <tr key={row.line_id}>
+                    <td data-label="IF #">{row.fulfillment_no}</td>
+                    <td data-label="IF Date">{formatDate(row.date_created)}</td>
+                    <td data-label="TO #">{row.to_no}</td>
+                    <td data-label="TO Date">{formatDate(row.to_date)}</td>
+                    <td data-label="JO #">{row.job_order_no || '—'}</td>
                     <td data-label="Memo">{row.memo}</td>
+                    <td data-label="Item">{row.item_code}</td>
+                    <td data-label="Description">{row.item_name}</td>
+                    <td data-label="Qty" style={{ textAlign: 'right' }}>{row.qty_fulfilled == null ? '' : Number(row.qty_fulfilled).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}</td>
+                    <td data-label="Units">{row.units}</td>
+                    <td data-label="From Location">{row.withdraw_from_name}</td>
+                    <td data-label="To Location">{row.transfer_to_name}</td>
                     <td><Link className="btn btn-sm btn-primary" to={`/transfer-orders/item-fulfillments/${row.id}`}>View</Link></td>
                   </tr>
                 ))}
@@ -204,7 +213,7 @@ export default function ItemFulfillments() {
         {!loading && (
           <>
             <div className="muted" style={{ marginTop: 12 }}>
-              {total.toLocaleString()} item fulfillment{total === 1 ? '' : 's'}
+              {total.toLocaleString()} item{total === 1 ? '' : 's'} fulfilled
             </div>
             <Pagination page={page} totalPages={Math.max(1, Math.ceil(total / limit))} onChange={setPage} />
           </>
