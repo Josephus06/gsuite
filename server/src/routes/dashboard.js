@@ -963,7 +963,7 @@ async function headOfficeIncentive(month) {
     const r = await buildCollectionIncentive({ mode: 'monthly', month, ...(loc ? { location_id: loc.id } : {}) });
     return {
       month: r.month, collected: r.result.total_collected,
-      monthly_target: r.settings.monthly_target, pct_of_target: r.result.pct_of_target,
+      monthly_target: r.result.monthly_target, pct_of_target: r.result.pct_of_target,
       qualify_at: r.result.qualify_at, qualified: r.result.qualified,
       lines: r.result.lines.map((l) => ({ key: l.key, label: l.label, target_pct: l.target_pct, actual_pct: l.actual_pct })),
     };

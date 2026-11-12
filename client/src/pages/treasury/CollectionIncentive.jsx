@@ -22,6 +22,7 @@ const money = (v) => {
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 };
 const pct = (v, d = 1) => `${(Number(v || 0) * 100).toFixed(d)}%`;
+const displayDay = (v) => (v ? new Date(`${v}T00:00:00`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '');
 const R = { textAlign: 'right' };
 
 function defaults() {
@@ -45,13 +46,11 @@ const params = (f) => ({
 // Percentages are edited as whole-number percents (29.5) and stored as fractions (0.295).
 const toForm = (s) => ({
   ...Object.fromEntries(BUCKET_FIELDS.map((b) => [b.col, +(s[b.col] * 100).toFixed(4)])),
-  monthly_target: s.monthly_target,
   incentive_rate: +(s.incentive_rate * 100).toFixed(4),
   qualifier_pct: +(s.qualifier_pct * 100).toFixed(4),
 });
 const fromForm = (f) => ({
   ...Object.fromEntries(BUCKET_FIELDS.map((b) => [b.col, Number(f[b.col]) / 100])),
-  monthly_target: Number(f.monthly_target),
   incentive_rate: Number(f.incentive_rate) / 100,
   qualifier_pct: Number(f.qualifier_pct) / 100,
 });
@@ -93,7 +92,7 @@ function SetupCard({ year, canEdit, onSaved }) {
         <input type="number" step="any" min="0" value={form[col]} onChange={(e) => setForm({ ...form, [col]: e.target.value })} />
       ) : (
         <div style={{ padding: '8px 0', fontWeight: 600 }}>
-          {col === 'monthly_target' ? money(settings.monthly_target) : `${form[col]}${suffix || ''}`}
+          {`${form[col]}${suffix || ''}`}
         </div>
       )}
     </div>
@@ -129,7 +128,8 @@ function SetupCard({ year, canEdit, onSaved }) {
         </div>
       )}
       <div className="filter-grid">
-        {field('monthly_target', 'Monthly target')}
+        {/* Monthly target is no longer set up (2026-11-12): it is the AR Aging at the end of the month before. */}
+        <div className="field"><label>Monthly target</label><div className="muted" style={{ padding: '8px 0' }}>AR Aging total as of the end of the previous month</div></div>
         {field('qualifier_pct', 'Qualifies at (% of monthly target)', '%')}
         {field('incentive_rate', 'Incentive rate (% of avg monthly collection)', '%')}
       </div>
@@ -299,7 +299,7 @@ export default function CollectionIncentive() {
               <div className="item"><div className="label">Actual collection ({r.months} month{r.months === 1 ? '' : 's'})</div><div className="value">{money(r.total_collected)}</div></div>
               {data.mode === 'annual' && <div className="item"><div className="label">Average monthly collection</div><div className="value">{money(r.avg_monthly_collection)}</div></div>}
               <div className="item"><div className="label">Base incentive ({pct(s.incentive_rate, 2)} of {data.mode === 'annual' ? 'avg monthly' : 'the month'})</div><div className="value">{money(r.base_incentive)}</div></div>
-              <div className="item"><div className="label">Monthly target</div><div className="value">{money(s.monthly_target)}</div></div>
+              <div className="item"><div className="label">{data.mode === 'annual' ? 'Monthly target (average of each month’s prior AR Aging)' : `Monthly target (AR Aging as of ${displayDay(data.target_as_of)})`}</div><div className="value">{money(r.monthly_target)}</div></div>
               <div className="item">
                 <div className="label">{pct(r.pct_of_target)} of target — qualifies at {pct(s.qualifier_pct, 0)}</div>
                 <div className="value">{money(r.qualify_at)}</div>
@@ -311,7 +311,7 @@ export default function CollectionIncentive() {
             </div>
             {!r.qualified && (
               <div className="warning-banner" style={{ marginTop: 8 }}>
-                Not qualified: {data.mode === 'annual' ? 'the average month' : 'the month'} collected {money(r.avg_monthly_collection)}, below {pct(s.qualifier_pct, 0)} of the {money(s.monthly_target)} monthly target ({money(r.qualify_at)}). No incentive is due.
+                Not qualified: {data.mode === 'annual' ? 'the average month' : 'the month'} collected {money(r.avg_monthly_collection)}, below {pct(s.qualifier_pct, 0)} of the {money(r.monthly_target)} monthly target ({money(r.qualify_at)}). No incentive is due.
               </div>
             )}
           </div>
@@ -325,13 +325,14 @@ export default function CollectionIncentive() {
               <div className="table-wrap">
                 <table className="responsive-cards">
                   <thead>
-                    <tr><th>Month</th><th style={R}>Collected</th><th style={R}>% of Target</th><th>Qualified</th><th style={R}>Incentive</th></tr>
+                    <tr><th>Month</th><th style={R}>Collected</th><th style={R}>Target (prior AR Aging)</th><th style={R}>% of Target</th><th>Qualified</th><th style={R}>Incentive</th></tr>
                   </thead>
                   <tbody>
                     {data.months.map((m) => (
                       <tr key={m.month}>
                         <td data-label="Month">{m.label}</td>
                         <td data-label="Collected" style={R}>{money(m.collected)}</td>
+                        <td data-label="Target" style={R}>{money(m.monthly_target)}</td>
                         <td data-label="% of Target" style={R}>{pct(m.pct_of_target)}</td>
                         <td data-label="Qualified">
                           <span className={`badge ${m.qualified ? 'badge-success' : 'badge-muted'}`}>{m.qualified ? 'Yes' : 'No'}</span>
@@ -343,7 +344,7 @@ export default function CollectionIncentive() {
                   <tfoot>
                     <tr style={{ fontWeight: 700 }}>
                       <td>Earned ({data.qualified_months} of {data.months.length} months qualified)</td>
-                      <td style={R}>{money(r.total_collected)}</td><td /><td />
+                      <td style={R}>{money(r.total_collected)}</td><td /><td /><td />
                       <td style={R}>{money(data.earned_total)}</td>
                     </tr>
                   </tfoot>
