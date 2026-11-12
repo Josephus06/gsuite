@@ -54,8 +54,8 @@ function Signature({ image, name, role }) {
   );
 }
 
-// The gate pass slip's own sign-offs: its Department Head approves (the note step), HR notes (the
-// approve step), and the guard on duty checks and releases it, with the Time IN / OUT.
+// The gate pass slip's own sign-offs: its Department Head notes it (the note step), the approver
+// approves it (labels swapped 2026-11-12 to match the steps), and the guard on duty checks and releases it, with the Time IN / OUT.
 const phClock = (v) => (v ? new Date(`${String(v).replace(' ', 'T')}Z`).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', timeZone: 'Asia/Manila' }) : '');
 function GatePassSignatures({ doc }) {
   const d = doc.detail || {};
@@ -63,10 +63,10 @@ function GatePassSignatures({ doc }) {
     <>
       <div className="rf-signs">
         <Signature image={doc.owner_signature} name={doc.name || doc.owner_name} role="Personnel" />
-        <Signature image={doc.noted_signature} name={doc.noted_by_name} role="Approved by: Department Head" />
+        <Signature image={doc.noted_signature} name={doc.noted_by_name} role="Noted by: Department Head" />
       </div>
       <div className="rf-signs">
-        <Signature image={doc.approved_signature} name={doc.approved_by_name} role="Noted by: HR Department" />
+        <Signature image={doc.approved_signature} name={doc.approved_by_name} role="Approved by" />
         <Signature name={d.time_out_by_name || d.time_in_by_name} role="Checked & Released by: Security Guard on Duty" />
       </div>
       <div className="rf-row">

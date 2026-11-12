@@ -524,8 +524,9 @@ export default function FormView() {
           <Line label="Name of Personnel">{doc.name || doc.owner_name}</Line>
           <Line label="Department">{doc.department}</Line>
           <Line label="Purpose">{d.purpose}</Line>
-          <Line label="Approved by (Department Head)">{doc.noted_by_name || (doc.status === 'submitted' ? 'Waiting' : null)}</Line>
-          <Line label="Noted by (HR Department)">{doc.approved_by_name || (doc.status === 'noted' ? 'Waiting' : null)}</Line>
+          {/* Noted, then approved -- the form's own order (2026-11-12; the labels were the other way round). */}
+          <Line label="Noted by (Department Head)">{doc.noted_by_name || (doc.status === 'submitted' ? 'Waiting' : null)}</Line>
+          <Line label="Approved by">{doc.approved_by_name || (doc.status === 'noted' ? 'Waiting' : null)}</Line>
           <Line label="Time OUT">{d.time_out ? `${phTime(d.time_out)}${d.time_out_by_name ? ` — released by ${d.time_out_by_name}` : ''}` : null}</Line>
           <Line label="Time IN">{d.time_in ? `${phTime(d.time_in)}${d.time_in_by_name ? ` — by ${d.time_in_by_name}` : ''}` : null}</Line>
           {doc.status === 'approved' && doc.can_record_gate_time && (!d.time_out || !d.time_in) && (
