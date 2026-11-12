@@ -337,7 +337,9 @@ async function loadPrintablePo(id) {
       `SELECT po.*, s.name AS supplier_name, s.supplier_code, s.address AS supplier_address,
               s.tin AS supplier_tin, s.contact_no AS supplier_contact_no, s.email AS supplier_email,
               s.credit_term AS supplier_credit_term,
-              COALESCE(u.display_name, po.prepared_by_name) AS created_by_name, pt.term_name,
+              COALESCE(u.display_name, po.prepared_by_name) AS created_by_name,
+              -- Term as the PO page reads it (2026-11-12): the PO's own, else the supplier's payment term.
+              ${PO_TERM_SELECT},
               sup.display_name AS approved_by_supervisor_name,
               gm.display_name AS approved_by_gm_name,
               parent.po_no AS parent_po_no
@@ -346,7 +348,7 @@ async function loadPrintablePo(id) {
          LEFT JOIN users u ON u.id = po.created_by_user_id
          LEFT JOIN users sup ON sup.id = po.approved_by_supervisor_user_id
          LEFT JOIN users gm ON gm.id = po.approved_by_gm_user_id
-         LEFT JOIN payment_terms pt ON pt.id = po.term_id
+         ${PO_TERM_JOINS}
          ${PARENT_PO_JOIN}
         WHERE po.id = ?`,
       [id]
