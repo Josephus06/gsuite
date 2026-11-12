@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../api/client';
+import { downloadFile } from '../utils/downloadFile';
 import Pagination from '../components/Pagination';
 import LoadingSpinner from '../components/LoadingSpinner';
 import useAutoSearch from '../utils/useAutoSearch';
@@ -32,16 +33,21 @@ export default function AssemblyBuilds() {
   const [locations, setLocations] = useState([]);
   const [customers, setCustomers] = useState([]);
 
-  async function load() {
-    setLoading(true);
-    const params = { page, limit };
+  // The filters as query params -- shared by the list and its Extract.
+  function filterParams() {
+    const params = {};
     if (search) params.search = search;
     if (salesRepId) params.sales_rep_id = salesRepId;
     if (jobLocationId) params.job_location_id = jobLocationId;
     if (customerId) params.customer_id = customerId;
     if (asOf) params.as_of = asOf;
     if (dateMode === 'period' && dateFrom) params.date_from = dateFrom;
-    const { data } = await api.get('/assembly-builds', { params });
+    return params;
+  }
+
+  async function load() {
+    setLoading(true);
+    const { data } = await api.get('/assembly-builds', { params: { ...filterParams(), page, limit } });
     setRows(data.rows);
     setTotal(data.total);
     setLoading(false);
@@ -60,6 +66,15 @@ export default function AssemblyBuilds() {
     load();
   }
   useAutoSearch(search, runSearch);
+
+  // Extract (2026-11-12): every build under the filters, as a workbook.
+  const [extracting, setExtracting] = useState(false);
+  async function extract() {
+    setExtracting(true);
+    try { await downloadFile('/assembly-builds/export', filterParams(), 'assembly-builds.xlsx'); }
+    catch { window.alert('Could not extract the assembly builds.'); }
+    setExtracting(false);
+  }
 
   const totalPages = Math.max(1, Math.ceil(total / limit));
 
@@ -109,7 +124,10 @@ export default function AssemblyBuilds() {
               </div>
             </div>
           </div>
-          <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={runSearch}>Search</button>
+          <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
+            <button className="btn btn-primary" onClick={runSearch}>Search</button>
+            <button className="btn" onClick={extract} disabled={extracting}>{extracting ? 'Extracting...' : 'Extract'}</button>
+          </div>
         </div>
       )}
 

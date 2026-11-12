@@ -6,6 +6,7 @@ const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocatio
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { isNonStockItem } = require('../lib/itemTypes');
 const { deriveOnHand } = require('../lib/stockLedger');
+const { sendXlsx, day } = require('../lib/xlsxExport');
 
 const router = express.Router();
 const ROUTE = '/assembly-builds';
@@ -25,11 +26,11 @@ async function logAudit(conn, { assemblyBuildId, userId, eventType, fieldName = 
 // Mirrors the real system's "Production > Assembly Build" ("Saved Assembly Build")
 // list -- a flat table (no status tabs) with a filter panel, same pattern as the
 // Job Orders list.
-router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
-  try {
+// The list's filters as SQL -- shared by the list and its Extract (2026-11-12).
+async function listFilter(req) {
     const {
       search, sales_rep_id: salesRepId, job_location_id: jobLocationId, customer_id: customerId,
-      as_of: asOf, date_from: dateFrom, page = '1', limit = '10',
+      as_of: asOf, date_from: dateFrom,
     } = req.query;
 
     const where = [];
@@ -49,14 +50,26 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
       params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
     }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    return { whereSql, params };
+}
 
-    const baseFrom = `FROM assembly_builds ab
+const baseFrom = `FROM assembly_builds ab
        JOIN job_orders jo ON jo.id = ab.job_order_id
        LEFT JOIN locations loc ON loc.id = jo.job_location_id
        LEFT JOIN job_types jt ON jt.id = jo.job_type_id
        LEFT JOIN sales_orders so ON so.id = jo.sales_order_id
        LEFT JOIN customers c ON c.id = so.customer_id
        LEFT JOIN employees sr ON sr.id = so.sales_rep_id`;
+
+const LIST_SELECT = `SELECT ab.id, ab.ab_no, ab.date_created, ab.quantity_built, ab.status,
+              jo.job_order_no, jo.description AS job_desc, loc.location_name AS job_location_name,
+              jt.display_name AS job_type_name, c.id AS customer_id, c.name AS customer_name,
+              CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name`;
+
+router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const { page = '1', limit = '10' } = req.query;
+    const { whereSql, params } = await listFilter(req);
 
     const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total ${baseFrom} ${whereSql}`, params);
 
@@ -65,10 +78,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     const offset = (pageNum - 1) * limitNum;
 
     const [rows] = await pool.query(
-      `SELECT ab.id, ab.ab_no, ab.date_created, ab.quantity_built, ab.status,
-              jo.job_order_no, jo.description AS job_desc, loc.location_name AS job_location_name,
-              jt.display_name AS job_type_name, c.id AS customer_id, c.name AS customer_name,
-              CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name
+      `${LIST_SELECT}
        ${baseFrom} ${whereSql}
        ORDER BY ab.id DESC
        LIMIT ? OFFSET ?`,
@@ -77,6 +87,38 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
     res.json({ rows, total, page: pageNum, limit: limitNum });
   } catch (err) {
+    next(err);
+  }
+});
+
+// Extract (2026-11-12): every build under the list's filters, the list's columns. Before /:id.
+router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const { whereSql, params } = await listFilter(req);
+    const [rows] = await pool.query(`${LIST_SELECT} ${baseFrom} ${whereSql} ORDER BY ab.id DESC`, params);
+    await sendXlsx(res, {
+      filename: 'assembly-builds.xlsx',
+      sheet: 'Assembly Builds',
+      columns: [
+        { header: 'AB #', key: 'ab', width: 13 },
+        { header: 'JO #', key: 'jo', width: 18 },
+        { header: 'Date Created', key: 'date', width: 13 },
+        { header: 'Job Location', key: 'location', width: 20 },
+        { header: 'Job Type', key: 'type', width: 26 },
+        { header: 'Job Desc', key: 'desc', width: 60 },
+        { header: 'Sales Rep', key: 'rep', width: 26 },
+        { header: 'Customer', key: 'customer', width: 36 },
+        { header: 'Qty', key: 'qty', width: 10, numFmt: '#,##0.####' },
+        { header: 'Status', key: 'status', width: 12 },
+      ],
+      rows: rows.map((r) => ({
+        ab: r.ab_no, jo: r.job_order_no || '', date: day(r.date_created), location: r.job_location_name || '',
+        type: r.job_type_name || '', desc: r.job_desc || '', rep: r.sales_rep_name || '', customer: r.customer_name || '',
+        qty: Number(r.quantity_built || 0), status: r.status === 'cancelled' ? 'Cancelled' : 'Saved', // as the list's badge reads
+      })),
+    });
+  } catch (err) {
+    if (res.headersSent) { res.destroy(err); return; }
     next(err);
   }
 });
