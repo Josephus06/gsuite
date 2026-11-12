@@ -698,18 +698,29 @@ router.post('/:id/cancel', requireAuth, requirePermission(ROUTE, 'can_edit'), wi
   return null;
 }));
 
-// SBU: forward every unsent slot on their calendar to Design, as one calendar.
+// SBU: forward every unsent slot on their calendar to Design, as one calendar -- or, with
+// body.ids (asked 2026-11-12), just those slots, e.g. one JO / NSTDJO that cannot wait for the rest:
+// a calendar of its own, reviewed and approved by the Design Supervisor the same way.
 router.post('/forward', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
     const side = await sideOf(req.user.id);
     if (!side.sbu) return res.status(403).json({ error: 'Only the SBU forwards the calendar to Design.' });
+    const ids = Array.isArray(req.body?.ids) ? [...new Set(req.body.ids.map(Number).filter((n) => n > 0))] : null;
+    if (ids && !ids.length) return res.status(400).json({ error: 'Pick the slot(s) to forward.' });
     await conn.beginTransaction();
     const vis = visibilitySql(side);
-    const [rows] = await conn.query(`${BASE_SELECT} WHERE ds.status = 'Draft' AND ${vis.sql} ORDER BY ds.scheduled_start, ds.created_at, ds.id FOR UPDATE`, vis.params);
+    const only = ids ? ' AND ds.id IN (?)' : '';
+    const [rows] = await conn.query(
+      `${BASE_SELECT} WHERE ds.status = 'Draft' AND ${vis.sql}${only} ORDER BY ds.scheduled_start, ds.created_at, ds.id FOR UPDATE`,
+      ids ? [...vis.params, ids] : vis.params);
     const drafts = rows.map((r) => decorate(r));
     const live = drafts.filter((s) => s.order_status !== 'Cancelled');
-    if (!live.length) { await conn.rollback(); return res.status(409).json({ error: 'There is nothing new on the calendar to forward.' }); }
+    if (ids && drafts.length < ids.length) {
+      await conn.rollback();
+      return res.status(409).json({ error: ids.length === 1 ? 'This slot is no longer an unsent draft on your calendar.' : 'Some of those slots are no longer unsent drafts on your calendar.' });
+    }
+    if (!live.length) { await conn.rollback(); return res.status(409).json({ error: ids ? 'That order is cancelled -- there is nothing to forward.' : 'There is nothing new on the calendar to forward.' }); }
     const noArtist = live.find((s) => !s.preferred_artist_id);
     if (noArtist) { await conn.rollback(); return res.status(400).json({ error: `${noArtist.order_no} has no preferred artist yet.` }); }
 
@@ -726,7 +737,9 @@ router.post('/forward', requireAuth, requirePermission(ROUTE, 'can_edit'), async
       await forwardOrderToDesign(conn, s, req.user.id);
     }
     await notifyDesignSupervisors(conn, {
-      title: `Design calendar #${b.insertId} from the SBU -- ${live.length} order(s) to plan and approve`,
+      title: live.length === 1 && ids
+        ? `Design calendar #${b.insertId} from the SBU -- ${live[0].order_no} to plan and approve`
+        : `Design calendar #${b.insertId} from the SBU -- ${live.length} order(s) to plan and approve`,
       relatedType: 'DesignScheduleBatch', relatedId: b.insertId, excludeUserId: req.user.id, type: NOTIFY_TYPE,
     });
     await conn.commit();

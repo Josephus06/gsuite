@@ -692,7 +692,7 @@ function NewScheduleModal({ date, start = '09:00', artists, onClose, onSaved }) 
         <label>Notes for Design</label>
         <textarea rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
       </div>
-      <p className="muted" style={{ fontSize: 12 }}>Saved to the calendar as drafts. The SBU forwards the whole calendar to Design.</p>
+      <p className="muted" style={{ fontSize: 12 }}>Saved to the calendar as drafts. The SBU forwards the whole calendar to Design, or one order on its own from its slot.</p>
       <div className="modal-actions">
         <button type="button" className="btn" onClick={onClose}>Close</button>
         <button type="button" className="btn btn-primary" disabled={saving || !picked.length} onClick={save}>
@@ -807,6 +807,21 @@ function DetailModal({ id, meta, onClose, onChanged, onMove, onOpenBatch }) {
     } finally { setBusy(false); }
   }
 
+  // SBU: forward just this slot to Design as a calendar of its own (asked 2026-11-12).
+  async function forwardThis() {
+    if (!window.confirm(`Forward ${s.order_no} to the Design Supervisor now, on its own?`)) return;
+    setError('');
+    setBusy(true);
+    try {
+      const { data } = await api.post(`${ROUTE}/forward`, { ids: [s.id] });
+      onChanged();
+      onOpenBatch(data.id);
+    } catch (err) {
+      setError(errorOf(err));
+      setBusy(false);
+    }
+  }
+
   if (!s) {
     return <Modal title="Design Schedule" onClose={onClose}>{error ? <div className="error-banner">{error}</div> : <LoadingSpinner />}</Modal>;
   }
@@ -864,6 +879,12 @@ function DetailModal({ id, meta, onClose, onChanged, onMove, onOpenBatch }) {
           {side.sales && s.can_plan !== false && s.status === 'Draft' && <button type="button" className="btn" onClick={() => onMove(s)}>Edit</button>}
           {s.status !== 'Cancelled' && !['Assigned', 'Done'].includes(s.phase) && (s.status === 'Draft' ? side.sales && s.can_plan !== false : side.sbu) && (
             <button type="button" className="btn btn-danger" disabled={busy} onClick={() => window.confirm('Take this slot off the calendar?') && act('cancel')}>Cancel slot</button>
+          )}
+          {side.sbu && s.status === 'Draft' && s.order_status !== 'Cancelled' && (
+            <button type="button" className="btn btn-primary" disabled={busy || !s.preferred_artist_id} onClick={forwardThis}
+              title={s.preferred_artist_id ? 'Send only this order to the Design Supervisor' : 'Set a preferred artist first (Edit)'}>
+              Forward to Design
+            </button>
           )}
           {s.batch_id && s.status === 'For Approval' && (
             <button type="button" className="btn btn-primary" onClick={() => onOpenBatch(s.batch_id)}>Open calendar #{s.batch_id}</button>
