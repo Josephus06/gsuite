@@ -9,7 +9,7 @@ import Modal from '../components/Modal';
 import EntityPicker from '../components/EntityPicker';
 import StandaloneVendorBillModal from '../components/StandaloneVendorBillModal';
 import { useAuth } from '../context/useAuth';
-import { hoursMinutes, osMonthLabel, osQty, overtimeHours, statusLabel, MEMBER_FORMS, ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, leaveTypeLabel, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, clock, fmtDate, formBanks, money, pretty, BANK_LOAN_ROWS, bankLoanValue } from '../utils/requestForms';
+import { hoursMinutes, osMonthLabel, osQty, overtimeHours, statusLabel, MEMBER_FORMS, ADJ_REASON_LABELS, ADJ_TIMES, DAY_PART_LABELS, leaveTypeLabel, NO_ITEM_TYPES, PAYMENT_TYPES, PURPOSE_LABELS, STATUS_BADGE, TYPE_LABELS, bankLabel, clock, fmtDate, formBanks, money, pretty, BANK_LOAN_ROWS, bankLoanValue, releaseLabel, releaseBadge } from '../utils/requestForms';
 import OvertimeDecline from '../components/OvertimeDecline';
 import BankLoanFinish from '../components/BankLoanFinish';
 import { parseUtc } from '../utils/datetime';
@@ -208,6 +208,7 @@ export default function FormView() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 600 }}>
           {TYPE_LABELS[doc.type] || pretty(doc.type)} {doc.request_no}
           {doc.status && <span className={`badge ${STATUS_BADGE[doc.status] || 'badge-muted'}`}>{shownStatus}</span>}
+          {releaseLabel(doc.release_status) && <span className={`badge ${releaseBadge(doc.release_status)}`}>{releaseLabel(doc.release_status)}</span>}
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <Link className="btn btn-sm" to={'/forms'}>Back</Link>
@@ -284,6 +285,7 @@ export default function FormView() {
         </div>
         <div className="estimate-status">
           <span className={`badge ${STATUS_BADGE[doc.status] || 'badge-muted'}`}>{shownStatus}</span>
+          {releaseLabel(doc.release_status) && <span className={`badge ${releaseBadge(doc.release_status)}`} style={{ marginLeft: 4 }}>{releaseLabel(doc.release_status)}</span>}
         </div>
       </div>
 

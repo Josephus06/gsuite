@@ -294,6 +294,18 @@ const BANK_ACCOUNTS_SQL = `
    WHERE a.detail_type = 'Bank' AND COALESCE(a.is_summary, 0) = 0
      AND (p.account_code = '11000' OR gp.account_code = '11000')`;
 
+// Secondary status (2026-11-12): a form on a Vendor Bill (not cancelled) reads "not_released" until
+// a Bill Payment of that bill (not voided) has its Date Released, then "released". NULL for a form
+// with no Vendor Bill. Shown beside its status: Approved | Released.
+const RELEASE_STATUS_SQL = `CASE
+    WHEN NOT EXISTS (SELECT 1 FROM vendor_bills rvb WHERE rvb.form_request_id = f.id AND rvb.status <> 'cancelled') THEN NULL
+    WHEN EXISTS (SELECT 1 FROM vendor_bills rvb
+                   JOIN bill_payment_lines rbpl ON rbpl.vendor_bill_id = rvb.id
+                   JOIN bill_payments rbp ON rbp.id = rbpl.bill_payment_id
+                  WHERE rvb.form_request_id = f.id AND rvb.status <> 'cancelled'
+                    AND rbp.status <> 'voided' AND rbp.date_released IS NOT NULL) THEN 'released'
+    ELSE 'not_released' END AS release_status`;
+
 const WORKFLOW_STATUSES = ['submitted', 'noted', 'approved', 'rejected', 'accepted', 'declined'];
 // The owner may edit a form until somebody acts on it: a draft, a submitted one nobody has noted
 // yet, and a rejected one being revised.
@@ -361,7 +373,7 @@ function totals(items, startingBalance) {
 
 async function loadFull(id) {
   const [[doc]] = await pool.query(
-    `SELECT f.*, u.display_name AS owner_name, u.username AS owner_username,
+    `SELECT f.*, ${RELEASE_STATUS_SQL}, u.display_name AS owner_name, u.username AS owner_username,
             nu.display_name AS noted_by_name, au.display_name AS approved_by_name,
             ru.display_name AS rejected_by_name,
             ca.account_code AS credit_account_code, ca.account_name AS credit_account_name,
@@ -776,6 +788,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 
     const [rows] = await pool.query(
       `SELECT f.id, f.request_no, f.type, f.status, f.department, f.name, f.created_at, f.submitted_at,
+              ${RELEASE_STATUS_SQL},
               ${(await hasPreApproverCol()) ? 'f.pre_approver_user_id IS NOT NULL AND f.pre_approved_at IS NULL AS waiting_pre_approval,' : ''}
               u.display_name AS owner_name,
               (SELECT COALESCE(SUM(i.amount), 0) FROM form_request_items i WHERE i.form_request_id = f.id) AS total_amount
@@ -914,7 +927,7 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
 
     const [rows] = await pool.query(
       `SELECT f.id, f.request_no, f.type, f.status, f.department, f.name, f.created_at, f.submitted_at, f.noted_at,
-              f.user_id, f.department_id,
+              f.user_id, f.department_id, ${RELEASE_STATUS_SQL},
               ${(await hasPreApproverCol()) ? 'f.pre_approver_user_id IS NOT NULL AND f.pre_approved_at IS NULL AS waiting_pre_approval,' : ''}
               u.display_name AS owner_name,
               (SELECT COALESCE(SUM(i.amount), 0) FROM form_request_items i WHERE i.form_request_id = f.id) AS total_amount

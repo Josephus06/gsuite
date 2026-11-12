@@ -205,6 +205,10 @@ export function fmtDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''
 export const pretty = (s) => (s ? String(s).replace(/_/g, ' ') : '');
 // A form's status as people read it (2026-10-22): submitted waits on the noter, noted on the approver.
 export const statusLabel = (s) => ({ submitted: 'For Noting', noted: 'For Approval' }[s] || pretty(s));
+// The secondary status of a form on a Vendor Bill (2026-11-12): "Released" once a Bill Payment of
+// it has its Date Released, else "Not Released". Empty for a form with no Vendor Bill.
+export const releaseLabel = (r) => ({ released: 'Released', not_released: 'Not Released' }[r] || '');
+export const releaseBadge = (r) => (r === 'released' ? 'badge-success' : 'badge-warning');
 
 // Office Supply Requisition (2026-10-26): its month, "NOVEMBER 2026" as on HR's sheet; a line's
 // quantity with its unit, "2 BOX".

@@ -4,7 +4,7 @@ import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Pagination from '../components/Pagination';
 import { useAuth } from '../context/useAuth';
-import { NO_ITEM_TYPES, STATUS_BADGE, TYPE_LABELS, clock, fmtDate, money, pretty, statusLabel } from '../utils/requestForms';
+import { NO_ITEM_TYPES, STATUS_BADGE, TYPE_LABELS, clock, fmtDate, money, pretty, statusLabel, releaseLabel, releaseBadge } from '../utils/requestForms';
 import useAutoSearch from '../utils/useAutoSearch';
 import SearchInput from '../components/SearchInput';
 
@@ -176,6 +176,7 @@ export default function Forms() {
                     <td data-label="Amount">{NO_ITEM_TYPES.includes(r.type) ? '—' : money(r.total_amount)}</td>
                     <td data-label="Status">
                       <span className={`badge ${STATUS_BADGE[r.status] || 'badge-muted'}`}>{r.status === 'noted' && Number(r.waiting_pre_approval) ? 'For Pre-Approval' : statusLabel(r.status)}</span>
+                      {releaseLabel(r.release_status) && <span className={`badge ${releaseBadge(r.release_status)}`} style={{ marginLeft: 4 }}>{releaseLabel(r.release_status)}</span>}
                     </td>
                     <td>
                       <Link className="btn btn-sm btn-primary" to={`/forms/${r.id}`}>Open</Link>
