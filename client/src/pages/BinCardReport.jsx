@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../api/client';
 import EntityPicker from '../components/EntityPicker';
 import Pagination from '../components/Pagination';
@@ -16,6 +17,23 @@ function moneyFmt(v) {
   if (v === null || v === undefined || v === '') return '';
   const n = Number(v);
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
+}
+
+// Ref # opens the record it names (2026-11-11): the PO behind a Receiving Report / Vendor Return,
+// the Transfer Order behind an Item Fulfillment / Item Receipt, the JO behind an Assembly Build,
+// the requisition behind an Office Supply Fulfillment.
+const REF_PATH = {
+  'Receiving Report': '/purchase-orders/',
+  'Vendor Return': '/purchase-orders/',
+  'Item Fulfillment': '/transfer-orders/',
+  'Item Receipt': '/transfer-orders/',
+  'Assembly Build': '/job-orders/',
+  'Office Supply Fulfillment': '/office-supply-requisitions/',
+};
+function refCell(r) {
+  if (!r.ref_no) return '—';
+  const base = REF_PATH[r.trans_type];
+  return base && r.ref_id ? <Link className="link-btn" to={`${base}${r.ref_id}`}>{r.ref_no}</Link> : r.ref_no;
 }
 
 function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
@@ -281,7 +299,7 @@ export default function BinCardReport() {
                   <tr key={idx} style={isBalanceRow(r) ? { fontWeight: 600 } : undefined}>
                     <td>{formatDate(r.trans_date)}</td>
                     <td>{isBalanceRow(r) ? <span className="muted">{r.is_balance_forward ? 'Balance Forward' : 'Beginning Balance'}</span> : r.trans_no}</td>
-                    <td>{r.ref_no || '—'}</td>
+                    <td>{refCell(r)}</td>
                     <td>{r.from_location_name || ''}</td>
                     <td>{r.to_location_name || ''}</td>
                     {/* The quantity as the document recorded it, not as it was converted: an

@@ -124,7 +124,9 @@ function movementsSql(filterByItem = false) {
          po.po_no AS ref_no, rl.item_id, NULL AS from_location_id, NULL AS from_location_name,
          rl.location_id AS to_location_id, loc.location_name AS to_location_name,
          rl.qty_received * COALESCE(i0.conversion_factor, 1) AS qty_in, 0 AS qty_out, rl.rate, r.id AS sort_id, r.created_at AS sort_ts, NULL AS uom,
-         pu0.title AS doc_uom
+         pu0.title AS doc_uom,
+         -- ref_id: the id of the record Ref # names, so the Bin Card can link it (2026-11-11).
+         po.id AS ref_id
   FROM purchase_order_receipt_lines rl
   JOIN purchase_order_receipts r ON r.id = rl.purchase_order_receipt_id
   JOIN purchase_orders po ON po.id = r.purchase_order_id
@@ -137,7 +139,7 @@ function movementsSql(filterByItem = false) {
   SELECT vr.date_created, vr.return_no, 'Vendor Return',
          po2.po_no, rl2.item_id, rl2.location_id, loc2.location_name, NULL, NULL,
          0, rl2.qty_returned * COALESCE(i1.conversion_factor, 1), rl2.rate, vr.id, vr.created_at, NULL,
-         pu1.title
+         pu1.title, po2.id
   FROM purchase_return_lines rl2
   JOIN purchase_returns vr ON vr.id = rl2.purchase_return_id
   JOIN purchase_orders po2 ON po2.id = vr.purchase_order_id
@@ -150,7 +152,7 @@ function movementsSql(filterByItem = false) {
   SELECT f.date_created, f.fulfillment_no, 'Item Fulfillment',
          tord.to_no, fl.item_id, tord.withdraw_from_location_id, wloc.location_name, NULL, NULL,
          0, ${toBase('fl.qty_fulfilled', lineUnit('tol', 'bu', 'su'), 'i', 'bu')}, i.average_cost, f.id, f.created_at,
-         ${lineUnit('tol', 'bu', 'su')}, ${lineUnit('tol', 'bu', 'su')}
+         ${lineUnit('tol', 'bu', 'su')}, ${lineUnit('tol', 'bu', 'su')}, tord.id
   FROM item_fulfillment_lines fl
   JOIN item_fulfillments f ON f.id = fl.item_fulfillment_id
   JOIN transfer_orders tord ON tord.id = f.transfer_order_id
@@ -165,7 +167,7 @@ function movementsSql(filterByItem = false) {
   SELECT r2.date_created, r2.receipt_no, 'Item Receipt',
          f2.fulfillment_no, rl3.item_id, NULL, NULL, tord2.transfer_to_location_id, tloc.location_name,
          ${toBase('rl3.qty_received', lineUnit('tol3', 'bu2', 'su2'), 'i2', 'bu2')}, 0, i2.average_cost, r2.id, r2.created_at,
-         ${lineUnit('tol3', 'bu2', 'su2')}, ${lineUnit('tol3', 'bu2', 'su2')}
+         ${lineUnit('tol3', 'bu2', 'su2')}, ${lineUnit('tol3', 'bu2', 'su2')}, tord2.id
   FROM item_receipt_lines rl3
   JOIN item_receipts r2 ON r2.id = rl3.item_receipt_id
   JOIN item_fulfillments f2 ON f2.id = r2.item_fulfillment_id
@@ -180,7 +182,7 @@ function movementsSql(filterByItem = false) {
 
   SELECT ab.date_created, ab.ab_no, 'Assembly Build',
          jo.job_order_no, abl.item_id, abl.location_id, aloc.location_name, NULL, NULL,
-         0, ${toBase('abl.total_qty_to_build', 'abl.unit', 'i3', 'bu3')}, NULL, ab.id, ab.created_at, abl.unit, abl.unit
+         0, ${toBase('abl.total_qty_to_build', 'abl.unit', 'i3', 'bu3')}, NULL, ab.id, ab.created_at, abl.unit, abl.unit, jo.id
   FROM assembly_build_lines abl
   JOIN assembly_builds ab ON ab.id = abl.assembly_build_id
   JOIN job_orders jo ON jo.id = ab.job_order_id
@@ -202,7 +204,8 @@ function movementsSql(filterByItem = false) {
          -- stored quantities are in (Base Unit on anything this app wrote); Unit Used is what the
          -- person chose, and "2" against a 4'x8' sheet means 2 SHT.
          CASE WHEN LOWER(ial.unit_used) IN ('base', 'baseunit') THEN bu4.title
-              ELSE COALESCE(su4.title, bu4.title) END
+              ELSE COALESCE(su4.title, bu4.title) END,
+         NULL
   FROM inventory_adjustment_lines ial
   JOIN inventory_adjustments ia ON ia.id = ial.inventory_adjustment_id
   LEFT JOIN locations iloc ON iloc.id = ial.location_id
@@ -219,7 +222,7 @@ function movementsSql(filterByItem = false) {
   -- record the item's base unit code, so toBase leaves them as they are.
   SELECT osf.date_created, osf.osrf_no, 'Office Supply Fulfillment',
          osr.osr_no, osfl.item_id, osf.withdraw_from_location_id, owloc.location_name, NULL, NULL,
-         0, ${toBase('osfl.fulfilled_qty', 'osfl.uom', 'i5', 'bu5')}, osfl.cost, osf.id, osf.created_at, osfl.uom, osfl.uom
+         0, ${toBase('osfl.fulfilled_qty', 'osfl.uom', 'i5', 'bu5')}, osfl.cost, osf.id, osf.created_at, osfl.uom, osfl.uom, osr.id
   FROM osr_fulfillment_lines osfl
   JOIN osr_fulfillments osf ON osf.id = osfl.osrf_id
   JOIN office_supply_requisitions osr ON osr.id = osf.osr_id
@@ -232,7 +235,7 @@ function movementsSql(filterByItem = false) {
 
   SELECT osf2.date_created, osf2.osrf_no, 'Office Supply Fulfillment',
          osr2.osr_no, osfl2.item_id, NULL, NULL, osf2.transfer_to_location_id, otloc.location_name,
-         ${toBase('osfl2.fulfilled_qty', 'osfl2.uom', 'i6', 'bu6')}, 0, osfl2.cost, osf2.id, osf2.created_at, osfl2.uom, osfl2.uom
+         ${toBase('osfl2.fulfilled_qty', 'osfl2.uom', 'i6', 'bu6')}, 0, osfl2.cost, osf2.id, osf2.created_at, osfl2.uom, osfl2.uom, osr2.id
   FROM osr_fulfillment_lines osfl2
   JOIN osr_fulfillments osf2 ON osf2.id = osfl2.osrf_id
   JOIN office_supply_requisitions osr2 ON osr2.id = osf2.osr_id
@@ -249,7 +252,7 @@ function movementsSql(filterByItem = false) {
   -- Balance already (see db/create-rmi-receipts.js). The line's own unit, so toBase converts it.
   SELECT rrl.date_received, rmi.rmi_no, 'RMI Receipt',
          NULL, rrl.item_id, rmi.return_from_location_id, rfloc.location_name, NULL, NULL,
-         0, ${toBase('rrl.qty', 'rrl.uom', 'i7', 'bu7')}, i7.average_cost, rrl.id, rrl.created_at, rrl.uom, rrl.uom
+         0, ${toBase('rrl.qty', 'rrl.uom', 'i7', 'bu7')}, i7.average_cost, rrl.id, rrl.created_at, rrl.uom, rrl.uom, NULL
   FROM rmi_receipt_lines rrl
   JOIN rmis rmi ON rmi.id = rrl.rmi_id
   LEFT JOIN locations rfloc ON rfloc.id = rmi.return_from_location_id
@@ -260,7 +263,7 @@ function movementsSql(filterByItem = false) {
 
   SELECT rrl2.date_received, rmi2.rmi_no, 'RMI Receipt',
          NULL, rrl2.item_id, NULL, NULL, rmi2.return_to_location_id, rtloc.location_name,
-         ${toBase('rrl2.qty', 'rrl2.uom', 'i8', 'bu8')}, 0, i8.average_cost, rrl2.id, rrl2.created_at, rrl2.uom, rrl2.uom
+         ${toBase('rrl2.qty', 'rrl2.uom', 'i8', 'bu8')}, 0, i8.average_cost, rrl2.id, rrl2.created_at, rrl2.uom, rrl2.uom, NULL
   FROM rmi_receipt_lines rrl2
   JOIN rmis rmi2 ON rmi2.id = rrl2.rmi_id
   LEFT JOIN locations rtloc ON rtloc.id = rmi2.return_to_location_id
