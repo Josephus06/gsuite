@@ -155,6 +155,8 @@ const NAV_STRUCTURE = [
         items: [
           { route: '/stock-ledger-reports', label: 'Stock Ledger' },
           { route: '/bin-card-reports', label: 'Bin Card' },
+          // Monthly Output (2026-11-12): Assembly Build material per item and location over a period.
+          { route: '/monthly-output-reports', label: 'Monthly Output' },
         ],
       },
     ],

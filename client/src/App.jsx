@@ -98,6 +98,7 @@ import RmaJobOrders from './pages/RmaJobOrders';
 import RfqcJobOrders from './pages/RfqcJobOrders';
 import StockLedgerReport from './pages/StockLedgerReport';
 import BinCardReport from './pages/BinCardReport';
+import MonthlyOutputReport from './pages/MonthlyOutputReport';
 import InventoryAdjustments from './pages/InventoryAdjustments';
 import Rmis from './pages/Rmis';
 import RmiView from './pages/RmiView';
@@ -456,6 +457,7 @@ function App() {
         <Route path="/assembly-builds/:id" element={<AssemblyBuildView />} />
         <Route path="/stock-ledger-reports" element={<StockLedgerReport />} />
         <Route path="/bin-card-reports" element={<BinCardReport />} />
+        <Route path="/monthly-output-reports" element={<MonthlyOutputReport />} />
         <Route path="/inventory-adjustments" element={<InventoryAdjustments />} />
         <Route path="/rmis" element={<Rmis />} />
         <Route path="/rmis/new" element={<RmiForm />} />
