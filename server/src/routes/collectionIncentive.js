@@ -23,7 +23,8 @@ const router = express.Router();
 //
 // Monthly target (2026-11-12): the AR Aging total as of the last day of the PREVIOUS month -- what
 // was owed going into the month -- for the same Location (the invoice's office location, as the AR
-// Aging report filters). No longer a figure set up by hand; the set-up's monthly_target is unused.
+// Aging report filters), leaving out customers whose total is negative. No longer a figure set up by
+// hand; the set-up's monthly_target is unused.
 //
 // Advances from Customers (money not yet applied to an invoice) count as CURRENT here -- Treasury's
 // instruction, 2026-10-15 -- so they are inside the total and the base.
@@ -111,7 +112,10 @@ async function arTarget(asOf, locationId) {
   const hit = arCache.get(key);
   if (hit && hit.at > Date.now() - 10 * 60 * 1000) return hit.value;
   const data = await buildArAging(asOf, { locationId: locationId || null });
-  const value = Number(data.totals?.total_balance) || 0;
+  // Only customers who owe (2026-11-12): a customer whose AR Aging total is negative -- advances or
+  // credits beyond what they owe -- is left out, not netted against everyone else's balance.
+  const owed = (data.rows || []).reduce((sum, r) => sum + (Number(r.total_balance) > 0 ? Number(r.total_balance) : 0), 0);
+  const value = Math.round(owed * 100) / 100;
   arCache.set(key, { at: Date.now(), value });
   return value;
 }

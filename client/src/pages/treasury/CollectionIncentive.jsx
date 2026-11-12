@@ -299,7 +299,7 @@ export default function CollectionIncentive() {
               <div className="item"><div className="label">Actual collection ({r.months} month{r.months === 1 ? '' : 's'})</div><div className="value">{money(r.total_collected)}</div></div>
               {data.mode === 'annual' && <div className="item"><div className="label">Average monthly collection</div><div className="value">{money(r.avg_monthly_collection)}</div></div>}
               <div className="item"><div className="label">Base incentive ({pct(s.incentive_rate, 2)} of {data.mode === 'annual' ? 'avg monthly' : 'the month'})</div><div className="value">{money(r.base_incentive)}</div></div>
-              <div className="item"><div className="label">{data.mode === 'annual' ? 'Monthly target (average of each month’s prior AR Aging)' : `Monthly target (AR Aging as of ${displayDay(data.target_as_of)})`}</div><div className="value">{money(r.monthly_target)}</div></div>
+              <div className="item"><div className="label">{data.mode === 'annual' ? 'Monthly target (average of each month’s prior AR Aging)' : `Monthly target (AR Aging as of ${displayDay(data.target_as_of)}, negative balances excluded)`}</div><div className="value">{money(r.monthly_target)}</div></div>
               <div className="item">
                 <div className="label">{pct(r.pct_of_target)} of target — qualifies at {pct(s.qualifier_pct, 0)}</div>
                 <div className="value">{money(r.qualify_at)}</div>
