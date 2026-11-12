@@ -29,7 +29,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   try {
     const {
       search, sales_rep_id: salesRepId, job_location_id: jobLocationId, customer_id: customerId,
-      as_of: asOf, page = '1', limit = '10',
+      as_of: asOf, date_from: dateFrom, page = '1', limit = '10',
     } = req.query;
 
     const where = [];
@@ -42,6 +42,8 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     if (jobLocationId) { where.push('jo.job_location_id = ?'); params.push(jobLocationId); }
     if (customerId) { where.push('so.customer_id = ?'); params.push(customerId); }
     if (asOf) { where.push('ab.date_created <= ?'); params.push(asOf); }
+    // Period from (2026-11-12): date_from .. as_of, both inclusive.
+    if (dateFrom) { where.push('ab.date_created >= ?'); params.push(dateFrom); }
     if (search) {
       where.push('(ab.ab_no LIKE ? OR jo.job_order_no LIKE ? OR c.name LIKE ? OR jo.description LIKE ?)');
       params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);

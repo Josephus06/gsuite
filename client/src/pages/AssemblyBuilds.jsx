@@ -22,6 +22,9 @@ export default function AssemblyBuilds() {
   const [jobLocationId, setJobLocationId] = useState('');
   const [customerId, setCustomerId] = useState('');
   const [asOf, setAsOf] = useState('');
+  // Date Created: As of (up to a day) or Period from .. to (2026-11-12).
+  const [dateMode, setDateMode] = useState('as_of');
+  const [dateFrom, setDateFrom] = useState('');
   const [page, setPage] = useState(1);
   const limit = 10;
 
@@ -37,6 +40,7 @@ export default function AssemblyBuilds() {
     if (jobLocationId) params.job_location_id = jobLocationId;
     if (customerId) params.customer_id = customerId;
     if (asOf) params.as_of = asOf;
+    if (dateMode === 'period' && dateFrom) params.date_from = dateFrom;
     const { data } = await api.get('/assembly-builds', { params });
     setRows(data.rows);
     setTotal(data.total);
@@ -89,8 +93,20 @@ export default function AssemblyBuilds() {
               getLabel={(c) => c.name} allLabel="All" />
             </div>
             <div className="field">
-              <label>Date Created (As of)</label>
-              <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
+              <label>Date Created</label>
+              <div style={{ alignItems: 'center' }}>
+                <select value={dateMode} onChange={(e) => setDateMode(e.target.value)}>
+                  <option value="as_of">As of</option>
+                  <option value="period">Period from</option>
+                </select>
+                {dateMode === 'period' && (
+                  <>
+                    <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+                    <span className="muted">to</span>
+                  </>
+                )}
+                <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
+              </div>
             </div>
           </div>
           <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={runSearch}>Search</button>
