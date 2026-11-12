@@ -21,9 +21,9 @@ const router = express.Router();
 //   Actual incentive  = expected x multiplier
 // Qualifier: only when the month's collection reaches 90% of the monthly target.
 //
-// Monthly target (2026-11-12): the total INVOICED in the previous month -- the gross of every
-// Sales Invoice dated that month, cancelled ones left out -- for the same Location (the invoice's
-// office location). No longer a figure set up by hand; the set-up's monthly_target is unused.
+// Monthly target (2026-11-12): the AR Aging total as of the last day of the PREVIOUS month -- what
+// was owed going into the month -- for the same Location (the invoice's office location, as the AR
+// Aging report filters). No longer a figure set up by hand; the set-up's monthly_target is unused.
 //
 // Advances from Customers (money not yet applied to an invoice) count as CURRENT here -- Treasury's
 // instruction, 2026-10-15 -- so they are inside the total and the base.
@@ -104,21 +104,19 @@ function compute(totals, months, s, target = s.monthly_target) {
   };
 }
 
-// The month before y-m, as { from, to, label }: 2026-10 -> 2026-09-01 .. 2026-09-30, "September 2026".
-function prevMonth(y, m) {
-  const py = m === 1 ? y - 1 : y;
-  const pm = m === 1 ? 12 : m - 1;
-  return { from: `${py}-${pad(pm)}-01`, to: `${py}-${pad(pm)}-${pad(lastDay(py, pm))}`, label: `${MONTHS[pm - 1]} ${py}` };
+// AR Aging total as of a day, per location; cached a few minutes (the report takes seconds).
+const arCache = new Map();
+async function arTarget(asOf, locationId) {
+  const key = `${asOf}|${locationId || ''}`;
+  const hit = arCache.get(key);
+  if (hit && hit.at > Date.now() - 10 * 60 * 1000) return hit.value;
+  const data = await buildArAging(asOf, { locationId: locationId || null });
+  const value = Number(data.totals?.total_balance) || 0;
+  arCache.set(key, { at: Date.now(), value });
+  return value;
 }
-// Total invoiced in the month before y-m.
-async function invoicedTarget(y, m, locationId) {
-  const p = prevMonth(y, m);
-  const [[row]] = await pool.query(
-    `SELECT COALESCE(SUM(si.gross_amount), 0) AS total FROM sales_invoices si
-      WHERE si.status <> 'cancelled' AND si.date_created BETWEEN ? AND ?${locationId ? ' AND si.office_location_id = ?' : ''}`,
-    [p.from, p.to, ...(locationId ? [locationId] : [])]);
-  return Number(row.total) || 0;
-}
+// The day before a month starts: 2026-10 -> 2026-09-30.
+const monthEndBefore = (y, m) => (m === 1 ? `${y - 1}-12-31` : `${y}-${pad(m - 1)}-${pad(lastDay(y, m - 1))}`);
 
 const isMonth = (v) => /^\d{4}-(0[1-9]|1[0-2])$/.test(String(v || ''));
 
@@ -131,13 +129,13 @@ async function buildReport(q) {
     const month = isMonth(q.month) ? q.month : `${lm.getFullYear()}-${pad(lm.getMonth() + 1)}`;
     const [y, m] = month.split('-').map(Number);
     const s = await settingsFor(y);
-    const targetMonth = prevMonth(y, m).label;
+    const targetAsOf = monthEndBefore(y, m);
     const [data, target] = await Promise.all([
       fetchCollections({ from: `${month}-01`, to: `${month}-${pad(lastDay(y, m))}`, ...loc, credit_memos: '0' }),
-      invoicedTarget(y, m, loc.location_id),
+      arTarget(targetAsOf, loc.location_id),
     ]);
     return { mode: 'monthly', month, label: `${MONTHS[m - 1]} ${y}`, from: data.from, to: data.to, settings: s,
-      target_month: targetMonth, result: compute(bucketTotals(data.rows), 1, s, target) };
+      target_as_of: targetAsOf, result: compute(bucketTotals(data.rows), 1, s, target) };
   }
   // Annual: January through `through` (default the last full month of the running year, December
   // of a past one).
@@ -152,13 +150,18 @@ async function buildReport(q) {
     const mi = Number(ym(r.payment_date).slice(5, 7)) - 1;
     if (mi >= 0 && mi < through) byMonth[mi].push(r);
   }
-  // Each month against its own target: what was invoiced the month before.
-  const targets = await Promise.all(Array.from({ length: through }, (_, i) => invoicedTarget(year, i + 1, loc.location_id)));
+  // Each month against its own target (AR Aging at the end of the month before), a few at a time.
+  const targets = [];
+  for (let i = 0; i < through; i += 4) {
+    const batch = [];
+    for (let k = i; k < Math.min(i + 4, through); k += 1) batch.push(arTarget(monthEndBefore(year, k + 1), loc.location_id));
+    targets.push(...await Promise.all(batch));
+  }
   const avgTarget = targets.reduce((a, b) => a + b, 0) / (targets.length || 1);
   const months = byMonth.map((rows, i) => {
     const c = compute(bucketTotals(rows), 1, s, targets[i]);
     return { month: `${year}-${pad(i + 1)}`, label: MONTHS[i], collected: c.total_collected,
-      monthly_target: targets[i], target_month: prevMonth(year, i + 1).label, pct_of_target: c.pct_of_target,
+      monthly_target: targets[i], target_as_of: monthEndBefore(year, i + 1), pct_of_target: c.pct_of_target,
       qualified: c.qualified, incentive: c.incentive_total, payable: c.incentive_payable };
   });
   return {
@@ -182,7 +185,7 @@ router.put('/settings/:year', requireAuth, requirePermission(ROUTE, 'can_edit'),
     const v = {};
     const current = await settingsFor(year);
     for (const c of SETTING_COLS) {
-      // monthly_target is no longer entered (it is the previous month's invoicing, 2026-11-12): keep what is stored.
+      // monthly_target is no longer entered (it is the AR Aging, 2026-11-12): keep what is stored.
       const n = c === 'monthly_target' && req.body[c] === undefined ? current[c] : Number(req.body[c]);
       if (!Number.isFinite(n) || n < 0) return res.status(400).json({ error: `${c.replace(/_/g, ' ')} must be a number, 0 or more.` });
       v[c] = n;
@@ -235,13 +238,13 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
     kv(`Actual collection (${r.months} month${r.months === 1 ? '' : 's'})`, r.total_collected, money);
     kv('Average monthly collection', r.avg_monthly_collection, money);
     kv(`Base incentive (avg monthly x ${(s.incentive_rate * 100).toFixed(2)}%)`, r.base_incentive, money);
-    kv(rep.mode === 'annual' ? 'Monthly target (average of each month’s previous-month invoicing)' : `Monthly target (invoiced in ${rep.target_month})`, r.monthly_target, money);
+    kv(rep.mode === 'annual' ? 'Monthly target (average of each month’s prior AR Aging)' : `Monthly target (AR Aging as of ${rep.target_as_of})`, r.monthly_target, money);
     kv(`Qualifies at (${(s.qualifier_pct * 100).toFixed(0)}% of target)`, r.qualify_at, money);
     kv('Qualified', r.qualified ? 'YES' : 'NO');
     kv('Incentive payable', r.incentive_payable, money).font = { bold: true };
     if (rep.mode === 'annual') {
       ws.addRow([]);
-      ws.addRow(['Month', 'Collected', 'Target (invoiced prev. month)', '% of Target', 'Qualified', 'Incentive']).font = { bold: true };
+      ws.addRow(['Month', 'Collected', 'Target (prior AR Aging)', '% of Target', 'Qualified', 'Incentive']).font = { bold: true };
       for (const m of rep.months) {
         const row = ws.addRow([m.label, m.collected, m.monthly_target, m.pct_of_target, m.qualified ? 'YES' : 'NO', m.payable]);
         row.getCell(2).numFmt = money; row.getCell(3).numFmt = money; row.getCell(4).numFmt = pct; row.getCell(6).numFmt = money;

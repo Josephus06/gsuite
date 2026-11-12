@@ -22,6 +22,7 @@ const money = (v) => {
   return Number.isFinite(n) ? n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '';
 };
 const pct = (v, d = 1) => `${(Number(v || 0) * 100).toFixed(d)}%`;
+const displayDay = (v) => (v ? new Date(`${v}T00:00:00`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '');
 const R = { textAlign: 'right' };
 
 function defaults() {
@@ -127,8 +128,8 @@ function SetupCard({ year, canEdit, onSaved }) {
         </div>
       )}
       <div className="filter-grid">
-        {/* Monthly target is no longer set up (2026-11-12): it is the total invoiced in the month before. */}
-        <div className="field"><label>Monthly target</label><div className="muted" style={{ padding: '8px 0' }}>Total invoiced in the previous month</div></div>
+        {/* Monthly target is no longer set up (2026-11-12): it is the AR Aging at the end of the month before. */}
+        <div className="field"><label>Monthly target</label><div className="muted" style={{ padding: '8px 0' }}>AR Aging total as of the end of the previous month</div></div>
         {field('qualifier_pct', 'Qualifies at (% of monthly target)', '%')}
         {field('incentive_rate', 'Incentive rate (% of avg monthly collection)', '%')}
       </div>
@@ -298,7 +299,7 @@ export default function CollectionIncentive() {
               <div className="item"><div className="label">Actual collection ({r.months} month{r.months === 1 ? '' : 's'})</div><div className="value">{money(r.total_collected)}</div></div>
               {data.mode === 'annual' && <div className="item"><div className="label">Average monthly collection</div><div className="value">{money(r.avg_monthly_collection)}</div></div>}
               <div className="item"><div className="label">Base incentive ({pct(s.incentive_rate, 2)} of {data.mode === 'annual' ? 'avg monthly' : 'the month'})</div><div className="value">{money(r.base_incentive)}</div></div>
-              <div className="item"><div className="label">{data.mode === 'annual' ? 'Monthly target (average of each month’s previous-month invoicing)' : `Monthly target (invoiced in ${data.target_month})`}</div><div className="value">{money(r.monthly_target)}</div></div>
+              <div className="item"><div className="label">{data.mode === 'annual' ? 'Monthly target (average of each month’s prior AR Aging)' : `Monthly target (AR Aging as of ${displayDay(data.target_as_of)})`}</div><div className="value">{money(r.monthly_target)}</div></div>
               <div className="item">
                 <div className="label">{pct(r.pct_of_target)} of target — qualifies at {pct(s.qualifier_pct, 0)}</div>
                 <div className="value">{money(r.qualify_at)}</div>
@@ -324,7 +325,7 @@ export default function CollectionIncentive() {
               <div className="table-wrap">
                 <table className="responsive-cards">
                   <thead>
-                    <tr><th>Month</th><th style={R}>Collected</th><th style={R}>Target (invoiced prev. month)</th><th style={R}>% of Target</th><th>Qualified</th><th style={R}>Incentive</th></tr>
+                    <tr><th>Month</th><th style={R}>Collected</th><th style={R}>Target (prior AR Aging)</th><th style={R}>% of Target</th><th>Qualified</th><th style={R}>Incentive</th></tr>
                   </thead>
                   <tbody>
                     {data.months.map((m) => (
