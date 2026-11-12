@@ -538,6 +538,12 @@ function SlotModal({ p, slot, day, onClose, onSaved }) {
     note: slot?.note || '',
   });
   const [picked, setPicked] = useState(slot ? [day10(slot.work_date)] : [day]);
+  // A new assignment can take several people at once (asked 2026-11-12) -- the same work, days and
+  // hours for each; editing a slot stays one person (form.who).
+  const [whos, setWhos] = useState([]);
+  const [whoFilter, setWhoFilter] = useState('');
+  // Person|day pairs already saved by an earlier, partly failed Assign -- skipped on the retry.
+  const [done, setDone] = useState([]);
   const [taken, setTaken] = useState([]);
   const [savedSome, setSavedSome] = useState(false);
   const [error, setError] = useState('');
@@ -546,14 +552,16 @@ function SlotModal({ p, slot, day, onClose, onSaved }) {
 
   useEffect(() => { api.get(`${API}/meta`).then(({ data }) => setMeta(data)).catch((err) => setError(errorOf(err))); }, []);
   const isVehicle = role === 'vehicle';
+  const chosen = slot ? (form.who ? [form.who] : []) : whos;
   // Their slots on the chosen days, on every project and in any role -- a person is one person.
   useEffect(() => {
-    if (!form.who || !picked.length) { setTaken([]); return; }
+    if (!chosen.length || !picked.length) { setTaken([]); return; }
     const sorted = [...picked].sort();
-    api.get(`${API}/crew`, { params: { from: sorted[0], to: sorted[sorted.length - 1], [isVehicle ? 'asset_id' : 'employee_id']: form.who } })
-      .then(({ data }) => setTaken(data.filter((s) => picked.includes(day10(s.work_date)) && s.id !== slot?.id)))
-      .catch(() => {});
-  }, [form.who, role, picked.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
+    Promise.all(chosen.map((who) => api.get(`${API}/crew`, { params: { from: sorted[0], to: sorted[sorted.length - 1], [isVehicle ? 'asset_id' : 'employee_id']: who } })
+      .then(({ data }) => data.filter((s) => picked.includes(day10(s.work_date)) && s.id !== slot?.id).map((s) => ({ ...s, who })))
+      .catch(() => [])))
+      .then((lists) => setTaken(lists.flat()));
+  }, [chosen.join(','), role, picked.join(',')]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Already on this project in that role: ★, and listed first.
   const onProject = new Set((role === 'installer' ? p.installers : role === 'subcon' ? p.subcons : role === 'vehicle' ? p.vehicles
@@ -577,26 +585,34 @@ function SlotModal({ p, slot, day, onClose, onSaved }) {
   async function save(e) {
     e.preventDefault();
     if (!picked.length) { setError('Pick at least one day.'); return; }
+    if (!slot && !whos.length) { setError(`Pick at least one ${R.one.toLowerCase()}.`); return; }
     setBusy(true);
     setError('');
-    const body = (work_date) => ({
+    const body = (work_date, who) => ({
       role, start_time: form.start_time, end_time: form.end_time, note: form.note, work_date, phase_id: phaseId || null,
-      [isVehicle ? 'asset_id' : 'employee_id']: form.who,
+      [isVehicle ? 'asset_id' : 'employee_id']: who,
     });
     if (slot) {
-      try { await api.put(`${API}/projects/${p.id}/crew/${slot.id}`, body(picked[0])); onSaved(); } catch (err) { setError(errorOf(err)); setBusy(false); }
+      try { await api.put(`${API}/projects/${p.id}/crew/${slot.id}`, body(picked[0], form.who)); onSaved(); } catch (err) { setError(errorOf(err)); setBusy(false); }
       return;
     }
-    // One slot per day; the days that clash stay ticked with the reason, the rest are saved.
+    // One slot per person per day. Those that clash are listed with the reason and stay picked; the
+    // rest are saved, and skipped if Assign is pressed again.
     const failed = [];
-    for (const k of [...picked].sort()) {
-      try { await api.post(`${API}/projects/${p.id}/crew`, body(k)); } catch (err) { failed.push({ day: k, why: errorOf(err) }); }
+    const savedNow = [];
+    for (const who of whos) {
+      for (const k of [...picked].sort()) {
+        const pair = `${who}|${k}`;
+        if (done.includes(pair)) continue;
+        try { await api.post(`${API}/projects/${p.id}/crew`, body(k, who)); savedNow.push(pair); } catch (err) { failed.push({ who, day: k, why: errorOf(err) }); }
+      }
     }
     if (failed.length) {
-      const saved = picked.length - failed.length;
-      if (saved) setSavedSome(true);
-      setError(`${saved ? `${saved} day(s) saved. ` : ''}Not saved -- ${failed.map((f) => `${displayDate(f.day)}: ${f.why}`).join(' ')}`);
-      setPicked(failed.map((f) => f.day));
+      if (savedNow.length) { setSavedSome(true); setDone([...done, ...savedNow]); }
+      const nameOf = (who) => options.find((o) => String(o.id) === String(who))?.name || who;
+      setError(`${savedNow.length ? `${savedNow.length} slot(s) saved. ` : ''}Not saved -- ${failed.map((f) => `${whos.length > 1 ? `${nameOf(f.who)}, ` : ''}${displayDate(f.day)}: ${f.why}`).join(' ')}`);
+      setWhos(whos.filter((w) => failed.some((f) => f.who === w)));
+      setPicked(picked.filter((k) => failed.some((f) => f.day === k)));
       setBusy(false);
       return;
     }
@@ -614,18 +630,36 @@ function SlotModal({ p, slot, day, onClose, onSaved }) {
             <div style={{ display: 'flex', flexWrap: 'wrap' }}>
               {Object.entries(RESOURCES).map(([k, cfg]) => (
                 <button key={k} type="button" className={`btn btn-sm ${role === k ? 'btn-primary' : ''}`} disabled={!!slot}
-                  onClick={() => { setRole(k); set({ who: '' }); }}>{cfg.one}</button>
+                  onClick={() => { setRole(k); set({ who: '' }); setWhos([]); setDone([]); }}>{cfg.one}</button>
               ))}
             </div>
           </div>
           <div className="field">
-            <label>{R.one} *</label>
-            <select required value={form.who} onChange={(e) => set({ who: e.target.value })}>
-              <option value="">-- Select {R.one} --</option>
-              {options.map((x) => (
-                <option key={x.id} value={x.id}>{x.name}{onProject.has(Number(x.id)) ? ' ★ on this project' : ''}</option>
-              ))}
-            </select>
+            <label>{slot ? `${R.one} *` : `${R.plural} *`}{!slot && whos.length > 0 && <span className="muted" style={{ fontWeight: 400 }}> · {whos.length} selected</span>}</label>
+            {slot ? (
+              <select required value={form.who} onChange={(e) => set({ who: e.target.value })}>
+                <option value="">-- Select {R.one} --</option>
+                {options.map((x) => (
+                  <option key={x.id} value={x.id}>{x.name}{onProject.has(Number(x.id)) ? ' ★ on this project' : ''}</option>
+                ))}
+              </select>
+            ) : (
+              <>
+                {options.length > 8 && (
+                  <input value={whoFilter} placeholder={`Search ${R.plural.toLowerCase()}...`} onChange={(e) => setWhoFilter(e.target.value)} style={{ marginBottom: 6 }} />
+                )}
+                <div style={{ maxHeight: 180, overflowY: 'auto', border: '1px solid var(--border, #e5e7eb)', borderRadius: 6, padding: '6px 10px', display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '4px 14px' }}>
+                  {options.filter((x) => !whoFilter || x.name.toLowerCase().includes(whoFilter.toLowerCase()) || whos.includes(String(x.id))).map((x) => {
+                    const id = String(x.id);
+                    return (
+                      <Check key={id} checked={whos.includes(id)} onChange={(v) => { setWhos(v ? [...whos, id] : whos.filter((w) => w !== id)); }}>
+                        {x.name}{onProject.has(Number(x.id)) ? ' ★' : ''}
+                      </Check>
+                    );
+                  })}
+                </div>
+              </>
+            )}
             <div className="muted" style={{ fontSize: 12 }}>
               {isVehicle ? 'Vehicles in Assets > Fleet.' : `Employees with Position Code ${R.code}.`} ★ = already on this project;
               {role === 'driver' ? ' a driver you schedule becomes the project\'s driver if it has none.' : ` any other you schedule is added to the project's ${R.plural.toLowerCase()}.`}
@@ -678,11 +712,12 @@ function SlotModal({ p, slot, day, onClose, onSaved }) {
           </div>
           <div className="field"><label>Note</label><input maxLength={500} value={form.note} placeholder="e.g. mounting, wiring" onChange={(e) => set({ note: e.target.value })} /></div>
 
-          {form.who && (
+          {chosen.length > 0 && (
             <div className="card" style={{ padding: 10, marginTop: 8 }}>
               <strong style={{ fontSize: 13 }}>Already scheduled on {picked.length > 1 ? 'these days' : 'this day'}</strong>
-              {taken.length === 0 ? <div className="muted" style={{ fontSize: 12 }}>Nothing -- free all day.</div> : taken.map((s) => (
-                <div key={s.id} style={{ fontSize: 12, marginTop: 4, color: overlaps(s) ? 'var(--color-danger-text, #b91c1c)' : undefined }}>
+              {taken.length === 0 ? <div className="muted" style={{ fontSize: 12 }}>Nothing -- {chosen.length > 1 ? 'all free' : 'free'} all day.</div> : taken.map((s) => (
+                <div key={`${s.who}-${s.id}`} style={{ fontSize: 12, marginTop: 4, color: overlaps(s) ? 'var(--color-danger-text, #b91c1c)' : undefined }}>
+                  {chosen.length > 1 && <strong>{options.find((o) => String(o.id) === String(s.who))?.name || ''} · </strong>}
                   {picked.length > 1 && `${displayDate(s.work_date)} · `}{timeText(s.start_time)} – {timeText(s.end_time)}{s.role !== role ? ` · as ${RESOURCES[s.role]?.one.toLowerCase()}` : ''} · {s.project_no}{s.job_order_no ? ` (${s.job_order_no})` : ''} {s.project_id === p.id ? '· this project' : `· ${s.project_title}`}
                   {overlaps(s) && <strong> -- overlaps the hours above</strong>}
                 </div>
@@ -691,7 +726,7 @@ function SlotModal({ p, slot, day, onClose, onSaved }) {
           )}
 
           <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-            <button type="submit" className="btn btn-primary" disabled={busy}>{busy ? 'Saving...' : slot ? 'Save' : `Assign${picked.length > 1 ? ` (${picked.length} days)` : ''}`}</button>
+            <button type="submit" className="btn btn-primary" disabled={busy}>{busy ? 'Saving...' : slot ? 'Save' : `Assign${whos.length > 1 ? ` ${whos.length} ${R.plural.toLowerCase()}` : ''}${picked.length > 1 ? ` (${picked.length} days)` : ''}`}</button>
             <button type="button" className="btn" onClick={close}>{savedSome ? 'Close' : 'Cancel'}</button>
           </div>
         </form>
