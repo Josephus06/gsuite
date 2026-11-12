@@ -134,6 +134,7 @@ export default function NotificationBell() {
     // carry -- it opens the report that lists what is still parked.
     if (n.related_type === 'ParkedBankItems') return '/reports/parked-bank-items';
     if (n.related_type === 'PurchaseOrder' && n.related_id) return `/purchase-orders/${n.related_id}`;
+    if (n.related_type === 'WarrantyCertificate' && n.related_id) return `/warranty-certificates/${n.related_id}`;
     // Fleet reminders (lib/fleet.js): registration / insurance / emission / PMS due on a vehicle.
     if (n.related_type === 'Vehicle' && n.related_id) return `/assets/fleet/${n.related_id}`;
     if (n.related_type === 'Form' && n.related_id) return `/forms/${n.related_id}`;
