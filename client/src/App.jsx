@@ -298,8 +298,9 @@ function App() {
       <Route path="/driver/:token" element={<DriverRun />} />
       {/* Standalone printable certificate -- protected but rendered without the app chrome. */}
       <Route path="/warranty-certificates/:id/print" element={<ProtectedRoute><WarrantyCertificatePrint /></ProtectedRoute>} />
-      {/* Installation Planner monitor (2026-11-13): today's installers, full screen, no app chrome. */}
-      <Route path="/installation-planner/board" element={<ProtectedRoute><InstallationBoard /></ProtectedRoute>} />
+      {/* Installation Planner monitor (2026-11-13): today's installers, full screen, no app chrome --
+          and no login (asked the same day), reading the public feed routes/installationPlanner.js /public-board. */}
+      <Route path="/installation-planner/board" element={<InstallationBoard />} />
       <Route path="/completion-certificates/:id/print" element={<ProtectedRoute><CompletionCertificatePrint /></ProtectedRoute>} />
       {/* Pre-printed Billing Statement overlay -- no app chrome, since anything else on the
           page would print on top of the form. */}

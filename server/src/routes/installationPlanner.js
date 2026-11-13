@@ -758,6 +758,40 @@ const CREW_SELECT = `
     LEFT JOIN installation_project_phases ph ON ph.id = s.phase_id
     LEFT JOIN installation_work_types wt ON wt.id = ph.work_type_id`;
 
+// The production-floor monitor (asked 2026-11-13: "no login needed") -- client/src/pages/
+// InstallationBoard.jsx at /installation-planner/board. UNAUTHENTICATED, so it carries only what the
+// board draws: today's (Philippine time) bookings of one kind -- who, from when to when, the work and
+// the JO / project number -- and the names of everyone of that kind. No project title, customer, note,
+// amount or anything else; and nothing to change.
+router.get('/public-board', async (req, res, next) => {
+  try {
+    const role = SLOT_ROLES.includes(req.query.kind) ? req.query.kind : 'installer';
+    const day = todayPh();
+    const [rows] = await pool.query(
+      `${CREW_SELECT} WHERE s.work_date = ? AND s.role = ? AND p.status <> 'cancelled' ORDER BY s.start_time, e.first_name`, [day, role]);
+    const slots = rows.map((s) => ({
+      id: s.id, role: s.role, employee_id: s.employee_id, asset_id: s.asset_id, work_date: s.work_date,
+      start_time: s.start_time, end_time: s.end_time, work_type: s.work_type, work_color: s.work_color,
+      first_name: s.first_name, last_name: s.last_name, job_order_no: s.job_order_no, project_no: s.project_no,
+      plate_no: s.plate_no, make: s.make, model: s.model, asset_name: s.asset_name, reference_no: s.reference_no,
+    }));
+    let employees = [];
+    let vehicles = [];
+    if (role === 'vehicle') {
+      vehicles = (await fleetVehicles()).map((v) => ({
+        id: v.id, plate_no: v.plate_no, make: v.make, model: v.model, asset_name: v.asset_name, reference_no: v.reference_no,
+      }));
+    } else {
+      const flag = { installer: IS_INSTALLER, driver: IS_DRIVER, subcon: IS_SUBCON }[role];
+      const [emps] = await pool.query(
+        `SELECT e.id, e.first_name, e.last_name FROM employees e WHERE e.is_active = 1 AND (${flag}) ORDER BY e.first_name, e.last_name`);
+      employees = emps.map((e) => ({ ...e, is_installer: role === 'installer', is_driver: role === 'driver', is_subcon: role === 'subcon' }));
+    }
+    res.set('Cache-Control', 'no-store');
+    res.json({ day, kind: role, employees, vehicles, slots });
+  } catch (err) { next(err); }
+});
+
 // Every slot in [from, to] (the Crew calendar), optionally one installer's.
 router.get('/crew', requireAuth, requireCalendarRead, async (req, res, next) => {
   try {

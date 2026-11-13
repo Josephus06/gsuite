@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
-import api from '../api/client';
 import { API, RESOURCES, resourceList, mergeSlots } from './installation/common';
+// No login (2026-11-13): a plain request to the public feed, without the app's token handling or its
+// redirect to the login page.
+const feed = (kind) => fetch(`/api${API}/public-board?kind=${encodeURIComponent(kind)}`, { cache: 'no-store' })
+  .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))));
 import { DayView } from './InstallationPlanner';
 
 // Installation Planner > Monitor view (asked 2026-11-13): the Day view per installer on its own page,
@@ -19,6 +22,8 @@ export default function InstallationBoard() {
   const [error, setError] = useState('');
   const [updated, setUpdated] = useState(null);
   const day = ymd(now);
+  // The server's today (Philippine time), which is the day the bookings are for.
+  const [boardDay, setBoardDay] = useState(null);
 
   // The clock -- and with it the day, so the board rolls over at midnight.
   useEffect(() => {
@@ -28,16 +33,14 @@ export default function InstallationBoard() {
 
   useEffect(() => {
     let live = true;
-    const load = () => Promise.all([
-      api.get(`${API}/meta`),
-      api.get(`${API}/crew`, { params: { from: day, to: day, role: resource } }),
-    ]).then(([meta, c]) => {
+    const load = () => feed(resource).then((data) => {
       if (!live) return;
-      setPeople({ employees: meta.data.employees, vehicles: meta.data.vehicles });
-      setCrew(c.data);
+      setPeople({ employees: data.employees, vehicles: data.vehicles });
+      setCrew(data.slots);
+      setBoardDay(data.day);
       setError('');
       setUpdated(new Date());
-    }).catch((err) => { if (live) setError(err.response?.data?.error || 'Could not load the schedule -- retrying.'); });
+    }).catch(() => { if (live) setError('Could not load the schedule -- retrying.'); });
     load();
     const t = setInterval(load, REFRESH_MS);
     return () => { live = false; clearInterval(t); };
@@ -56,7 +59,7 @@ export default function InstallationBoard() {
       </div>
       {error && <div className="error-banner">{error}</div>}
       <div className="card" style={{ padding: 10 }}>
-        <DayView dayKey={day} slots={slots} people={everyone} kind={kind} board />
+        <DayView dayKey={boardDay || day} slots={slots} people={everyone} kind={kind} board />
       </div>
       <div className="muted" style={{ fontSize: 11, marginTop: 6 }}>
         Updates every minute{updated ? ` · last updated ${updated.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}` : ''}
