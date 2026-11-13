@@ -286,6 +286,11 @@ export default function InstallationPlanner({ readOnly = false }) {
           <button type="button" className="btn btn-sm" onClick={() => step(-1)} aria-label="Previous">‹</button>
           <button type="button" className="btn btn-sm" onClick={() => step(1)} aria-label="Next">›</button>
           <button type="button" className="btn btn-sm" onClick={() => { setListDay(''); setAnchor(new Date()); }}>Today</button>
+          {/* The production-floor monitor (2026-11-13): today's installers, full screen, in its own tab. */}
+          {!readOnly && (
+            <a className="btn btn-sm" href="/installation-planner/board" target="_blank" rel="noreferrer"
+              title="Today's schedule per installer, full screen, for the monitor in Production">Monitor view</a>
+          )}
           <h3 style={{ margin: '0 8px', minWidth: 200 }}>{title}</h3>
           <div style={{ display: 'flex' }}>
             {/* Order asked 2026-11-09: Month | Week | Day | List | Installers | Subcons | Drivers | Vehicles.
@@ -504,7 +509,9 @@ const JOB_COLORS = ['#f4b183', '#00b0f0', '#a9d18e', '#ffd966', '#c9a0dc', '#f8a
 const minutesOf = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + (m || 0); };
 const hourLabel = (h) => `${h % 12 || 12}:00 ${h < 12 ? 'AM' : 'PM'}`;
 
-function DayView({ dayKey, slots, people, kind, onOpen }) {
+// board (2026-11-13): the production-floor monitor (InstallationBoard.jsx) -- the grid fills the
+// screen and a block opens nothing.
+export function DayView({ dayKey, slots, people, kind, onOpen, board = false }) {
   const scroller = useRef(null);
   // Open on the working day (7 AM) rather than midnight.
   useEffect(() => { if (scroller.current) scroller.current.scrollTop = 7 * HOUR_PX; }, [dayKey]);
@@ -531,9 +538,9 @@ function DayView({ dayKey, slots, people, kind, onOpen }) {
   return (
     <div>
       <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
-        {free} of {columns.length} {kind.plural.toLowerCase()} free all day · click a block to open its project
+        {free} of {columns.length} {kind.plural.toLowerCase()} free all day{board ? '' : ' · click a block to open its project'}
       </div>
-      <div className="table-wrap" ref={scroller} style={{ maxHeight: 620, overflow: 'auto' }}>
+      <div className="table-wrap" ref={scroller} style={{ maxHeight: board ? 'calc(100vh - 110px)' : 620, overflow: 'auto' }}>
         <div style={{ minWidth: 80 + columns.length * 140 }}>
           {/* Their names, kept in view while scrolling the hours */}
           <div style={{ ...grid, position: 'sticky', top: 0, zIndex: 2, background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
@@ -564,10 +571,10 @@ function DayView({ dayKey, slots, people, kind, onOpen }) {
                   const top = (minutesOf(s.start_time) / 60) * HOUR_PX;
                   const height = Math.max(18, ((minutesOf(s.end_time) - minutesOf(s.start_time)) / 60) * HOUR_PX);
                   return (
-                    <button key={s.id} type="button" onClick={() => onOpen(s)}
+                    <button key={s.id} type="button" onClick={() => onOpen?.(s)}
                       title={`${s.work_type ? `${s.work_type} · ` : ''}${timeText(s.start_time)} – ${timeText(s.end_time)} · ${s.project_no} · ${s.project_title}${s.note ? ` · ${s.note}` : ''}`}
                       style={{
-                        position: 'absolute', top, height, left: 3, right: 3, overflow: 'hidden', textAlign: 'left', cursor: 'pointer',
+                        position: 'absolute', top, height, left: 3, right: 3, overflow: 'hidden', textAlign: 'left', cursor: board ? 'default' : 'pointer',
                         background: colorOf.get(s.job_order_no || s.project_no), color: '#1f2937', border: '1px solid rgba(0,0,0,0.15)',
                         borderRadius: 4, padding: '3px 6px', fontSize: 11, lineHeight: 1.3, display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
                       }}>
