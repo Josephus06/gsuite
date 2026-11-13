@@ -151,7 +151,8 @@ router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
     let types = [];
     try {
       [types] = await pool.query(
-        `SELECT id, code, name FROM hr_violation_types WHERE is_active = TRUE
+        // Category / severity / description too: Section Violated is picked from a list of them (2026-11-13).
+        `SELECT id, code, name, category, severity, description FROM hr_violation_types WHERE is_active = TRUE
           ORDER BY (code IS NULL OR code = ''),
                    CAST(SUBSTRING_INDEX(SUBSTRING_INDEX(code, '.', 1), ' ', -1) AS UNSIGNED),
                    CAST(SUBSTRING_INDEX(code, '.', -1) AS UNSIGNED), name`);

@@ -95,7 +95,6 @@ export default function HrDaReportForm() {
 
   if (id && !report && !error) return <LoadingSpinner />;
   const typeLabel = type === 'weekly' ? 'Weekly' : 'Monthly';
-  const sectionLabels = (meta?.violation_types || []).map((t) => t.label);
 
   return (
     <div>
@@ -137,7 +136,6 @@ export default function HrDaReportForm() {
 
       <datalist id="da-stages">{(meta?.stages || []).map((s) => <option key={s} value={s} />)}</datalist>
       <datalist id="da-sanctions">{(meta?.sanctions || []).map((s) => <option key={s} value={s} />)}</datalist>
-      <datalist id="da-sections">{sectionLabels.map((s) => <option key={s} value={s} />)}</datalist>
 
       {sections.map((s, si) => (
         <div className="card" key={si} style={{ marginBottom: 16 }}>
@@ -184,11 +182,22 @@ export default function HrDaReportForm() {
                         onChange={(e) => setRow(si, ri, { violation: e.target.value })} />
                     </td>
                     <td style={{ padding: 4 }}>
-                      <input list="da-sections" value={r.section_violated} disabled={!editable} maxLength={300} placeholder="Pick or type the section"
-                        onChange={(e) => {
-                          const t = (meta?.violation_types || []).find((x) => x.label === e.target.value);
-                          setRow(si, ri, { section_violated: e.target.value, violation_type_id: t?.id || '' });
-                        }} />
+                      {/* Picked from HRD > Violations' list in a window, like Employee Name (asked 2026-11-13).
+                          A section typed on an older report still shows until another is picked. */}
+                      {editable ? (
+                        <EntityPicker
+                          label="Section Violated" items={meta?.violation_types || []} value={r.violation_type_id || ''}
+                          getLabel={(t) => t.label} placeholder={r.section_violated || 'Select section violated...'}
+                          columns={[
+                            { key: 'code', label: 'Code' },
+                            { key: 'name', label: 'Violation' },
+                            { key: 'category', label: 'Category' },
+                            { key: 'severity', label: 'Severity' },
+                          ]}
+                          searchKeys={['code', 'name', 'category', 'description']}
+                          onSelect={(t) => setRow(si, ri, { violation_type_id: t?.id || '', section_violated: t?.label || '' })}
+                        />
+                      ) : r.section_violated}
                     </td>
                     <td style={{ padding: 4 }}>
                       <input list="da-sanctions" value={r.final_sanction} disabled={!editable} maxLength={200}
