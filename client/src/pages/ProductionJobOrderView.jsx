@@ -13,7 +13,7 @@ import JobOrderAttachments, { PRODUCTION_KINDS, PRODUCTION_UPLOAD_KINDS } from '
 import { isAdvanceCopy } from '../utils/advanceCopy';
 import SalesRevisionModal from '../components/SalesRevisionModal';
 import RevisionNotice from '../components/RevisionNotice';
-import { maySalesRevise, awaitingDateDecision } from '../utils/salesRevision';
+import { maySalesRevise, awaitingDateDecision, mayReworkJobOrder } from '../utils/salesRevision';
 import { displayAuditTime } from '../utils/dates';
 import ButtonMenu from '../components/ButtonMenu';
 import { CustomerLink } from '../components/PartyLink';
@@ -535,6 +535,21 @@ export default function ProductionJobOrderView() {
     }
   }
 
+  // Revise JO / Return to Production (2026-11-13): the sales rep opens an In-Process job order for
+  // changes and returns it -- the same endpoints as the Job Order page (routes/jobOrders.js).
+  async function handleSalesRevision(action) {
+    setBusy(true);
+    setActionError('');
+    try {
+      await api.put(`/job-orders/${id}/${action}`);
+      await load();
+    } catch (err) {
+      setActionError(err.response?.data?.error || 'Could not change this Job Order\u2019s revision.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function handleSaveCompletion(processId, amount) {
     await api.put(`/production/${id}/processes/${processId}/complete`, { amount });
     await load();
@@ -615,6 +630,11 @@ export default function ProductionJobOrderView() {
   // A date revision ends by answering it (below), not by the generic return button -- which the
   // server also refuses while the suggestion is unanswered, so the two agree.
   const decidingDate = canReturnRevision && awaitingDateDecision(jo);
+  // Revise JO (2026-11-13): an In-Process job order, not on hold; Sales' button (maySalesRevise).
+  const canStartSalesRevision = !advanceCopy && jo.production_stage === 'in_process' && !isOnHold
+    && jo.status !== 'Cancelled' && canReturnRevision;
+  const canEndSalesRevision = jo.production_stage === 'in_process_with_revision' && !isOnHold
+    && jo.status !== 'Cancelled' && canReturnRevision;
   const canSendForRevision = !advanceCopy && can('/production', 'can_edit') && !isOnHold
     && jo.status === 'Released' && jo.production_stage === 'pending_for_scheduling'
     && num(jo.quantity_built) === 0;
@@ -642,7 +662,7 @@ export default function ProductionJobOrderView() {
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
           <Link className="btn btn-sm" to={'/production'}>Back to Lists</Link>
-          {canEdit && !advanceCopy && jo.status !== 'Cancelled' && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/job-orders/${id}/edit`, { state: { from: 'production' } })}>Edit</button>}
+          {(canEdit || mayReworkJobOrder(user, jo)) && !advanceCopy && jo.status !== 'Cancelled' && <button className="btn btn-sm btn-primary" onClick={() => navigate(`/job-orders/${id}/edit`, { state: { from: 'production' } })}>Edit</button>}
           {/* The same two prints as the Job Order screen; the server still decides whether the
               Job Order print is allowed (an assigned artist), the PAR needs only can_print. */}
           {/* An RWIP / RFQC also prints on RWIP > Print -- the server allows it the same way. */}
@@ -678,6 +698,16 @@ export default function ProductionJobOrderView() {
             <button className="btn btn-sm btn-primary" disabled={busy}
               title="Send the corrected Job Order back to Production for acknowledgement."
               onClick={() => handleStageAction('approve-revision')}>Approve to Production</button>
+          )}
+          {canStartSalesRevision && (
+            <button className="btn btn-sm btn-warning" disabled={busy}
+              title="Open this In-Process Job Order for changes to its materials and processes."
+              onClick={() => { if (window.confirm('Put this Job Order into revision so Sales can change it?')) handleSalesRevision('start-sales-revision'); }}>Revise JO</button>
+          )}
+          {canEndSalesRevision && (
+            <button className="btn btn-sm btn-primary" disabled={busy}
+              title="Done changing it: back to In-Process."
+              onClick={() => handleSalesRevision('end-sales-revision')}>Return to Production</button>
           )}
           {canWorkFloor && !isTerminal && (
             <button className="btn btn-sm btn-primary" disabled={openRwipCount > 0}
