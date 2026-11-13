@@ -597,6 +597,45 @@ router.put('/:id/forward-advance-copy', requireAuth, async (req, res, next) => {
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });
 
+// Revise JO (asked 2026-11-13): an In-Process job order its sales rep needs to change. Sales puts
+// it into 'In-Process w/ Rev.' -- the stage that exists for changing a job already on the floor --
+// which opens its materials and processes to that rep (isOpenForSalesRework, the same spec-only
+// grant a material/process revision carries), and Return to Production puts it back In-Process.
+// Production keeps the job meanwhile; nothing it has built or issued moves. Whose button: the
+// job order's rep or their supervisor, as every Sales revision action (maySalesReviseJobOrder).
+async function setRevisionStage(req, res, next, { from, to, refusal }) {
+  const conn = await pool.getConnection();
+  try {
+    const [[jo]] = await conn.query(
+      'SELECT id, status, sales_rep_id, production_stage, is_on_hold FROM job_orders WHERE id = ?', [req.params.id]);
+    if (!jo) return res.status(404).json({ error: 'Not found' });
+    if (!(await maySalesReviseJobOrder(req.user.id, jo))) {
+      return res.status(403).json({ error: 'Only this Job Order\u2019s sales rep can do this.' });
+    }
+    if (jo.status === 'Cancelled') return res.status(409).json({ error: 'This job order is cancelled.' });
+    if (jo.is_on_hold) return res.status(409).json({ error: 'This job order is on hold. Resume it first.' });
+    if (jo.production_stage !== from) return res.status(409).json({ error: refusal });
+    await conn.beginTransaction();
+    await conn.query('UPDATE job_orders SET production_stage = ?, updated_at = NOW() WHERE id = ?', [to, req.params.id]);
+    await logAudit(conn, {
+      jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated',
+      fieldName: 'production_stage', oldValue: from, newValue: to,
+    });
+    await conn.commit();
+    const [[updated]] = await pool.query('SELECT * FROM job_orders WHERE id = ?', [req.params.id]);
+    return res.json(updated);
+  } catch (err) { await conn.rollback(); return next(err); } finally { conn.release(); }
+}
+
+router.put('/:id/start-sales-revision', requireAuth, (req, res, next) => setRevisionStage(req, res, next, {
+  from: 'in_process', to: 'in_process_with_revision',
+  refusal: 'Only an In-Process Job Order can be put into revision.',
+}));
+router.put('/:id/end-sales-revision', requireAuth, (req, res, next) => setRevisionStage(req, res, next, {
+  from: 'in_process_with_revision', to: 'in_process',
+  refusal: 'This Job Order is not in revision.',
+}));
+
 // Approve an RWIP or RFQC (rework) job order. One step: "Pending RMA Approval" -> Released /
 // In-Process, so it lands on the production floor to be worked and completed. A General Manager (or
 // a System Admin) approves it (asked 2026-10-31) -- the Production page's can_approve no longer does.

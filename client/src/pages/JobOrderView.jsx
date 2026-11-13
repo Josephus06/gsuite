@@ -200,6 +200,18 @@ export default function JobOrderView() {
     try { await api.put(`/job-orders/${id}/request-revision`); await load(); } finally { setBusy(false); }
   }
 
+  // Revise JO / Return to Production (2026-11-13): an In-Process JO its sales rep needs to change.
+  async function handleSalesRevision(action) {
+    setBusy(true);
+    setActionError('');
+    try {
+      await api.put(`/job-orders/${id}/${action}`);
+      await load();
+    } catch (err) {
+      setActionError(err.response?.data?.error || 'Could not change this Job Order\u2019s revision.');
+    } finally { setBusy(false); }
+  }
+
   async function handleApproveRma() {
     setBusy(true);
     try { await api.put(`/job-orders/${id}/approve-rma`); await load(); } finally { setBusy(false); }
@@ -342,6 +354,9 @@ export default function JobOrderView() {
   // makes "Sales can change the material" true rather than an instruction to go and find someone
   // who can.
   const canRework = mayReworkJobOrder(user, jo);
+  // Revise JO (2026-11-13): In-Process, not on hold -- the rep opens it for changes, then returns it.
+  const canStartSalesRevision = jo.production_stage === 'in_process' && !jo.is_on_hold && jo.status !== 'Cancelled' && maySalesRevise(user, jo, canEdit);
+  const canEndSalesRevision = jo.production_stage === 'in_process_with_revision' && !jo.is_on_hold && jo.status !== 'Cancelled' && maySalesRevise(user, jo, canEdit);
   // ...and the rep's own JO in full, until Production has it (no production stage yet).
   const canEditOwn = mayEditOwnJobOrder(user, jo);
   const inDesignPhase = !isSpecialJo && !jo.production_stage && jo.status !== 'Cancelled';
@@ -466,6 +481,16 @@ export default function JobOrderView() {
             <button className="btn btn-sm btn-primary" disabled={busy}
               title="Send the corrected Job Order back to Production for acknowledgement."
               onClick={handleApproveRevision}>Approve to Production</button>
+          )}
+          {canStartSalesRevision && (
+            <button className="btn btn-sm btn-warning" disabled={busy}
+              title="Open this In-Process Job Order for changes to its materials and processes."
+              onClick={() => { if (window.confirm('Put this Job Order into revision so you can change it?')) handleSalesRevision('start-sales-revision'); }}>Revise JO</button>
+          )}
+          {canEndSalesRevision && (
+            <button className="btn btn-sm btn-primary" disabled={busy}
+              title="Done changing it: back to In-Process."
+              onClick={() => handleSalesRevision('end-sales-revision')}>Return to Production</button>
           )}
           {canEdit && !isOnHold && !isTerminal && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleHold}>Hold</button>}
           {canEdit && isOnHold && !isTerminal && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleResume}>Resume</button>}

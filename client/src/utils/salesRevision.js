@@ -48,7 +48,9 @@ export function maySalesRevise(user, jo, canEditJobOrders) {
 // for as long as it is in revision for that reason. Anyone with can_edit already has more.
 export function mayReworkJobOrder(user, jo) {
   if (!user || !jo) return false;
-  if (jo.production_stage !== 'for_revision' || jo.revision_reason !== REVISION_MATERIAL_PROCESS) return false;
+  // ...or one Sales put into revision itself while In Process (2026-11-13, Revise JO).
+  const salesRevising = jo.production_stage === 'in_process_with_revision';
+  if (!salesRevising && (jo.production_stage !== 'for_revision' || jo.revision_reason !== REVISION_MATERIAL_PROCESS)) return false;
   if (jo.status === 'Cancelled') return false;
   return isRepOrSupervisorOf(user, jo.sales_rep_id);
 }

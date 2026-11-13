@@ -83,10 +83,14 @@ async function maySalesReviseJobOrder(userId, jo) {
 //
 // Deliberately not granted for a delivery-date revision: nothing about the spec is in question
 // there, and Sales answers it by approving or declining the suggested date.
+//
+// ALSO a job order Sales itself put into revision while it was In Process (2026-11-13, "Revise
+// JO"): stage 'in_process_with_revision', the same spec-only grant until Sales returns it.
 function isOpenForSalesRework(jo) {
+  if (jo?.status === 'Cancelled') return false;
+  if (jo?.production_stage === 'in_process_with_revision') return true;
   return jo?.production_stage === 'for_revision'
-    && jo?.revision_reason === REVISION_MATERIAL_PROCESS
-    && jo?.status !== 'Cancelled';
+    && jo?.revision_reason === REVISION_MATERIAL_PROCESS;
 }
 
 // Before Production has the job order, it is still Sales's to shape: its own sales rep may edit it
