@@ -22,7 +22,7 @@ const {
   notifyDesignSupervisors, notifyAssignedArtist, notifySalesRep, NOTIFY_TYPE_JO_REVISION,
 } = require('../lib/designNotifications');
 const {
-  maySalesReviseJobOrder, isOpenForSalesRework, isBeforeProduction, REWORK_PROTECTED_FIELDS,
+  maySalesReviseJobOrder, isOpenForSalesRework, isBeforeProduction, REWORK_PROTECTED_FIELDS, REVISION_MATERIAL_PROCESS,
 } = require('../lib/jobOrderRevision');
 
 const router = express.Router();
@@ -597,30 +597,73 @@ router.put('/:id/forward-advance-copy', requireAuth, async (req, res, next) => {
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });
 
-// Revise JO (asked 2026-11-13): an In-Process job order its sales rep needs to change. Sales puts
-// it into 'In-Process w/ Rev.' -- the stage that exists for changing a job already on the floor --
-// which opens its materials and processes to that rep (isOpenForSalesRework, the same spec-only
-// grant a material/process revision carries), and Return to Production puts it back In-Process.
-// Production keeps the job meanwhile; nothing it has built or issued moves. Whose button: the
-// job order's rep or their supervisor, as every Sales revision action (maySalesReviseJobOrder).
-async function setRevisionStage(req, res, next, { from, to, refusal }) {
+// Revision of an In-Process job order (asked 2026-11-13). PRODUCTION -- a planner above all --
+// sends a job already on the floor back to its sales rep: it goes to 'In-Process w/ Rev.', the
+// stage that exists for changing a job at that point, and the rep is told. That stage opens the
+// job order's materials and processes to the rep (isOpenForSalesRework, the same spec-only grant a
+// material/process revision carries). When done, the rep's Return to Production puts it back
+// In-Process and the person who asked is told. Nothing built or issued moves meanwhile.
+//
+// Who sends it: a System Admin, a planner, a Production Supervisor, or anyone with can_edit on
+// Production. Who returns it: the job order's rep or their supervisor (maySalesReviseJobOrder).
+async function mayProductionRevise(userId) {
+  if (await isSystemAdmin(userId)) return true;
+  const [[u]] = await pool.query(`SELECT is_production_supervisor, ${PLANNER_COLUMNS} FROM users WHERE id = ?`, [userId]);
+  if (u && (isPlanner(u) || u.is_production_supervisor)) return true;
+  return userCan(userId, '/production', 'can_edit');
+}
+
+async function notifyUser(conn, userId, { title, message, jobOrderId }) {
+  if (!userId) return;
+  await conn.query(
+    `INSERT INTO notifications (user_id, type, title, message, related_type, related_id)
+     VALUES (?, ?, ?, ?, 'JobOrder', ?)`,
+    [userId, NOTIFY_TYPE_JO_REVISION, String(title).slice(0, 255), message ? String(message).slice(0, 500) : null, jobOrderId]);
+}
+
+async function setRevisionStage(req, res, next, { from, to, refusal, mayAct, refusedWho, start }) {
   const conn = await pool.getConnection();
   try {
     const [[jo]] = await conn.query(
-      'SELECT id, status, sales_rep_id, production_stage, is_on_hold FROM job_orders WHERE id = ?', [req.params.id]);
+      `SELECT id, job_order_no, status, sales_rep_id, production_stage, is_on_hold, revision_requested_by_id
+         FROM job_orders WHERE id = ?`, [req.params.id]);
     if (!jo) return res.status(404).json({ error: 'Not found' });
-    if (!(await maySalesReviseJobOrder(req.user.id, jo))) {
-      return res.status(403).json({ error: 'Only this Job Order\u2019s sales rep can do this.' });
-    }
+    if (!(await mayAct(req.user.id, jo))) return res.status(403).json({ error: refusedWho });
     if (jo.status === 'Cancelled') return res.status(409).json({ error: 'This job order is cancelled.' });
     if (jo.is_on_hold) return res.status(409).json({ error: 'This job order is on hold. Resume it first.' });
     if (jo.production_stage !== from) return res.status(409).json({ error: refusal });
+    const note = String(req.body?.note || '').trim().slice(0, 500) || null;
     await conn.beginTransaction();
-    await conn.query('UPDATE job_orders SET production_stage = ?, updated_at = NOW() WHERE id = ?', [to, req.params.id]);
+    if (start) {
+      await conn.query(
+        `UPDATE job_orders SET production_stage = ?, revision_reason = ?, revision_note = ?,
+                revision_suggested_delivery_date = NULL, revision_date_reason = NULL, revision_date_decision = NULL,
+                revision_requested_by_id = ?, revision_requested_at = NOW(), updated_at = NOW()
+          WHERE id = ?`, [to, REVISION_MATERIAL_PROCESS, note, req.user.id, req.params.id]);
+    } else {
+      await conn.query('UPDATE job_orders SET production_stage = ?, updated_at = NOW() WHERE id = ?', [to, req.params.id]);
+    }
     await logAudit(conn, {
       jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated',
-      fieldName: 'production_stage', oldValue: from, newValue: to,
+      fieldName: 'production_stage', oldValue: from, newValue: note ? `${to} -- ${note}` : to,
     });
+    // Who is told: the rep when it is sent back to them, whoever sent it when it comes back.
+    if (start) {
+      const [[rep]] = await conn.query('SELECT id FROM users WHERE employee_id = ? AND is_active = TRUE ORDER BY id LIMIT 1', [jo.sales_rep_id]);
+      if (rep && rep.id !== req.user.id) {
+        await notifyUser(conn, rep.id, {
+          title: `${jo.job_order_no} sent back for revision`,
+          message: `Production sent ${jo.job_order_no} back to you to revise${note ? `: ${note}` : '.'} Edit it, then Return to Production.`,
+          jobOrderId: jo.id,
+        });
+      }
+    } else if (jo.revision_requested_by_id && jo.revision_requested_by_id !== req.user.id) {
+      await notifyUser(conn, jo.revision_requested_by_id, {
+        title: `${jo.job_order_no} returned to Production`,
+        message: `Sales has revised ${jo.job_order_no} and returned it to Production.`,
+        jobOrderId: jo.id,
+      });
+    }
     await conn.commit();
     const [[updated]] = await pool.query('SELECT * FROM job_orders WHERE id = ?', [req.params.id]);
     return res.json(updated);
@@ -628,12 +671,16 @@ async function setRevisionStage(req, res, next, { from, to, refusal }) {
 }
 
 router.put('/:id/start-sales-revision', requireAuth, (req, res, next) => setRevisionStage(req, res, next, {
-  from: 'in_process', to: 'in_process_with_revision',
-  refusal: 'Only an In-Process Job Order can be put into revision.',
+  from: 'in_process', to: 'in_process_with_revision', start: true,
+  refusal: 'Only an In-Process Job Order can be sent back for revision.',
+  mayAct: (userId) => mayProductionRevise(userId),
+  refusedWho: 'Only Production (a planner or Production Supervisor) can send a Job Order back for revision.',
 }));
 router.put('/:id/end-sales-revision', requireAuth, (req, res, next) => setRevisionStage(req, res, next, {
   from: 'in_process_with_revision', to: 'in_process',
   refusal: 'This Job Order is not in revision.',
+  mayAct: (userId, jo) => maySalesReviseJobOrder(userId, jo),
+  refusedWho: 'Only this Job Order\u2019s sales rep can return it to Production.',
 }));
 
 // Approve an RWIP or RFQC (rework) job order. One step: "Pending RMA Approval" -> Released /

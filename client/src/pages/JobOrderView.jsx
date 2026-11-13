@@ -354,8 +354,7 @@ export default function JobOrderView() {
   // makes "Sales can change the material" true rather than an instruction to go and find someone
   // who can.
   const canRework = mayReworkJobOrder(user, jo);
-  // Revise JO (2026-11-13): In-Process, not on hold -- the rep opens it for changes, then returns it.
-  const canStartSalesRevision = jo.production_stage === 'in_process' && !jo.is_on_hold && jo.status !== 'Cancelled' && maySalesRevise(user, jo, canEdit);
+  // Revision (2026-11-13): Production sends an In-Process JO back; its rep edits it, then returns it here.
   const canEndSalesRevision = jo.production_stage === 'in_process_with_revision' && !jo.is_on_hold && jo.status !== 'Cancelled' && maySalesRevise(user, jo, canEdit);
   // ...and the rep's own JO in full, until Production has it (no production stage yet).
   const canEditOwn = mayEditOwnJobOrder(user, jo);
@@ -481,11 +480,6 @@ export default function JobOrderView() {
             <button className="btn btn-sm btn-primary" disabled={busy}
               title="Send the corrected Job Order back to Production for acknowledgement."
               onClick={handleApproveRevision}>Approve to Production</button>
-          )}
-          {canStartSalesRevision && (
-            <button className="btn btn-sm btn-warning" disabled={busy}
-              title="Open this In-Process Job Order for changes to its materials and processes."
-              onClick={() => { if (window.confirm('Put this Job Order into revision so you can change it?')) handleSalesRevision('start-sales-revision'); }}>Revise JO</button>
           )}
           {canEndSalesRevision && (
             <button className="btn btn-sm btn-primary" disabled={busy}

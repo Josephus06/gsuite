@@ -537,11 +537,11 @@ export default function ProductionJobOrderView() {
 
   // Revise JO / Return to Production (2026-11-13): the sales rep opens an In-Process job order for
   // changes and returns it -- the same endpoints as the Job Order page (routes/jobOrders.js).
-  async function handleSalesRevision(action) {
+  async function handleSalesRevision(action, body = {}) {
     setBusy(true);
     setActionError('');
     try {
-      await api.put(`/job-orders/${id}/${action}`);
+      await api.put(`/job-orders/${id}/${action}`, body);
       await load();
     } catch (err) {
       setActionError(err.response?.data?.error || 'Could not change this Job Order\u2019s revision.');
@@ -630,9 +630,11 @@ export default function ProductionJobOrderView() {
   // A date revision ends by answering it (below), not by the generic return button -- which the
   // server also refuses while the suggestion is unanswered, so the two agree.
   const decidingDate = canReturnRevision && awaitingDateDecision(jo);
-  // Revise JO (2026-11-13): an In-Process job order, not on hold; Sales' button (maySalesRevise).
+  // Revision (2026-11-13): Production -- a planner, a Production Supervisor, or Production edit
+  // rights -- sends an In-Process job order back to its sales rep; the rep returns it (below).
   const canStartSalesRevision = !advanceCopy && jo.production_stage === 'in_process' && !isOnHold
-    && jo.status !== 'Cancelled' && canReturnRevision;
+    && jo.status !== 'Cancelled'
+    && (user?.account_type === 'System Admin' || isPlanner(user) || !!user?.is_production_supervisor || can('/production', 'can_edit'));
   const canEndSalesRevision = jo.production_stage === 'in_process_with_revision' && !isOnHold
     && jo.status !== 'Cancelled' && canReturnRevision;
   const canSendForRevision = !advanceCopy && can('/production', 'can_edit') && !isOnHold
@@ -701,8 +703,11 @@ export default function ProductionJobOrderView() {
           )}
           {canStartSalesRevision && (
             <button className="btn btn-sm btn-warning" disabled={busy}
-              title="Open this In-Process Job Order for changes to its materials and processes."
-              onClick={() => { if (window.confirm('Put this Job Order into revision so Sales can change it?')) handleSalesRevision('start-sales-revision'); }}>Revise JO</button>
+              title="Send this In-Process Job Order back to its sales rep to change its materials and processes."
+              onClick={() => {
+                const note = window.prompt('Send this Job Order back to the sales rep for revision. What needs to change?');
+                if (note !== null) handleSalesRevision('start-sales-revision', { note });
+              }}>Revision</button>
           )}
           {canEndSalesRevision && (
             <button className="btn btn-sm btn-primary" disabled={busy}

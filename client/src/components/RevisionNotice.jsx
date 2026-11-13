@@ -12,7 +12,9 @@ const day = (v) => (v ? String(v).slice(0, 10) : '');
 // columns are last-time's answer, and showing them beside a job that is moving again would
 // read as a live request.
 export default function RevisionNotice({ jo }) {
-  if (!jo || jo.production_stage !== 'for_revision' || !jo.revision_reason) return null;
+  // ...and an In-Process job order Production sent back for revision (2026-11-13, In-Process w/ Rev.).
+  const inProcessRevision = jo?.production_stage === 'in_process_with_revision';
+  if (!jo || (jo.production_stage !== 'for_revision' && !inProcessRevision) || !jo.revision_reason) return null;
 
   const isDate = jo.revision_reason === REVISION_DELIVERY_DATE;
   const suggested = day(jo.revision_suggested_delivery_date);
@@ -44,7 +46,7 @@ export default function RevisionNotice({ jo }) {
           </span>
         </div>
       )}
-      {!isDate && <div>Sales may change this Job Order’s materials and processes.</div>}
+      {!isDate && <div>Sales may change this Job Order’s materials and processes{inProcessRevision ? ', then Return to Production' : ''}.</div>}
       {jo.revision_note && <div>Remarks : <span className="hi">{jo.revision_note}</span></div>}
       <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
         {jo.revision_requested_by_name ? `Requested by ${jo.revision_requested_by_name}` : 'Requested by Production'}
