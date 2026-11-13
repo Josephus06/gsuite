@@ -635,6 +635,15 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       [orderType, orderId, slot.start, slot.end, req.body.preferred_artist_id, notes || null, delivery.value, req.user.id],
     );
     await logAudit(conn, { id: r.insertId, userId: req.user.id, eventType: 'Created', fieldName: 'scheduled_start', newValue: `${slot.start} - ${slot.end}` });
+    // Tell the SBUs a slot is waiting on their calendar to be forwarded (asked 2026-11-13: "no
+    // notification SBU received when there are JO's sent by sales"). Not the one who scheduled it.
+    const made = await loadSchedule(conn, r.insertId);
+    const [[who]] = await conn.query('SELECT display_name FROM users WHERE id = ?', [req.user.id]);
+    await notifyUsers(conn, (await sbuUserIds(conn)).filter((u) => Number(u) !== Number(req.user.id)), {
+      title: `${made?.order_no || orderType} scheduled for design by ${who?.display_name || 'Sales'} -- ${displaySlot(slot.start, slot.end)}`,
+      message: 'On the Design Schedule as a draft -- forward the calendar to Design when ready.',
+      relatedId: r.insertId,
+    });
     await conn.commit();
     res.status(201).json(await loadSchedule(pool, r.insertId));
   } catch (err) {
