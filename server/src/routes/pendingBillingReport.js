@@ -7,6 +7,20 @@ const { hasSoAttachmentKind } = require('../lib/soAttachmentKind');
 
 const router = express.Router();
 
+// pending_billing_marks.sent_date (2026-11-13, add-pending-billing-sent-date.js): the date the PAR &
+// Pics hard copy was sent, asked when wt PAR&Pics is ticked by hand. Checked once; until the column
+// is added the tick works as before, without the date.
+let sentDateCol = null;
+async function hasSentDate() {
+  if (sentDateCol === null) {
+    const [[c]] = await pool.query(
+      `SELECT COUNT(*) AS n FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'pending_billing_marks' AND COLUMN_NAME = 'sent_date'`);
+    sentDateCol = !!c.n;
+  }
+  return sentDateCol;
+}
+
 // Sales > Pending Billing: Job Orders that went through Assembly Build, Quality Inspection AND Item
 // Delivery but are not yet (fully) on a Delivery Ticket or an Invoice -- delivered and waiting for
 // the bill (2026-10-28). To Bill = the quantity delivered less what DTs and invoices already cover.
@@ -165,6 +179,7 @@ async function loadRows(req, { allReps = false } = {}) {
   // user with can_update here ticked the box by hand (pending_billing_marks; PO marks are per SO).
   const soIds = [...new Set(jos.map((j) => j.sales_order_id).filter(Boolean))].concat(0);
   const withKind = await hasSoAttachmentKind();
+  const sentCol = withKind && await hasSentDate();
   const [invM, [qis], [dels], [solRows], [nslRows], [poRows], [parRows], [markRows]] = await Promise.all([
     invoicedByJobOrder(jos),
     pool.query(`SELECT job_order_id, MAX(date_created) d FROM quality_inspections
@@ -184,12 +199,12 @@ async function loadRows(req, { allReps = false } = {}) {
     // 'PAR' since 2026-11-09 (Production Attachment's types became PAR / Picture); 'PAR & Pics' for older files.
     pool.query("SELECT DISTINCT job_order_id FROM job_order_attachments WHERE kind IN ('PAR', 'PAR & Pics') AND job_order_id IN (?)", [ids]),
     withKind ? pool.query(
-      `SELECT m.target, m.target_id, m.marked_at, u.display_name AS marked_by FROM pending_billing_marks m
+      `SELECT m.target, m.target_id, m.marked_at, ${sentCol ? "DATE_FORMAT(m.sent_date, '%Y-%m-%d')" : 'NULL'} AS sent_date, u.display_name AS marked_by FROM pending_billing_marks m
          LEFT JOIN users u ON u.id = m.marked_by_user_id
         WHERE (m.target = 'par' AND m.target_id IN (?)) OR (m.target = 'po' AND m.target_id IN (?))`, [ids, soIds]) : [[]],
   ]);
   const marks = new Map(markRows.map((m) => [`${m.target}|${m.target_id}`, m]));
-  const markOf = (target, id) => { const m = marks.get(`${target}|${Number(id)}`); return m ? { by: m.marked_by, at: m.marked_at } : null; };
+  const markOf = (target, id) => { const m = marks.get(`${target}|${Number(id)}`); return m ? { by: m.marked_by, at: m.marked_at, sent: m.sent_date || null } : null; };
   const withPo = new Set(poRows.map((r) => Number(r.sales_order_id)));
   const withPar = new Set(parRows.map((r) => Number(r.job_order_id)));
   const qiM = byJo(qis); const delM = byJo(dels);
@@ -257,9 +272,23 @@ router.put('/mark', requireAuth, requirePermission(ROUTE, 'can_update'), async (
     const { target, id, checked } = req.body || {};
     if (!['par', 'po'].includes(target) || !Number(id)) return res.status(400).json({ error: 'target (par or po) and id are required.' });
     if (!(await hasSoAttachmentKind())) return res.status(409).json({ error: 'Run node src/db/add-so-attachment-kind.js on the server first.' });
+    // Ticking wt PAR&Pics needs the date its hard copy was sent (2026-11-13); not later than today.
+    const sentCol = await hasSentDate();
+    const sent = String(req.body?.sent_date || '').slice(0, 10);
+    if (target === 'par' && checked && sentCol) {
+      if (!/^d{4}-d{2}-d{2}$/.test(sent)) return res.status(400).json({ error: 'Enter the date the PAR & Pics hard copy was sent.' });
+      const [[{ today }]] = await pool.query("SELECT DATE_FORMAT(CURDATE(), '%Y-%m-%d') AS today");
+      if (sent > today) return res.status(400).json({ error: 'The date sent cannot be later than today.' });
+    }
     const [[exists]] = await pool.query(target === 'par' ? 'SELECT id FROM job_orders WHERE id = ?' : 'SELECT id FROM sales_orders WHERE id = ?', [id]);
     if (!exists) return res.status(404).json({ error: 'Not found' });
-    if (checked) {
+    if (checked && target === 'par' && sentCol) {
+      // Ticking again (or changing the date) keeps the latest date and who set it.
+      await pool.query(
+        `INSERT INTO pending_billing_marks (target, target_id, marked_by_user_id, marked_at, sent_date) VALUES (?, ?, ?, NOW(), ?)
+         ON DUPLICATE KEY UPDATE sent_date = VALUES(sent_date), marked_by_user_id = VALUES(marked_by_user_id), marked_at = NOW()`,
+        [target, id, req.user.id, sent]);
+    } else if (checked) {
       await pool.query(
         'INSERT INTO pending_billing_marks (target, target_id, marked_by_user_id, marked_at) VALUES (?, ?, ?, NOW()) ON DUPLICATE KEY UPDATE target_id = target_id',
         [target, id, req.user.id]);
@@ -267,9 +296,9 @@ router.put('/mark', requireAuth, requirePermission(ROUTE, 'can_update'), async (
       await pool.query('DELETE FROM pending_billing_marks WHERE target = ? AND target_id = ?', [target, id]);
     }
     const [[m]] = await pool.query(
-      `SELECT m.marked_at, u.display_name AS marked_by FROM pending_billing_marks m LEFT JOIN users u ON u.id = m.marked_by_user_id
+      `SELECT m.marked_at, ${sentCol ? "DATE_FORMAT(m.sent_date, '%Y-%m-%d')" : 'NULL'} AS sent_date, u.display_name AS marked_by FROM pending_billing_marks m LEFT JOIN users u ON u.id = m.marked_by_user_id
         WHERE m.target = ? AND m.target_id = ?`, [target, id]);
-    res.json({ mark: m ? { by: m.marked_by, at: m.marked_at } : null });
+    res.json({ mark: m ? { by: m.marked_by, at: m.marked_at, sent: m.sent_date || null } : null });
   } catch (err) {
     next(err);
   }
@@ -289,6 +318,7 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
       { header: 'Description', key: 'description', width: 44 },
       { header: 'Completed', key: 'completed_date', width: 12 },
       { header: 'wt PAR&Pics', key: 'par', width: 11 },
+      { header: 'PAR&Pics Sent', key: 'par_sent', width: 13 },
       { header: 'wt PO', key: 'po', width: 8 },
       { header: 'Days Pending', key: 'days_pending', width: 10 },
       { header: 'Qty', key: 'quantity', width: 9 },
@@ -303,7 +333,7 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
     ws.getRow(1).font = { bold: true };
     for (const r of rows) {
       ws.addRow({ ...r, order: r.sales_order_no || r.nsso_no || '', completed_date: r.completed_date ? String(r.completed_date).slice(0, 10) : '',
-        par: r.with_par_pics ? 'Yes' : '', po: r.with_po ? 'Yes' : '',
+        par: r.with_par_pics ? 'Yes' : '', par_sent: r.par_pics_mark?.sent || '', po: r.with_po ? 'Yes' : '',
         unit_gross: Number(Number(r.unit_gross || 0).toFixed(2)) });
     }
     const total = ws.addRow({ job_order_no: 'Total', uninvoiced_qty: rows.reduce((s, r) => s + r.uninvoiced_qty, 0), unbilled_amount: rows.reduce((s, r) => s + r.unbilled_amount, 0) });

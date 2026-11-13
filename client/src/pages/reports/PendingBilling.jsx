@@ -7,6 +7,7 @@ import { displayDate, displayDateTime } from '../../utils/dates';
 import { useAuth } from '../../context/useAuth';
 import FilterPicker from '../../components/FilterPicker';
 import SearchInput from '../../components/SearchInput';
+import Modal from '../../components/Modal';
 
 // Sales > Pending Billing: Job Orders production has completed but that are not yet (fully)
 // invoiced -- the work that is done and waiting for its bill. Oldest first, because the longer a
@@ -27,13 +28,17 @@ export default function PendingBilling() {
   const { can } = useAuth();
   const canMark = can('/reports/pending-billing', 'can_update');
   const [marking, setMarking] = useState('');
+  // Ticking wt PAR&Pics asks for the date its hard copy was sent (2026-11-13): { row, date }.
+  const [askSent, setAskSent] = useState(null);
+  const todayKey = new Date().toLocaleDateString('en-CA');
 
   // A PO mark belongs to the sales order, so it changes every row of that order.
-  async function toggleMark(row, target, checked) {
+  async function toggleMark(row, target, checked, sentDate) {
+    if (target === 'par' && checked && !sentDate) { setAskSent({ row, date: todayKey }); return; }
     const id = target === 'par' ? row.id : row.sales_order_id;
     setMarking(`${target}|${id}`); setError('');
     try {
-      const { data: { mark } } = await api.put('/reports/pending-billing/mark', { target, id, checked });
+      const { data: { mark } } = await api.put('/reports/pending-billing/mark', { target, id, checked, sent_date: sentDate || undefined });
       setData((d) => ({
         ...d,
         rows: d.rows.map((r) => {
@@ -53,12 +58,15 @@ export default function PendingBilling() {
     const what = target === 'par' ? 'PAR & Pics' : 'PO';
     let title = `No ${what} yet`;
     if (file) title = `${what} attached`;
-    else if (mark) title = `Ticked by ${mark.by || 'someone'}${mark.at ? `, ${displayDateTime(mark.at)}` : ''}`;
+    else if (mark) title = `${mark.sent ? `Hard copy sent ${displayDate(mark.sent)} · ` : ''}Ticked by ${mark.by || 'someone'}${mark.at ? `, ${displayDateTime(mark.at)}` : ''}`;
     return (
-      <input type="checkbox" checked={!!(file || mark)} title={title} aria-label={`with ${what}`}
-        readOnly={!editable} style={{ cursor: editable ? 'pointer' : 'default' }}
-        onClick={editable ? undefined : (e) => e.preventDefault()}
-        onChange={editable ? (e) => toggleMark(row, target, e.target.checked) : undefined} />
+      <>
+        <input type="checkbox" checked={!!(file || mark)} title={title} aria-label={`with ${what}`}
+          readOnly={!editable} style={{ cursor: editable ? 'pointer' : 'default' }}
+          onClick={editable ? undefined : (e) => e.preventDefault()}
+          onChange={editable ? (e) => toggleMark(row, target, e.target.checked) : undefined} />
+        {!file && mark?.sent && <div className="muted" style={{ fontSize: 11, whiteSpace: 'nowrap' }}>Sent {displayDate(mark.sent)}</div>}
+      </>
     );
   };
 
@@ -132,6 +140,28 @@ export default function PendingBilling() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {askSent && (
+        <Modal title="PAR & Pics sent" onClose={() => setAskSent(null)}>
+          <p style={{ marginTop: 0 }}>{askSent.row.job_order_no} -- the date the PAR &amp; Pics hard copy was sent.</p>
+          <form onSubmit={(e) => {
+            e.preventDefault();
+            if (!askSent.date) return;
+            const { row, date } = askSent;
+            setAskSent(null);
+            toggleMark(row, 'par', true, date);
+          }}>
+            <div className="field">
+              <label>Date Sent *</label>
+              <input type="date" required autoFocus max={todayKey} value={askSent.date}
+                onChange={(e) => setAskSent((a) => ({ ...a, date: e.target.value }))} />
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+              <button type="button" className="btn" onClick={() => setAskSent(null)}>Cancel</button>
+              <button type="submit" className="btn btn-primary" disabled={!askSent.date}>Save</button>
+            </div>
+          </form>
+        </Modal>
+      )}
       {!data ? <LoadingSpinner /> : (
         <>
           <div className="card" style={{ marginBottom: 16, display: 'flex', gap: 32, flexWrap: 'wrap' }}>
