@@ -9,7 +9,7 @@ const {
 } = require('../lib/arAging');
 const {
   buildApAging, buildApAgingSupplierDetails, buildApAgingUnmatchedDetails, collectOpenApItems,
-  buildApAgingDetails, buildApAgingDetailsCsv, searchApSuppliers,
+  buildApAgingDetails, buildApAgingDetailsCsv, searchApSuppliers, withoutCreditVendors,
 } = require('../lib/apAging');
 const {
   arAgingWorkbook, apAgingWorkbook, arAgingDetailsWorkbook, apAgingDetailsWorkbook, sendWorkbook,
@@ -348,6 +348,8 @@ router.get('/ar-aging', requireAuth, requirePermission(AR_AGING_ROUTE, 'can_view
       // Per Sales Group / SBU (2026-10-14; lib/arAging.js). A group wins over an SBU if both come.
       salesGroupId: Number(req.query.salesGroupId) > 0 ? Number(req.query.salesGroupId) : null,
       sbu: req.query.sbu ? String(req.query.sbu) : null,
+      // credit=exclude leaves out the customers whose balance is a credit (2026-11-13; lib/arAging.js).
+      excludeCredit: req.query.credit === 'exclude',
     };
     const data = await buildArAging(req.query.asOf || today(), filters);
     // ?format=xlsx -- the Extract button: the same rows and totals as a workbook.
@@ -420,6 +422,8 @@ function apAgingFilters(query) {
     noLocation: query.noLocation === 'true' || query.noLocation === '1',
     nameStarts: query.nameStarts ? String(query.nameStarts).slice(0, 100) : null,
     includeUnevidenced: query.includeUnevidenced === 'true' || query.includeUnevidenced === '1',
+    // credit=exclude leaves out the vendors whose balance is a credit (2026-11-13, as on AR Aging).
+    excludeCredit: query.credit === 'exclude',
   };
 }
 
@@ -438,7 +442,9 @@ router.get('/ap-aging', requireAuth, requirePermission(AP_AGING_ROUTE, 'can_view
 router.get('/ap-aging/details', requireAuth, requirePermission(AP_AGING_ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const asOf = String(req.query.asOf || today()).slice(0, 10);
-    const { items } = await collectOpenApItems(asOf, apAgingFilters(req.query));
+    const filters = apAgingFilters(req.query);
+    const { items: all } = await collectOpenApItems(asOf, filters);
+    const items = filters.excludeCredit ? withoutCreditVendors(all) : all;
     const asOfMs = Date.parse(`${asOf}T00:00:00Z`);
     const daysOverdue = (i) => Math.max(Math.floor((asOfMs - Date.parse(`${String(i.aging_date || i.due_date || i.date).slice(0, 10)}T00:00:00Z`)) / 86400000), 0) || 0;
     return sendWorkbook(res, apAgingDetailsWorkbook(items, asOf, daysOverdue), `ap-aging-details-${asOf}.xlsx`);

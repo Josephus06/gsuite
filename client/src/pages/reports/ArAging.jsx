@@ -39,6 +39,8 @@ export default function ArAging() {
   const [asOf, setAsOf] = useState(today());
   const [locationId, setLocationId] = useState('');
   const [noLocation, setNoLocation] = useState(false);
+  // Include / exclude the customers whose balance is a credit -- we owe them (2026-11-13).
+  const [credit, setCredit] = useState('include');
   const [nameStarts, setNameStarts] = useState('');
   const [locations, setLocations] = useState([]);
   // Per Term, per Account Officer, per Customer (2026-10-13). Term and Account Officer are each invoice's own.
@@ -79,6 +81,7 @@ export default function ArAging() {
     if (salesGroupId) params.salesGroupId = salesGroupId;
     else if (sbu) params.sbu = sbu;
     if (customer) params.customerId = customer.id;
+    if (credit === 'exclude') params.credit = 'exclude';
     return params;
   }
 
@@ -226,6 +229,13 @@ export default function ArAging() {
               onSelect={(c) => setCustomer(c || null)}
               onClear={() => setCustomer(null)}
             />
+          </div>
+          <div className="field">
+            <label>Credit Balance</label>
+            <select value={credit} onChange={(e) => setCredit(e.target.value)} title="A credit balance is a customer whose balance is below zero -- we owe them">
+              <option value="include">Include credit balance</option>
+              <option value="exclude">Exclude credit balance</option>
+            </select>
           </div>
           <div className="field">
             <label>Date as of</label>

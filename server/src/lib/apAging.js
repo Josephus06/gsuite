@@ -372,6 +372,9 @@ async function buildApAging(asOf, filters = {}) {
     })
     .filter((r) => Math.abs(r.total_balance) >= 0.005
       || [r.current, r.d1_30, r.d31_60, r.d61_90, r.over_90].some((v) => Math.abs(v) >= 0.005))
+    // Exclude credit balance (2026-11-13, as on AR Aging): a vendor whose balance nets below zero --
+    // it owes us (bill credits, advances) -- is left out, and the totals with it.
+    .filter((r) => !filters.excludeCredit || r.total_balance >= 0.005)
     .sort((a, b) => String(a.supplier_name).localeCompare(String(b.supplier_name)));
 
   const totals = rows.reduce((t, r) => ({
@@ -513,7 +516,15 @@ async function searchApSuppliers(term) {
   return rows;
 }
 
+// The open items of the vendors whose balance is not a credit -- what AP Aging lists with Exclude
+// credit balance on -- so its Details extract holds the same vendors as the summary.
+function withoutCreditVendors(items) {
+  const net = new Map();
+  for (const i of items) net.set(rowKey(i), (net.get(rowKey(i)) || 0) + Number(i.balance || 0));
+  return items.filter((i) => round2(net.get(rowKey(i))) >= 0.005);
+}
+
 module.exports = {
   buildApAging, buildApAgingSupplierDetails, buildApAgingUnmatchedDetails, collectOpenApItems,
-  buildApAgingDetails, buildApAgingDetailsCsv, searchApSuppliers,
+  buildApAgingDetails, buildApAgingDetailsCsv, searchApSuppliers, withoutCreditVendors,
 };

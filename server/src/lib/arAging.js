@@ -330,13 +330,19 @@ async function narrowItems(items, filters = {}) {
 
 async function buildArAging(asOf, filters = {}) {
   const items = await narrowItems(await collectOpenItems(asOf, filters), filters);
-  const result = { as_of: asOf, ...summarizeItems(items, asOf) };
-  if (filters.sbu && !filters.salesGroupId) result.sbu_layout = await buildSbuLayout(items, asOf, filters.sbu);
+  const opts = { excludeCredit: !!filters.excludeCredit };
+  const result = { as_of: asOf, ...summarizeItems(items, asOf, opts) };
+  if (filters.sbu && !filters.salesGroupId) result.sbu_layout = await buildSbuLayout(items, asOf, filters.sbu, opts);
   return result;
 }
 
 // One row per customer, and the totals, for a set of open items.
-function summarizeItems(items, asOf) {
+//
+// excludeCredit (asked 2026-11-13: "Include credit / Exclude credit balance"): leaves out every
+// customer whose balance, netted across all its documents, is a credit -- below zero, so we owe
+// them -- and the totals with them. A customer who owes on balance stays whole, its unapplied
+// payments and credit memos included, so its row still nets to what it actually owes.
+function summarizeItems(items, asOf, { excludeCredit = false } = {}) {
   // Accumulate every contribution into per-customer buckets.
   const byCustomer = new Map();
   function customerRow(item) {
@@ -380,6 +386,7 @@ function summarizeItems(items, asOf) {
     // real report only listing customers with a balance.
     .filter((r) => Math.abs(r.total_balance) >= 0.005
       || [r.current, r.d1_30, r.d31_60, r.d61_90, r.over_90].some((v) => Math.abs(v) >= 0.005))
+    .filter((r) => !excludeCredit || r.total_balance >= 0.005)
     .sort((a, b) => String(a.customer_name).localeCompare(String(b.customer_name)));
 
   const totals = rows.reduce((t, r) => ({
@@ -406,7 +413,7 @@ function summarizeItems(items, asOf) {
 // the dashboard's sales breakdown (lib/salesBreakdown.js). A document belongs to its own sales rep
 // (by id, or by name for an opening balance), so a customer appears under each officer it owes on.
 // Every item lands in exactly one section, so the sections add up to the report total.
-async function buildSbuLayout(items, asOf, sbuIndex) {
+async function buildSbuLayout(items, asOf, sbuIndex, summaryOpts = {}) {
   const sbu = (await getSbuGroups()).find((g) => String(g.index) === String(sbuIndex));
   if (!sbu) return null;
   const [users] = await pool.query(
@@ -425,7 +432,7 @@ async function buildSbuLayout(items, asOf, sbuIndex) {
   }
   const empOf = (i) => (i.sales_rep_id ? Number(i.sales_rep_id) : empByName.get(norm(i.sales_rep)) || null);
   const nameOf = (empId, i) => userByEmp.get(empId)?.name || i?.sales_rep || '(no account officer)';
-  const section = (kind, label, name, list) => ({ kind, label, name, ...summarizeItems(list, asOf) });
+  const section = (kind, label, name, list) => ({ kind, label, name, ...summarizeItems(list, asOf, summaryOpts) });
 
   const headUser = userById.get(sbu.userId);
   const isHead = (empId) => empId != null && headUser && Number(headUser.employee_id) === empId;

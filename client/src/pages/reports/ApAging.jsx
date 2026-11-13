@@ -31,6 +31,8 @@ export default function ApAging() {
   const [noLocation, setNoLocation] = useState(false);
   const [nameStarts, setNameStarts] = useState('');
   const [includeUnevidenced, setIncludeUnevidenced] = useState(false);
+  // Include / exclude the vendors whose balance is a credit -- they owe us (2026-11-13, as on AR Aging).
+  const [credit, setCredit] = useState('include');
   const [locations, setLocations] = useState([]);
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -53,6 +55,7 @@ export default function ApAging() {
     else if (locationId) params.locationId = locationId;
     if (nameStarts) params.nameStarts = nameStarts;
     if (includeUnevidenced) params.includeUnevidenced = true;
+    if (credit === 'exclude') params.credit = 'exclude';
     return params;
   }
 
@@ -129,6 +132,13 @@ export default function ApAging() {
           <div className="field">
             <label>No Location</label>
             <input type="checkbox" checked={noLocation} onChange={(e) => setNoLocation(e.target.checked)} />
+          </div>
+          <div className="field">
+            <label>Credit Balance</label>
+            <select value={credit} onChange={(e) => setCredit(e.target.value)} title="A credit balance is a vendor whose balance is below zero -- it owes us">
+              <option value="include">Include credit balance</option>
+              <option value="exclude">Exclude credit balance</option>
+            </select>
           </div>
           <div className="field">
             <label>Date as of</label>
