@@ -10,6 +10,7 @@ import useAutoSearch from '../utils/useAutoSearch';
 import { CustomerLink } from '../components/PartyLink';
 import FilterPicker from '../components/FilterPicker';
 import SearchInput from '../components/SearchInput';
+import { downloadFile } from '../utils/downloadFile';
 
 // Mirrors the real system's Estimates list: status tabs with counts (instead of a
 // plain flat table), a collapsible filter panel, and a "View" action per row that
@@ -60,13 +61,32 @@ export default function Estimates() {
   const isCsaTab = status === 'for_csa_assignment';
   const canAssign = can('/estimates-csa-assignment', 'can_approve');
 
-  async function load() {
-    setLoading(true);
-    const params = { status, page, limit };
+  // The filters and tab, as the server takes them -- shared by the list and its Extract.
+  function filterParams() {
+    const params = { status };
     if (search) params.search = search;
     if (salesRepId) params.sales_rep_id = salesRepId;
     if (officeLocationId) params.office_location_id = officeLocationId;
     if (asOf) params.as_of = asOf;
+    return params;
+  }
+
+  // Extract (asked 2026-11-13): every estimate under the filters and tab -- not just this page -- as a workbook.
+  const [extracting, setExtracting] = useState(false);
+  async function extract() {
+    setExtracting(true);
+    try {
+      await downloadFile('/estimates', { ...filterParams(), format: 'xlsx' }, `estimates-${new Date().toISOString().slice(0, 10)}.xlsx`);
+    } catch {
+      alert('Extract failed. Please try again.');
+    } finally {
+      setExtracting(false);
+    }
+  }
+
+  async function load() {
+    setLoading(true);
+    const params = { ...filterParams(), page, limit };
     const { data } = await api.get('/estimates', { params });
     setRows(data.rows);
     setTotal(data.total);
@@ -169,7 +189,12 @@ export default function Estimates() {
               <input type="date" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
             </div>
           </div>
-          <button className="btn btn-primary" style={{ marginTop: 12 }} onClick={runSearch}>Search</button>
+          <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
+            <button className="btn btn-primary" onClick={runSearch}>Search</button>
+            <button className="btn" disabled={extracting} onClick={extract} title="Download every estimate under the filters and tab above">
+              {extracting ? 'Extracting...' : 'Extract'}
+            </button>
+          </div>
         </div>
       )}
 

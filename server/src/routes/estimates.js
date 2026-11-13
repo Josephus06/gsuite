@@ -12,6 +12,12 @@ const { BILLABLE_ESTIMATE_SQL } = require('../lib/estimateBilling');
 const { headerDepartmentError } = require('../lib/requireDepartment');
 const { lineLocation, MISSING_LOCATION } = require('../lib/processLocation');
 const { sendEstimateXlsx } = require('../lib/estimateExtract');
+const { sendXlsx, day } = require('../lib/xlsxExport');
+
+const STATUS_LABELS = {
+  for_csa_assignment: 'For CSA Assignment', pending_supervisor_approval: 'Pending Supervisor Approval',
+  pending_customer_approval: 'Pending Customer Approval', approved: 'Approved', cancelled: 'Cancelled', disapproved: 'Disapproved',
+};
 
 const router = express.Router();
 
@@ -352,6 +358,14 @@ async function requireEditableEstimate(req, res, next) {
   }
 }
 
+// The list's Total Amount -- the stored header total, or the job order lines' when it is blank (why:
+// see the list route below). Shared by the list and its Extract.
+const effectiveTotalSql = `CASE
+        WHEN COALESCE(e.total_amount, 0) <> 0 THEN e.total_amount
+        ELSE (SELECT COALESCE(SUM(jo.subtotal), 0) - COALESCE(SUM(jo.disc_amount), 0)
+                     + COALESCE(SUM(jo.tax_amount), 0)
+                FROM estimate_job_orders jo WHERE jo.estimate_id = e.id) END`;
+
 router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const {
@@ -394,6 +408,39 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
        LEFT JOIN employees pb ON pb.id = e.prepared_by_id
        LEFT JOIN locations loc ON loc.id = e.office_location_id`;
 
+    // Extract (asked 2026-11-13): format=xlsx is every estimate under the list's filters and tab -- not
+    // just the page -- as a workbook, with the columns the list shows.
+    if (req.query.format === 'xlsx') {
+      const [all] = await pool.query(
+        `SELECT e.estimate_no, e.date_created, e.status, e.contract_description, c.name AS customer_name,
+                CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
+                CONCAT(pb.first_name, ' ', pb.last_name) AS prepared_by_name, loc.location_name,
+                ${effectiveTotalSql} AS total
+           ${baseFrom} ${whereSql}
+          ORDER BY e.id DESC`, params);
+      return await sendXlsx(res, {
+        filename: 'estimates.xlsx',
+        sheet: 'Estimates',
+        columns: [
+          { header: 'Estimate No', key: 'estimate_no', width: 14 },
+          { header: 'Date Created', key: 'date', width: 13 },
+          { header: 'Location', key: 'location_name', width: 18 },
+          { header: 'Customer', key: 'customer_name', width: 40 },
+          { header: 'Contract Description', key: 'contract_description', width: 60 },
+          { header: 'Sales Rep.', key: 'sales_rep_name', width: 26 },
+          { header: 'Prepared By', key: 'prepared_by_name', width: 26 },
+          { header: 'Status', key: 'status_label', width: 26 },
+          { header: 'Total Amount', key: 'total', width: 16 },
+        ],
+        rows: all.map((r) => ({
+          ...r, date: day(r.date_created), status_label: STATUS_LABELS[r.status] || r.status || '',
+          customer_name: r.customer_name || '', contract_description: r.contract_description || '',
+          sales_rep_name: r.sales_rep_name || '', prepared_by_name: r.prepared_by_name || '', location_name: r.location_name || '',
+          total: Number(r.total) || 0,
+        })),
+      });
+    }
+
     const [[{ total }]] = await pool.query(`SELECT COUNT(*) AS total ${baseFrom} ${whereSql}`, params);
 
     const pageNum = Math.max(1, Number(page) || 1);
@@ -419,11 +466,7 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
     //
     // This changes exactly 26 rows out of 70,120. The 348 rows that the other rule would have
     // moved -- 263 of them by less than a centavo -- stay as they are.
-    const effectiveTotal = `CASE
-        WHEN COALESCE(e.total_amount, 0) <> 0 THEN e.total_amount
-        ELSE (SELECT COALESCE(SUM(jo.subtotal), 0) - COALESCE(SUM(jo.disc_amount), 0)
-                     + COALESCE(SUM(jo.tax_amount), 0)
-                FROM estimate_job_orders jo WHERE jo.estimate_id = e.id) END`;
+    const effectiveTotal = effectiveTotalSql;
 
     const [rows] = await pool.query(
       `SELECT e.*, c.name AS customer_name, CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
