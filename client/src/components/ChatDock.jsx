@@ -20,6 +20,19 @@ const TYPING_EVERY_MS = 2000; // "I am typing" is sent at most this often while 
 const lastSeenIn = (messages, meId) => messages.reduce((n, m) => (m.sender_user_id === meId && m.read_at && m.id > n ? m.id : n), 0);
 const MAX_BOXES = 3;
 
+// Several tabs (2026-11-13). Every open tab receives each message, and each used to open its own
+// chat head for it -- so a chat being read in one tab still popped up, unread, in every other tab,
+// and in a tab opened afterwards. Now:
+//   - a tab that would open a box on its own (a new message, or unread found on load) waits
+//     AUTO_OPEN_DELAY_MS and re-reads the thread first; read in the meantime -- by another tab
+//     with the chat open -- and it opens nothing;
+//   - a tab that marks a chat read tells the other tabs (BroadcastChannel), and they drop the
+//     unread count, and close a chat head they had opened on their own for it.
+const AUTO_OPEN_DELAY_MS = 1500;
+const tabChannel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('gsuite-chat-read') : null;
+const tellTabs = (msg) => { try { tabChannel?.postMessage(msg); } catch { /* one tab only, then */ } };
+const wait = (ms) => new Promise((r) => { setTimeout(r, ms); });
+
 export function openChat(user) {
   window.dispatchEvent(new CustomEvent('chat:open', { detail: user }));
 }
@@ -85,6 +98,7 @@ export default function ChatDock() {
   const markRead = useCallback((otherId) => {
     api.post(`/chat/read/${otherId}`).catch(() => {});
     window.dispatchEvent(new CustomEvent('chat:read', { detail: otherId }));
+    tellTabs({ kind: 'dm', id: Number(otherId) });
   }, []);
 
   // Open (or bring forward) a box and load its conversation.
@@ -93,17 +107,27 @@ export default function ChatDock() {
     const existing = boxesRef.current.find((b) => b.user.id === u.id);
     if (existing) {
       if (focus) {
-        setBoxes((bs) => bs.map((b) => (b.user.id === u.id ? { ...b, minimized: false, unread: 0 } : b)));
+        setBoxes((bs) => bs.map((b) => (b.user.id === u.id ? { ...b, minimized: false, unread: 0, auto: false } : b)));
         if (existing.unread) markRead(u.id);
       }
       return;
     }
+    let preloaded = null;
+    if (!focus) {
+      // Opened on its own: give another tab that has this chat open the moment to mark it read,
+      // then open it only if something is still unread.
+      await wait(AUTO_OPEN_DELAY_MS);
+      if (boxesRef.current.some((b) => b.user.id === u.id)) return;
+      try { preloaded = (await api.get(`/chat/thread/${u.id}`)).data; } catch { return; }
+      if (!preloaded.messages.some((m) => m.sender_user_id !== user.id && !m.read_at)) return;
+      if (boxesRef.current.some((b) => b.user.id === u.id)) return;
+    }
     setBoxes((bs) => {
-      const next = [...bs, { user: u, messages: [], minimized: !focus, hasMore: false, loading: true, unread: 0 }];
+      const next = [...bs, { user: u, messages: [], minimized: !focus, auto: !focus, hasMore: false, loading: true, unread: 0 }];
       return next.length > MAX_BOXES ? next.slice(next.length - MAX_BOXES) : next;
     });
     try {
-      const { data } = await api.get(`/chat/thread/${u.id}`);
+      const data = preloaded || (await api.get(`/chat/thread/${u.id}`)).data;
       setBoxes((bs) => bs.map((b) => (b.user.id === u.id
         ? {
           ...b, user: { ...b.user, ...(data.user || {}) }, messages: data.messages, hasMore: data.has_more, loading: false,
@@ -127,6 +151,7 @@ export default function ChatDock() {
 
   const markGroupRead = useCallback((groupId) => {
     api.post(`/chat/groups/${groupId}/read`).then(() => window.dispatchEvent(new CustomEvent('chatgroup:changed'))).catch(() => {});
+    tellTabs({ kind: 'group', id: Number(groupId) });
   }, []);
 
   // Open (or bring forward) a group's box and load its conversation.
@@ -135,17 +160,26 @@ export default function ChatDock() {
     const existing = groupBoxesRef.current.find((b) => b.group.id === g.id);
     if (existing) {
       if (focus) {
-        setGroupBoxes((bs) => bs.map((b) => (b.group.id === g.id ? openedGroup(b) : b)));
+        setGroupBoxes((bs) => bs.map((b) => (b.group.id === g.id ? { ...openedGroup(b), auto: false } : b)));
         if (existing.unread) markGroupRead(g.id);
       }
       return;
     }
+    let preloaded = null;
+    if (!focus) {
+      await wait(AUTO_OPEN_DELAY_MS);
+      if (groupBoxesRef.current.some((b) => b.group.id === g.id)) return;
+      try { preloaded = (await api.get(`/chat/groups/${g.id}/thread`)).data; } catch { return; }
+      const lr = preloaded.last_read_id || 0;
+      if (!preloaded.messages.some((m) => m.sender_user_id !== user.id && m.id > lr)) return;
+      if (groupBoxesRef.current.some((b) => b.group.id === g.id)) return;
+    }
     setGroupBoxes((bs) => {
-      const next = [...bs, { group: g, messages: [], minimized: !focus, hasMore: false, loading: true, unread: 0 }];
+      const next = [...bs, { group: g, messages: [], minimized: !focus, auto: !focus, hasMore: false, loading: true, unread: 0 }];
       return next.length > MAX_BOXES ? next.slice(next.length - MAX_BOXES) : next;
     });
     try {
-      const { data } = await api.get(`/chat/groups/${g.id}/thread`);
+      const data = preloaded || (await api.get(`/chat/groups/${g.id}/thread`)).data;
       const lastRead = data.last_read_id || 0;
       const unread = data.messages.filter((m) => m.sender_user_id !== user.id && m.id > lastRead).length;
       setGroupBoxes((bs) => bs.map((b) => {
@@ -161,6 +195,24 @@ export default function ChatDock() {
       setGroupBoxes((bs) => bs.map((b) => (b.group.id === g.id ? { ...b, loading: false } : b)));
     }
   }, [markGroupRead, user?.id]);
+
+  // Read in another tab: no longer unread here, and a chat head this tab opened on its own for it
+  // (still minimized, never opened here) goes away.
+  useEffect(() => {
+    if (!enabled || !tabChannel) return undefined;
+    const onMsg = (e) => {
+      const { kind, id } = e.data || {};
+      if (kind === 'dm') {
+        setBoxes((bs) => bs.filter((b) => !(b.user.id === id && b.auto && b.minimized))
+          .map((b) => (b.user.id === id && b.unread ? { ...b, unread: 0 } : b)));
+      } else if (kind === 'group') {
+        setGroupBoxes((bs) => bs.filter((b) => !(b.group.id === id && b.auto && b.minimized))
+          .map((b) => (b.group.id === id && b.unread ? { ...b, unread: 0 } : b)));
+      }
+    };
+    tabChannel.addEventListener('message', onMsg);
+    return () => tabChannel.removeEventListener('message', onMsg);
+  }, [enabled]);
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -283,7 +335,7 @@ export default function ChatDock() {
     if (b.group.id !== id) return b;
     if (!b.minimized) return { ...b, minimized: true };
     markGroupRead(id);
-    return openedGroup(b);
+    return { ...openedGroup(b), auto: false };
   }));
   const appendGroup = (id, m) => setGroupBoxes((bs) => bs.map((b) => (b.group.id === id && !b.messages.some((x) => x.id === m.id)
     ? { ...b, messages: [...b.messages, m], readMark: m.id } : b)));
@@ -307,7 +359,7 @@ export default function ChatDock() {
   const toggle = (id) => setBoxes((bs) => bs.map((b) => {
     if (b.user.id !== id) return b;
     if (b.minimized) markRead(id);
-    return { ...b, minimized: !b.minimized, unread: b.minimized ? 0 : b.unread };
+    return { ...b, minimized: !b.minimized, unread: b.minimized ? 0 : b.unread, auto: false };
   }));
   const append = (id, m) => setBoxes((bs) => bs.map((b) => (b.user.id === id && !b.messages.some((x) => x.id === m.id)
     ? { ...b, messages: [...b.messages, m] } : b)));
