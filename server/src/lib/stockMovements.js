@@ -1,3 +1,4 @@
+const { movementsSql, movementParams } = require('./stockLedger');
 // Every transaction in this app that moves stock, as one uniform movement stream.
 //
 // WHY THIS EXISTS. The Stock Ledger used to be served verbatim from `live_stock_ledger`, a
@@ -126,29 +127,41 @@ const SOURCES = [
   },
 ];
 
-// Builds the movement stream as a single subquery. `filters` narrows every source identically:
+// Builds the movement stream as a single subquery. `filters` narrows it:
 //   { itemId, locationId, from, to }  -- from/to are inclusive dates.
 // Returns { sql, params } ready to drop into a CTE or FROM clause.
+//
+// THE BIN CARD'S MOVEMENTS (2026-11-13). This used to union SOURCES above -- a second copy of what
+// counts as a stock movement -- and the two disagreed: as of 31 Oct, ACRYLIC CLEAR 4.5 MM 4'X8' at
+// Warehouse - CNC read 32.5 SHT here against 0.7443 SHT on its Bin Card. This copy took an Item
+// Receipt's 32 (square feet, its line's unit) as 32 sheets, never converting the unit, and counted
+// only Assembly Builds whose status is 'completed' -- every build made in this app is 'saved', so
+// none of October's production left the shelf here. Now both reports read lib/stockLedger.js
+// movementsSql -- each line brought to the Base Unit by its own unit -- and this turns it back into
+// the Stock Unit the ledger reports in (÷ conversion factor), so the two reports cannot drift again.
+// SOURCES stays as the list of labels only.
+//
+// A movement's value is its stock quantity x the rate it carries (a receipt's price, a transfer's
+// average cost); one with no rate -- an Assembly Build -- is priced at the item's average cost by
+// shapeLedgerRow, as before.
 function movementsQuery(filters = {}) {
-  const { itemId, locationId, from, to, sources } = filters;
-  const wanted = sources ? SOURCES.filter((s) => sources.includes(s.key)) : SOURCES;
-
-  const parts = [];
-  const params = [];
-  for (const src of wanted) {
-    const where = [];
-    const p = [];
-    // The item/location columns are aliased differently per source, so filter on the outside of
-    // each SELECT rather than reaching into it.
-    parts.push(`SELECT * FROM (${src.sql}) AS ${src.key}`);
-    if (itemId) { where.push('item_id = ?'); p.push(itemId); }
-    if (locationId) { where.push('location_id = ?'); p.push(locationId); }
-    if (from) { where.push('move_date >= ?'); p.push(from); }
-    if (to) { where.push('move_date <= ?'); p.push(to); }
-    if (where.length) parts[parts.length - 1] += ` WHERE ${where.join(' AND ')}`;
-    params.push(...p);
-  }
-  return { sql: parts.join('\n      UNION ALL\n      '), params };
+  const { itemId, locationId, from, to } = filters;
+  const base = itemId ? movementsSql(true) : movementsSql();
+  const params = itemId ? movementParams([Number(itemId)]) : [];
+  const where = ['(m.qty_in <> 0 OR m.qty_out <> 0)'];
+  if (locationId) { where.push('COALESCE(m.to_location_id, m.from_location_id) = ?'); params.push(Number(locationId)); }
+  if (from) { where.push('m.trans_date >= ?'); params.push(from); }
+  if (to) { where.push('m.trans_date <= ?'); params.push(to); }
+  const sql = `
+      SELECT m.item_id, COALESCE(m.to_location_id, m.from_location_id) AS location_id, m.trans_date AS move_date,
+             IF(m.qty_in <> 0, 'in', 'out') AS direction,
+             (m.qty_in + m.qty_out) / COALESCE(NULLIF(mi.conversion_factor, 0), 1) AS qty,
+             IF(m.rate IS NULL, NULL, (m.qty_in + m.qty_out) / COALESCE(NULLIF(mi.conversion_factor, 0), 1) * m.rate) AS value,
+             m.trans_type AS source, m.trans_no AS doc_no, m.sort_id AS doc_id
+        FROM (${base}) m
+        JOIN inventories mi ON mi.id = m.item_id
+       WHERE ${where.join(' AND ')}`;
+  return { sql, params };
 }
 
 const today = () => new Date().toISOString().slice(0, 10);
