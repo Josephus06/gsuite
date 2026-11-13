@@ -317,6 +317,13 @@ export default function ApAging() {
                               marked paid
                             </span>
                           )}
+                          {/* Settled by a payment / credit dated after the as-of date: still owed on it (2026-11-13). */}
+                          {it.paid_later && (
+                            <span className="badge badge-info" style={{ marginLeft: 6 }}
+                              title={`Owed as of ${formatDate(asOf)}: ${it.paid_later.ref} settles it, dated ${formatDate(it.paid_later.date)}.`}>
+                              paid {formatDate(it.paid_later.date)} · {it.paid_later.ref}
+                            </span>
+                          )}
                         </td>
                         <td>{it.po_no || ''}</td>
                         <td>{it.ref_no || ''}</td>

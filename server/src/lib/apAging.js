@@ -128,6 +128,29 @@ async function collectOpenApItemsFromDocs(asOf, filters = {}) {
   const paidByBill = new Map(payToBill.map((r) => [r.bill_id, Number(r.amt)]));
   const creditedByBill = new Map(creditToBill.map((r) => [r.bill_id, Number(r.amt)]));
 
+  // PAID AFTER THE AS-OF DATE (2026-11-13). A bill marked paid by a payment or credit dated LATER --
+  // a post-dated cheque (CHK-16100, 8 Dec) or bill payment (BPAY-13858, 10 Dec) -- was still owed on
+  // the as-of date. It was being counted as "marked paid, no payment" and left out of the balance by
+  // default: 161 bills, PHP 3.59M as of 13 Nov 2026. It is owed, and is shown with the payment that
+  // will settle it. The earliest such document per bill.
+  const [laterPay] = await pool.query(
+    `SELECT bpl.vendor_bill_id AS bill_id, bp.bill_payment_no AS ref, DATE_FORMAT(bp.date_created, '%Y-%m-%d') AS d
+       FROM bill_payment_lines bpl JOIN bill_payments bp ON bp.id = bpl.bill_payment_id
+      WHERE bpl.vendor_bill_id IS NOT NULL AND bp.status <> 'voided' AND bp.voided_at IS NULL AND bp.date_created > ?`,
+    [asOf],
+  );
+  const [laterCredit] = await pool.query(
+    `SELECT bca.vendor_bill_id AS bill_id, bc.bill_credit_no AS ref, DATE_FORMAT(bc.date_created, '%Y-%m-%d') AS d
+       FROM bill_credit_applications bca JOIN bill_credits bc ON bc.id = bca.bill_credit_id
+      WHERE bc.status <> 'voided' AND bc.voided_at IS NULL AND bc.date_created > ?`,
+    [asOf],
+  );
+  const paidLater = new Map();
+  for (const r of [...laterPay, ...laterCredit]) {
+    const cur = paidLater.get(r.bill_id);
+    if (!cur || r.d < cur.date) paidLater.set(r.bill_id, { ref: r.ref, date: r.d });
+  }
+
   const creditLoc = locationClause('bc', filters);
   const [credits] = await pool.query(
     `SELECT bc.id, s.id AS supplier_id, s.name AS supplier_name, bc.bill_credit_no, bc.date_created,
@@ -213,7 +236,9 @@ async function collectOpenApItemsFromDocs(asOf, filters = {}) {
     const remaining = payable - settled;
     if (Math.abs(remaining) < 0.005) continue;
 
-    const claimsPaid = isMarkedPaid(bill) && settled < 0.005;
+    // Settled by a document dated after the as-of date: owed on the as-of date, so counted, not flagged.
+    const later = paidLater.get(bill.id) || null;
+    const claimsPaid = isMarkedPaid(bill) && settled < 0.005 && !later;
     if (claimsPaid) {
       unevidenced.count += 1;
       unevidenced.amount += remaining;
@@ -244,6 +269,7 @@ async function collectOpenApItemsFromDocs(asOf, filters = {}) {
       po_no: bill.po_no || null, ref_no: bill.reference_no || null, memo: bill.memo || null,
       location_name: bill.location_name || null,
       marked_paid_unevidenced: claimsPaid,
+      paid_later: later,
     });
   }
 
@@ -419,7 +445,7 @@ function detailsOf(items, asOf, supplierId, supplierName) {
       original_amount: i.original_amount, balance: i.balance,
       days_overdue: Math.max(daysBetween(i.aging_date, asOf), 0),
       po_no: i.po_no, ref_no: i.ref_no, memo: i.memo, location_name: i.location_name,
-      marked_paid_unevidenced: i.marked_paid_unevidenced,
+      marked_paid_unevidenced: i.marked_paid_unevidenced, paid_later: i.paid_later || null,
     }))
     .sort((a, b) => String(a.date).localeCompare(String(b.date)) || String(a.reference).localeCompare(String(b.reference)));
 
@@ -454,6 +480,7 @@ function groupApItems(items, asOf) {
       date_due: item.due_date || null, age: daysBetween(item.aging_date, asOf),
       original_amount: round2(item.original_amount || 0), open_balance: round2(item.balance),
       location_name: item.location_name || null, marked_paid_unevidenced: !!item.marked_paid_unevidenced,
+      paid_later: item.paid_later || null,
     });
     g.total_balance += Number(item.balance || 0);
   }
