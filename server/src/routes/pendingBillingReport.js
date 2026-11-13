@@ -276,7 +276,7 @@ router.put('/mark', requireAuth, requirePermission(ROUTE, 'can_update'), async (
     const sentCol = await hasSentDate();
     const sent = String(req.body?.sent_date || '').slice(0, 10);
     if (target === 'par' && checked && sentCol) {
-      if (!/^d{4}-d{2}-d{2}$/.test(sent)) return res.status(400).json({ error: 'Enter the date the PAR & Pics hard copy was sent.' });
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(sent)) return res.status(400).json({ error: 'Enter the date the PAR & Pics hard copy was sent.' });
       const [[{ today }]] = await pool.query("SELECT DATE_FORMAT(CURDATE(), '%Y-%m-%d') AS today");
       if (sent > today) return res.status(400).json({ error: 'The date sent cannot be later than today.' });
     }
