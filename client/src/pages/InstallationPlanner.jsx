@@ -533,7 +533,10 @@ export function DayView({ dayKey, slots, people, kind, onOpen, board = false }) 
     if (!colorOf.has(key)) colorOf.set(key, JOB_COLORS[colorOf.size % JOB_COLORS.length]);
   }
   const free = columns.filter((c) => !c.slots.length).length;
-  const grid = { display: 'grid', gridTemplateColumns: `80px repeat(${columns.length}, minmax(140px, 1fr))` };
+  // On the monitor (board) every column fits the screen -- no sideways scrolling -- so they share the width
+  // with no minimum; in the planner each keeps 140px and the grid scrolls.
+  const colMin = board ? 0 : 140;
+  const grid = { display: 'grid', gridTemplateColumns: `${board ? 64 : 80}px repeat(${columns.length}, minmax(${colMin}px, 1fr))` };
 
   return (
     <div>
@@ -541,7 +544,7 @@ export function DayView({ dayKey, slots, people, kind, onOpen, board = false }) 
         {free} of {columns.length} {kind.plural.toLowerCase()} free all day{board ? '' : ' · click a block to open its project'}
       </div>
       <div className="table-wrap" ref={scroller} style={{ maxHeight: board ? 'calc(100vh - 110px)' : 620, overflow: 'auto' }}>
-        <div style={{ minWidth: 80 + columns.length * 140 }}>
+        <div style={{ minWidth: board ? 0 : 80 + columns.length * 140 }}>
           {/* Their names, kept in view while scrolling the hours */}
           <div style={{ ...grid, position: 'sticky', top: 0, zIndex: 2, background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
             <div style={{ padding: 6, fontWeight: 700, fontSize: 12 }}>{kind.plural}</div>
@@ -549,7 +552,7 @@ export function DayView({ dayKey, slots, people, kind, onOpen, board = false }) 
               const hrs = c.slots.reduce((n, s) => n + slotHours(s), 0);
               return (
                 <div key={c.id} style={{ padding: 6, borderLeft: '1px solid var(--border)' }}>
-                  <div style={{ fontWeight: 700, fontSize: 12, textTransform: 'uppercase' }}>{c.name}</div>
+                  <div style={{ fontWeight: 700, fontSize: 12, textTransform: 'uppercase', overflowWrap: 'anywhere' }}>{c.name}</div>
                   <div style={{ fontSize: 11, color: c.slots.length ? 'var(--text)' : '#16a34a', fontWeight: c.slots.length ? 400 : 600 }}>
                     {c.slots.length ? `${Number.isInteger(hrs) ? hrs : hrs.toFixed(1)} hrs booked` : 'Available all day'}
                   </div>
