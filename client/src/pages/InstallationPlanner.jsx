@@ -291,7 +291,9 @@ export default function InstallationPlanner({ readOnly = false }) {
             {/* Order asked 2026-11-09: Month | Week | Day | List | Installers | Subcons | Drivers | Vehicles.
                 Day is hour by hour for the kind last chosen; the four kinds are each one's week. */}
             {[['month', 'Month'], ['week', 'Week'], ['day', 'Day'], ['list', 'List']].map(([v, label]) => (
-              <button key={v} type="button" className={`btn btn-sm ${view === v ? 'btn-primary' : ''}`} onClick={() => setView(v)}>{label}</button>
+              <button key={v} type="button" className={`btn btn-sm ${view === v ? 'btn-primary' : ''}`}
+                // Month / Week / Day always open on the current one (asked 2026-11-13), not wherever the last view was paged to.
+                onClick={() => { setView(v); setAnchor(new Date()); }}>{label}</button>
             ))}
             {Object.entries(RESOURCES).map(([r, cfg]) => (
               <button key={r} type="button" className={`btn btn-sm ${view === 'crew' && resource === r ? 'btn-primary' : ''}`}
