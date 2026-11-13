@@ -27,6 +27,25 @@ const {
 
 const router = express.Router();
 const ROUTE = '/job-orders';
+// NSJOs -- the job orders raised from a Non-Standard Sales Order (jo.nsso_id) -- are their own module
+// (asked 2026-11-13): Sales > NSJO lists them (GET /?kind=nsjo) and Job Orders no longer does (kind=jo).
+const NSJO_ROUTE = '/nsjo';
+
+// The list and its extract answer to the module asking: NSJO for kind=nsjo, Job Orders otherwise.
+function listPermission(req, res, next) {
+  return requirePermission(req.query.kind === 'nsjo' ? NSJO_ROUTE : ROUTE, 'can_view')(req, res, next);
+}
+
+// Reading one job order: the Job Orders view right, or -- for an NSJO -- the NSJO one, so someone given
+// only the NSJO module can still open what it lists.
+async function viewPermission(req, res, next) {
+  try {
+    if (await userCan(req.user.id, ROUTE, 'can_view')) return next();
+    const [[jo]] = await pool.query('SELECT nsso_id FROM job_orders WHERE id = ?', [req.params.id]);
+    if (jo?.nsso_id && await userCan(req.user.id, NSJO_ROUTE, 'can_view')) return next();
+    return res.status(403).json({ error: 'You do not have permission to perform this action' });
+  } catch (err) { return next(err); }
+}
 
 // Who may be assigned layout work. account_type lives on the USER account, not the employee
 // record, so this is checked by joining through users.employee_id -- the same definition the
@@ -159,11 +178,15 @@ async function listFilter(req) {
   const {
     search, sales_rep_id: salesRepId, job_location_id: jobLocationId, office_location_id: officeLocationId,
     department_id: departmentId, customer_id: customerId, date_from: dateFrom, as_of: asOf, tab,
-    exclude_rwip: excludeRwip,
+    exclude_rwip: excludeRwip, kind,
   } = req.query;
 
   const where = [];
   const params = [];
+  // kind=jo: the Job Orders module, without NSJOs; kind=nsjo: the NSJO module, NSJOs only. Without it
+  // (the PO's Job Order picker and other lookups) both, as before.
+  if (kind === 'jo') where.push('jo.nsso_id IS NULL');
+  if (kind === 'nsjo') where.push('jo.nsso_id IS NOT NULL');
   // A production department only sees its own warehouse's job orders. This is a ceiling, not
   // one more scope to choose between: it stacks with the design-queue/artist rules below rather
   // than replacing them, and it goes into `where` so the status tab counts inherit it too.
@@ -238,7 +261,7 @@ const EXTRACT_STAGE_LABELS = {
   pending_for_scheduling: 'Pending for Sched.', for_revision: 'For Revision', in_process_with_revision: 'In-Process w/ Rev.',
   in_process: 'In-Process', for_qi: 'For QI', partially_completed: 'Part. Completed', completed: 'Completed', invoiced: 'Invoiced',
 };
-const LIST_SELECT = `SELECT jo.*, so.sales_order_no, c.name AS customer_name, c.id AS customer_id, cc.contact_name,
+const LIST_SELECT = `SELECT jo.*, so.sales_order_no, ns.nsso_no, c.name AS customer_name, c.id AS customer_id, cc.contact_name,
               jt.display_name AS job_type_name, jloc.location_name AS job_location_name,
               oloc.location_name AS office_location_name, sd.name AS sales_division_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
@@ -249,7 +272,7 @@ const LIST_SELECT = `SELECT jo.*, so.sales_order_no, c.name AS customer_name, c.
 // Mirrors the real system's "Saved Job Orders" list -- a flat table (no status tabs)
 // with a filter panel, since job orders don't move through the same tab-per-stage
 // pattern Estimates/Sales Orders use.
-router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+router.get('/', requireAuth, listPermission, async (req, res, next) => {
   try {
     const { page = '1', limit = '10' } = req.query;
     const { whereSql, params, listWhereSql, listParams } = await listFilter(req);
@@ -281,16 +304,17 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
 });
 
 // Extract: every job order under the list's current filters and tab, as a workbook. Registered before /:id.
-router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+router.get('/export', requireAuth, listPermission, async (req, res, next) => {
   try {
     const { listWhereSql, listParams } = await listFilter(req);
     const [rows] = await pool.query(`${LIST_SELECT} ${listWhereSql} ORDER BY jo.id DESC`, listParams);
+    const nsjo = req.query.kind === 'nsjo';
     await sendXlsx(res, {
-      filename: 'job-orders.xlsx',
-      sheet: 'Job Orders',
+      filename: nsjo ? 'nsjo.xlsx' : 'job-orders.xlsx',
+      sheet: nsjo ? 'NSJO' : 'Job Orders',
       columns: [
-        { header: 'JO #', key: 'jo_no', width: 14 },
-        { header: 'SO #', key: 'so_no', width: 14 },
+        { header: nsjo ? 'NSJO #' : 'JO #', key: 'jo_no', width: 14 },
+        { header: nsjo ? 'NSSO #' : 'SO #', key: 'so_no', width: 14 },
         { header: 'Date Created', key: 'date_created', width: 12 },
         { header: 'Office Location', key: 'office_location', width: 20 },
         { header: 'Location', key: 'job_location', width: 20 },
@@ -307,7 +331,7 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
         { header: 'Sub Status', key: 'sub_status', width: 24 },
       ],
       rows: rows.map((r) => ({
-        jo_no: r.job_order_no, so_no: r.sales_order_no || '', date_created: day(r.created_at),
+        jo_no: r.job_order_no, so_no: (nsjo ? r.nsso_no : r.sales_order_no) || '', date_created: day(r.created_at),
         office_location: r.office_location_name || '', job_location: r.job_location_name || '',
         department: r.sales_division_name || '', job_type: r.job_type_name || '', description: r.description || '',
         qty: r.quantity == null ? '' : Number(r.quantity), customer: r.customer_name || '', contact: r.contact_name || '',
@@ -325,7 +349,7 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
 // Deliberately minimal: this is where a Sales Order line's "Create JO" link leads, not
 // a full Job Order/Production module (no job execution, QI, delivery, or invoicing
 // tracking here).
-router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+router.get('/:id', requireAuth, viewPermission, async (req, res, next) => {
   try {
     const [[jo]] = await pool.query(
       `SELECT jo.*, so.sales_order_no, so.status AS sales_order_status,
@@ -709,7 +733,7 @@ router.put('/:id/approve-rwip', requireAuth, async (req, res, next) => {
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
 });
 
-router.get('/:id/audit-logs', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+router.get('/:id/audit-logs', requireAuth, viewPermission, async (req, res, next) => {
   try {
     const [rows] = await pool.query(
       `SELECT a.*, u.display_name AS set_by_name
@@ -1466,7 +1490,7 @@ async function canManageAttachments(conn, userId, jobOrderId) {
 }
 
 // Metadata only -- the blob would make the JO view's payload enormous for no benefit.
-router.get('/:id/attachments', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+router.get('/:id/attachments', requireAuth, viewPermission, async (req, res, next) => {
   try {
     const [rows] = await pool.query(
       `SELECT a.id, a.kind, a.file_name, a.mime_type, a.size_bytes, a.created_at, a.archived_at,
@@ -1565,7 +1589,7 @@ router.post('/:id/attachments', requireAuth, async (req, res, next) => {
   }
 });
 
-router.get('/:id/attachments/:attachmentId/file', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+router.get('/:id/attachments/:attachmentId/file', requireAuth, viewPermission, async (req, res, next) => {
   try {
     const [[row]] = await pool.query(
       'SELECT file_name, mime_type, archive_path, file_data FROM job_order_attachments WHERE id = ? AND job_order_id = ?',

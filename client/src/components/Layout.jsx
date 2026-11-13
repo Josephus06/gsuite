@@ -189,6 +189,8 @@ const NAV_STRUCTURE = [
           { route: '/non-standard-job-orders', label: 'NSTDJO' },
           { route: '/non-standard-sales-orders', label: 'NSSO' },
           { route: '/job-orders', label: 'Job Orders' },
+          // Job orders raised from an NSSO, apart from Job Orders (asked 2026-11-13).
+          { route: '/nsjo', label: 'NSJO' },
         ],
       },
       {

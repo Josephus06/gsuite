@@ -394,7 +394,7 @@ export default function JobOrderView() {
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>
-          <Link className="btn btn-sm" to={'/job-orders'}>Back to Lists</Link>
+          <Link className="btn btn-sm" to={jo.nsso_id ? '/nsjo' : '/job-orders'}>Back to Lists</Link>
           {/* The server decides whether this JO may actually be printed (System Admin any
               time; everyone else needs an assigned artist), so the button only checks that
               the user holds the print permission at all. */}

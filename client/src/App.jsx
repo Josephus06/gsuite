@@ -426,7 +426,9 @@ function App() {
         <Route path="/completion-certificates/new" element={<CompletionCertificateForm />} />
         <Route path="/completion-certificates/:id/edit" element={<CompletionCertificateForm />} />
         <Route path="/completion-certificates/:id" element={<CompletionCertificateView />} />
-        <Route path="/job-orders" element={<JobOrders />} />
+        <Route path="/job-orders" element={<JobOrders key="jo" kind="jo" />} />
+        {/* NSJOs -- job orders from a Non-Standard Sales Order -- have their own list (2026-11-13). */}
+        <Route path="/nsjo" element={<JobOrders key="nsjo" kind="nsjo" />} />
         <Route path="/job-orders/:id" element={<JobOrderView />} />
         <Route path="/job-orders/:id/edit" element={<JobOrderEdit />} />
         <Route path="/pms-job-types" element={<PmsJobTypes />} />

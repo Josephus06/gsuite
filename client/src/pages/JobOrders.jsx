@@ -55,7 +55,10 @@ const STATUS_TABS = [
 // system's own "Select Settings for Artist Schedule" screen), since assigning one JO
 // at a time from its own detail page doesn't scale when a supervisor's queue has many
 // waiting at once.
-export default function JobOrders() {
+// kind 'jo' is Sales > Job Orders, without NSJOs; 'nsjo' is Sales > NSJO (asked 2026-11-13), the job
+// orders raised from a Non-Standard Sales Order -- the same list, filters and tabs.
+export default function JobOrders({ kind = 'jo' }) {
+  const isNsjo = kind === 'nsjo';
   const navigate = useNavigate();
   const { can, permissions, user } = useAuth();
 
@@ -93,10 +96,11 @@ export default function JobOrders() {
 
   // The bulk "Assign Artist" action, on the same rule the single-order button uses:
   // Design Supervisors only -- the server's rule (lib/artistAssignment.js mayAssignArtist).
-  const canAssignArtist = !!user?.is_design_supervisor;
+  // An NSJO is never assigned an artist, so the NSJO list has no bulk assign.
+  const canAssignArtist = !!user?.is_design_supervisor && !isNsjo;
 
   function listParams() {
-    const params = {};
+    const params = { kind };
     if (search) params.search = search;
     if (salesRepId) params.sales_rep_id = salesRepId;
     if (jobLocationId) params.job_location_id = jobLocationId;
@@ -117,11 +121,11 @@ export default function JobOrders() {
       const { data } = await api.get('/job-orders/export', { params: listParams(), responseType: 'blob' });
       const url = URL.createObjectURL(data);
       const a = document.createElement('a');
-      a.href = url; a.download = 'job-orders.xlsx';
+      a.href = url; a.download = isNsjo ? 'nsjo.xlsx' : 'job-orders.xlsx';
       a.click();
       URL.revokeObjectURL(url);
     } catch {
-      setExportError('Could not extract the job orders.');
+      setExportError(`Could not extract the ${isNsjo ? 'NSJOs' : 'job orders'}.`);
     } finally {
       setExporting(false);
     }
@@ -245,7 +249,7 @@ export default function JobOrders() {
   return (
     <div>
       <div className="page-header">
-        <h1>Saved Job Orders</h1>
+        <h1>{isNsjo ? 'Saved NSJO' : 'Saved Job Orders'}</h1>
         <div style={{ display: 'flex', gap: 8 }}>
           {canAssignArtist && selectedIds.size > 0 && (
             <button className="btn btn-primary" onClick={openBulkAssign}>Assign Artist ({selectedIds.size})</button>
@@ -292,7 +296,7 @@ export default function JobOrders() {
           </div>
           <div style={{ marginTop: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <button className="btn btn-primary" onClick={runSearch}>Search</button>
-            <button className="btn" disabled={exporting} onClick={runExport} title="Download every job order under the filters above">
+            <button className="btn" disabled={exporting} onClick={runExport} title={`Download every ${isNsjo ? 'NSJO' : 'job order'} under the filters above`}>
               {exporting ? 'Extracting...' : 'Extract'}
             </button>
             {exportError && <span style={{ color: 'var(--danger)' }}>{exportError}</span>}
@@ -316,8 +320,8 @@ export default function JobOrders() {
                 <thead>
                   <tr>
                     {canAssignArtist && <th></th>}
-                    <th>JO #</th>
-                    <th>SO #</th>
+                    <th>{isNsjo ? 'NSJO #' : 'JO #'}</th>
+                    <th>{isNsjo ? 'NSSO #' : 'SO #'}</th>
                     <th>Date Created</th>
                     <th>Office Location</th>
                     <th>Location</th>
@@ -337,7 +341,7 @@ export default function JobOrders() {
                 </thead>
                 <tbody>
                   {rows.length === 0 && (
-                    <tr><td colSpan={18} className="muted" style={{ textAlign: 'center', padding: 20 }}>No job orders found.</td></tr>
+                    <tr><td colSpan={18} className="muted" style={{ textAlign: 'center', padding: 20 }}>{isNsjo ? 'No NSJOs found.' : 'No job orders found.'}</td></tr>
                   )}
                   {rows.map((row) => (
                     <tr key={row.id}>
@@ -348,11 +352,15 @@ export default function JobOrders() {
                           )}
                         </td>
                       )}
-                      <td data-label="JO #">{row.job_order_no}</td>
-                      <td data-label="SO #">
-                        <Link className="link-btn" to={`/sales-orders/${row.sales_order_id}`}>
-                          {row.sales_order_no}
-                        </Link>
+                      <td data-label={isNsjo ? 'NSJO #' : 'JO #'}>{row.job_order_no}</td>
+                      <td data-label={isNsjo ? 'NSSO #' : 'SO #'}>
+                        {isNsjo ? (
+                          row.nsso_id && <Link className="link-btn" to={`/non-standard-sales-orders/${row.nsso_id}`}>{row.nsso_no}</Link>
+                        ) : (
+                          <Link className="link-btn" to={`/sales-orders/${row.sales_order_id}`}>
+                            {row.sales_order_no}
+                          </Link>
+                        )}
                       </td>
                       <td data-label="Date Created">{row.created_at ? String(row.created_at).slice(0, 10) : ''}</td>
                       <td data-label="Office Location">{row.office_location_name}</td>
