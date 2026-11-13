@@ -253,9 +253,12 @@ export default function StockLedgerReport() {
                             <td>{qtyFmt(r.beg_qty)}</td>
                             <td>{moneyFmt(r.beg_cost)}</td>
                             <td>{moneyFmt(r.beg_value)}</td>
-                            <td>{r.input || ''}</td>
+                            {/* Input / Output to 4 places like the other quantities (2026-11-13): Output read
+                                1.134965625 beside an Ending of 1.3650, so Beg. + Input looked short of
+                                Output + Ending by the rounding alone. */}
+                            <td>{Number(r.input) ? qtyFmt(r.input) : ''}</td>
                             <td>{r.value_of_inputs ? moneyFmt(r.value_of_inputs) : ''}</td>
-                            <td>{r.output || ''}</td>
+                            <td>{Number(r.output) ? qtyFmt(r.output) : ''}</td>
                             <td>{r.value_of_outputs ? moneyFmt(r.value_of_outputs) : ''}</td>
                             <td>{qtyFmt(r.ending_qty)} {r.stock_unit_code && <span className="muted">{r.stock_unit_code}</span>}</td>
                             <td>{qtyFmt(r.ending_qty_base)} {r.base_unit_code && <span className="muted">{r.base_unit_code}</span>}</td>
