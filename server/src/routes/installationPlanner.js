@@ -766,7 +766,14 @@ const CREW_SELECT = `
 router.get('/public-board', async (req, res, next) => {
   try {
     const role = SLOT_ROLES.includes(req.query.kind) ? req.query.kind : 'installer';
-    const day = todayPh();
+    // ?day=tomorrow for the board's second slide (2026-11-13) -- today or tomorrow only, never any
+    // other date, so the unauthenticated feed still shows no more than the board does.
+    let day = todayPh();
+    if (req.query.day === 'tomorrow') {
+      const d = new Date(`${day}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + 1);
+      day = d.toISOString().slice(0, 10);
+    }
     const [rows] = await pool.query(
       `${CREW_SELECT} WHERE s.work_date = ? AND s.role = ? AND p.status <> 'cancelled' ORDER BY s.start_time, e.first_name`, [day, role]);
     const slots = rows.map((s) => ({
