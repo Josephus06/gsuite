@@ -190,13 +190,17 @@ async function listFilter(req) {
   // A production department only sees its own warehouse's job orders. This is a ceiling, not
   // one more scope to choose between: it stacks with the design-queue/artist rules below rather
   // than replacing them, and it goes into `where` so the status tab counts inherit it too.
-  const scopeLocationId = await getJobLocationScope(req.user.id, ROUTE);
+  // The NSJO module answers to its own View All (2026-11-14): everyone sees only their own NSJOs --
+  // an artist the ones assigned to them, a rep their own -- unless granted NSJO can_view_all.
+  const scopeRoute = kind === 'nsjo' ? NSJO_ROUTE : ROUTE;
+  const nsjoViewAll = await userCan(req.user.id, NSJO_ROUTE, 'can_view_all');
+  const scopeLocationId = await getJobLocationScope(req.user.id, scopeRoute);
   if (scopeLocationId) { where.push('jo.job_location_id = ?'); params.push(scopeLocationId); }
   if (salesRepId) { where.push('COALESCE(so.sales_rep_id, ns.sales_rep_id) = ?'); params.push(salesRepId); }
   // Scoped on the job order's OWN rep, not the sales order's. The two agree on every one of
   // the 124,300 rows, but a job order can exist without a sales order at all (NSJO, RWIP), and
   // scoping through the join would make those invisible to everyone rather than to nobody.
-  const salesScope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
+  const salesScope = await getSalesRepEmployeeScope(req.user.id, scopeRoute);
   if (salesScope) { where.push('jo.sales_rep_id IN (?)'); params.push(salesScope); }
   if (jobLocationId) { where.push('jo.job_location_id = ?'); params.push(jobLocationId); }
   if (officeLocationId) { where.push('COALESCE(so.office_location_id, ns.office_location_id) = ?'); params.push(officeLocationId); }
@@ -216,17 +220,20 @@ async function listFilter(req) {
   // A Design Supervisor only ever sees their own design queue -- JOs still in "For
   // Design Supervisor" (awaiting an artist assignment from them) or "For Artist"
   // (already assigned, still in layout) -- not the full Job Orders list.
-  if (await isScopedToDesignQueue(req.user.id)) {
+  if (kind === 'nsjo' && nsjoViewAll) {
+    // NSJO View All: the whole NSJO list, past the design-queue and artist rules below.
+  } else if (await isScopedToDesignQueue(req.user.id)) {
     where.push('jo.status = ? AND jo.sub_status IN (?)');
     params.push(DESIGN_QUEUE_STATUS, DESIGN_QUEUE_SUB_STATUSES);
   } else {
     // An Artist sees only the Job Orders assigned to them. Without this they match no
     // filter at all (they are neither an Account Officer nor a Supervisor) and see the
-    // entire list. Every NSJO too (2026-10-19): an NSJO is never assigned an artist, so the
-    // rule alone kept all of them off an artist's Saved Job Orders.
+    // entire list. NSJOs likewise only when assigned to them (2026-11-14; it used to be every
+    // NSJO), unless they hold NSJO can_view_all.
     const artistEmployeeId = await getArtistEmployeeScope(req.user.id);
     if (artistEmployeeId) {
-      where.push('(jo.artist_id = ? OR jo.nsso_id IS NOT NULL)');
+      if (nsjoViewAll) where.push('(jo.artist_id = ? OR jo.nsso_id IS NOT NULL)');
+      else where.push('jo.artist_id = ?');
       params.push(artistEmployeeId);
     }
   }
@@ -401,24 +408,29 @@ router.get('/:id', requireAuth, viewPermission, async (req, res, next) => {
     if (!jo) return res.status(404).json({ error: 'Not found' });
     // Defence in depth for the list filter above: hiding a document from the list while still
     // serving it to anyone who types its id is not a restriction. See lib/salesVisibility.js.
-    const salesScope = await getSalesRepEmployeeScope(req.user.id, ROUTE);
+    // An NSJO answers to the NSJO module's View All, like the list (2026-11-14).
+    const scopeRoute = jo.nsso_id ? NSJO_ROUTE : ROUTE;
+    const nsjoViewAll = !!jo.nsso_id && await userCan(req.user.id, NSJO_ROUTE, 'can_view_all');
+    const salesScope = await getSalesRepEmployeeScope(req.user.id, scopeRoute);
     if (salesScope && !salesScope.includes(jo.sales_rep_id)) {
       return res.status(404).json({ error: 'Not found' });
     }
     // Same defense in depth as the design-queue check below, for the department's warehouse:
     // 404, so an out-of-department JO reads as one that isn't there.
-    if (!isJobLocationVisible(jo, await getJobLocationScope(req.user.id, ROUTE))) {
+    if (!isJobLocationVisible(jo, await getJobLocationScope(req.user.id, scopeRoute))) {
       return res.status(404).json({ error: 'Not found' });
     }
     // Defense in depth -- a Design Supervisor can't view a JO outside their design
     // queue just by guessing/pasting its URL, even though the list already filters it.
-    if (await isScopedToDesignQueue(req.user.id)) {
+    if (nsjoViewAll) {
+      // NSJO View All: any NSJO.
+    } else if (await isScopedToDesignQueue(req.user.id)) {
       if (jo.status !== DESIGN_QUEUE_STATUS || !DESIGN_QUEUE_SUB_STATUSES.includes(jo.sub_status)) {
         return res.status(404).json({ error: 'Not found' });
       }
     } else {
       const artistEmployeeId = await getArtistEmployeeScope(req.user.id);
-      if (artistEmployeeId && String(jo.artist_id) !== String(artistEmployeeId) && !jo.nsso_id) {
+      if (artistEmployeeId && String(jo.artist_id) !== String(artistEmployeeId)) {
         return res.status(404).json({ error: 'Not found' });
       }
     }
