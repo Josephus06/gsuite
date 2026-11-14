@@ -86,7 +86,10 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
   const [fromOrder, setFromOrder] = useState({});
   const [billToAddress, setBillToAddress] = useState('');
   const [memo, setMemo] = useState('');
-  const [withholdingPct, setWithholdingPct] = useState(0);
+  // Several rates may be ticked at once (asked 2026-11-14, e.g. 2% EWT + 5% on a government sale):
+  // the invoice withholds their sum, saved as its one withholding_tax_pct.
+  const [withholdingPcts, setWithholdingPcts] = useState([]);
+  const withholdingPct = withholdingPcts.reduce((s, p) => s + p, 0);
   const [excludedIds, setExcludedIds] = useState(new Set());
   // Price/Unit typed over a line's own, keyed like excludedIds. Not offered when billing an
   // Estimate, whose save path does not take it.
@@ -407,11 +410,12 @@ export default function SalesInvoiceModal({ salesOrderId, nssoId, deliveryTicket
                 {[1, 2, 5].map((pct) => (
                   <label key={pct} style={{ marginRight: 12, fontWeight: 400 }}>
                     <input
-                      type="checkbox" checked={withholdingPct === pct}
-                      onChange={() => setWithholdingPct(withholdingPct === pct ? 0 : pct)}
+                      type="checkbox" checked={withholdingPcts.includes(pct)}
+                      onChange={() => setWithholdingPcts((list) => (list.includes(pct) ? list.filter((p) => p !== pct) : [...list, pct]))}
                     /> {pct}%
                   </label>
                 ))}
+                {withholdingPcts.length > 1 && <span className="muted" style={{ fontSize: 12 }}>= {withholdingPct}%</span>}
               </div>
             </div>
             <div>
