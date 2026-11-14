@@ -8,8 +8,16 @@ import LoadingSpinner from '../components/LoadingSpinner';
 import EntityPicker from '../components/EntityPicker';
 import { useSeason } from '../utils/season';
 
-// Spooky theme (styles/spooky.css), display only: an account type as a coloured dot.
-const TYPE_DOT = { Asset: '#5AB0FF', Liability: '#FF9A4A', Expense: '#FF6B8A', Revenue: '#8EF08A', Equity: '#9B6BFF', 'Cost of Sales': '#FFC46B' };
+// Seasonal themes (styles/spooky.css, styles/xmas.css), display only: an account type as a dot.
+const TYPE_DOT = {
+  spooky: { Asset: '#5AB0FF', Liability: '#FF9A4A', Expense: '#FF6B8A', Revenue: '#8EF08A', Equity: '#9B6BFF', 'Cost of Sales': '#FFC46B' },
+  christmas: { Asset: '#7FC8F8', Liability: '#C6A8FF', Expense: '#FF8A80', Revenue: '#9FE8C8', Equity: '#E6F4FF', 'Cost of Sales': '#FFD48A' },
+};
+// What the search box and the Active pills say in each.
+const SEASON_TEXT = {
+  spooky: { search: 'Search the crypt…', yes: 'Alive', no: 'Dormant' },
+  christmas: { search: 'Check it twice…', yes: 'Nice', no: 'Frozen' },
+};
 
 const CONFIG = [
   { key: 'chart-of-accounts', label: 'Chart of Accounts', fields: [
@@ -163,7 +171,8 @@ const noteTypesOf = (a) => (a.note_form_types ? String(a.note_form_types).split(
 
 export default function Lookups() {
   const { can } = useAuth();
-  const spooky = useSeason() === 'spooky';
+  const season = useSeason();
+  const themed = !!SEASON_TEXT[season];
   const navigate = useNavigate();
   // ?tab=processes: the process view / edit pages come back to their own tab.
   const [params] = useSearchParams();
@@ -307,21 +316,32 @@ export default function Lookups() {
     }
   }
 
-  // Spooky (styles/spooky.css), display only: the account code muted, the name bright, the type
+  // A seasonal theme (Halloween / Christmas), display only: the account code muted, the name bright, the type
   // as a coloured dot, Active as Alive / Dormant. The values themselves are unchanged and the
   // search reads them (searchRaw), not what is drawn.
-  const spookyRender = (f) => {
-    if (!spooky) return null;
-    if (f.name === 'account_type') return (r) => <span><i className="sp-dot" style={{ background: TYPE_DOT[r.account_type] || '#B7A8CB' }} />{r.account_type}</span>;
+  const seasonRender = (f) => {
+    if (!themed) return null;
+    const text = SEASON_TEXT[season];
+    if (f.name === 'account_type') return (r) => <span><i className="sp-dot" style={{ background: TYPE_DOT[season][r.account_type] || '#A8BCD6' }} />{r.account_type}</span>;
     if (f.name === 'account_code') return (r) => <span className="sp-code">{r.account_code}</span>;
     if (f.name === 'account_name') return (r) => <span className="sp-name">{r.account_name}</span>;
     if (f.type === 'checkbox') {
+      const xmas = season === 'christmas';
       return (r) => (r[f.name]
-        ? <span className="sp-pill sp-alive"><i />Alive</span>
+        ? (
+          <span className={`sp-pill ${xmas ? 'xm-nice' : 'sp-alive'}`}>
+            {xmas
+              ? <svg viewBox="0 0 16 16" width="10" height="10" fill="currentColor" aria-hidden="true"><path d="M8 1l2 4.5 5 .5-3.8 3.3 1.1 4.9L8 11.6 3.7 14.2l1.1-4.9L1 6l5-.5z" /></svg>
+              : <i />}
+            {text.yes}
+          </span>
+        )
         : (
-          <span className="sp-pill sp-dormant">
-            <svg viewBox="0 0 16 16" width="11" height="11" fill="currentColor" aria-hidden="true"><path d="M8 1a5 5 0 0 0-5 5v8l2-1.5L6.5 14 8 12.5 9.5 14 11 12.5l2 1.5V6a5 5 0 0 0-5-5zM6 5.5a1 1 0 1 1 0 2 1 1 0 0 1 0-2zm4 0a1 1 0 1 1 0 2 1 1 0 0 1 0-2z" /></svg>
-            Dormant
+          <span className={`sp-pill ${xmas ? 'xm-frozen' : 'sp-dormant'}`}>
+            {xmas
+              ? <svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M12 2v20M4.9 4.9l14.2 14.2M2 12h20M4.9 19.1L19.1 4.9" /></svg>
+              : <svg viewBox="0 0 16 16" width="11" height="11" fill="currentColor" aria-hidden="true"><path d="M8 1a5 5 0 0 0-5 5v8l2-1.5L6.5 14 8 12.5 9.5 14 11 12.5l2 1.5V6a5 5 0 0 0-5-5zM6 5.5a1 1 0 1 1 0 2 1 1 0 0 1 0-2zm4 0a1 1 0 1 1 0 2 1 1 0 0 1 0-2z" /></svg>}
+            {text.no}
           </span>
         ));
     }
@@ -331,7 +351,7 @@ export default function Lookups() {
   const columns = active.fields
     .filter((f) => f.type !== 'textarea')
     .map((f) => {
-      const sp = spookyRender(f);
+      const sp = seasonRender(f);
       if (sp) return { key: f.name, label: f.label, render: sp, searchRaw: true };
       return {
         key: f.name,
@@ -407,14 +427,14 @@ export default function Lookups() {
           </div>
         ) : (
           <>
-          {spooky ? (
+          {themed ? (
             // Spooky: the tab's name, a count, and the search on the right.
             <div className="sp-card-head">
               <div>
                 <h2>{active.label}</h2>
                 <div className="sp-count">{shownRows.length} of {rows.length} {active.key === 'chart-of-accounts' ? 'accounts' : 'records'}{q ? ' matching' : ''}</div>
               </div>
-              <input type="search" placeholder="Search the crypt…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ maxWidth: 360, width: '100%' }} />
+              <input type="search" placeholder={SEASON_TEXT[season].search} value={search} onChange={(e) => setSearch(e.target.value)} style={{ maxWidth: 360, width: '100%' }} />
             </div>
           ) : (
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>

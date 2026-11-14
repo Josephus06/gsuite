@@ -1,0 +1,283 @@
+/* =============================================================================
+   CHRISTMAS THEME -- "Season's Greetings", blue and white (2026-11-14)
+   On while <html> has the class `xmas` (utils/season.js: December by default, or chosen from the
+   season menu by the topbar pill; kept in localStorage). Every rule here is scoped to html.xmas,
+   so with it off the app looks exactly as before. Built the same way as styles/spooky.css: on the
+   dark palette, with the design tokens re-pointed at the colours below so every page follows.
+   Decorations: XmasDecor.jsx (lights, tree, snow, drifts) plus the card snow cap and holly drawn
+   here -- all pointer-events: none and behind the page content. prefers-reduced-motion stops
+   every animation.
+   ========================================================================== */
+
+html.xmas {
+  --xm-bg: #0A1628;
+  --xm-nav: #0D1D33;
+  --xm-surface: #10223B;
+  --xm-surface-2: #15294A;
+  --xm-raised: #1A3157;
+  --xm-tab: #132845;
+  --xm-border: #1F3556;
+  --xm-border-strong: #2C4670;
+  --xm-text: #EEF4FB;
+  --xm-text-soft: #D3E1F2;
+  --xm-muted: #A8BCD6;
+  --xm-placeholder: #8BA2C2;
+  --xm-ice: #BFE3FF;
+  --xm-ice-light: #E6F4FF;
+  --xm-blue: #2F7DE1;
+  --xm-blue-bright: #4A96F0;
+  --xm-sky: #9FD4FF;
+  --xm-snow: #F5F9FF;
+  --xm-danger: #C0392B;
+  --xm-danger-text: #FF9C95;
+  --xm-danger-border: #7A2430;
+  --xm-ink: #0A1628; /* navy text on ice */
+}
+
+/* The app's own tokens, re-pointed. [data-theme] lifts this above :root[data-theme='dark']. */
+html.xmas[data-theme] {
+  --color-primary: var(--xm-ice);
+  --color-primary-bg: rgba(191, 227, 255, 0.12);
+  --color-primary-text: var(--xm-ice-light);
+  --color-on-primary: var(--xm-ink);
+
+  --color-success: var(--xm-sky);
+  --color-success-bg: rgba(159, 212, 255, 0.12);
+  --color-success-text: var(--xm-sky);
+  --color-danger: var(--xm-danger-text);
+  --color-danger-bg: rgba(192, 57, 43, 0.18);
+  --color-danger-text: var(--xm-danger-text);
+  --color-warning: #FFD48A;
+  --color-warning-bg: rgba(255, 212, 138, 0.12);
+  --color-warning-text: #FFE2B0;
+  --color-neutral-bg: var(--xm-raised);
+  --color-neutral-text: var(--xm-text-soft);
+
+  --color-surface: var(--xm-surface);
+  --color-surface-sunken: var(--xm-surface-2);
+  --color-page-bg: var(--xm-bg);
+  --color-text-primary: var(--xm-text);
+  --color-text-secondary: var(--xm-text-soft);
+  --color-text-muted: var(--xm-muted);
+  --color-border: var(--xm-border);
+  --color-border-strong: var(--xm-border-strong);
+  --focus-ring: 0 0 0 3px rgba(191, 227, 255, 0.35);
+  --card-glass: rgba(16, 34, 59, 0.6);
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --sans: var(--font-sans);
+  color-scheme: dark;
+}
+
+html.xmas body { background: var(--xm-bg); color: var(--xm-text); font-family: var(--font-sans); }
+html.xmas ::selection { background: var(--xm-ice); color: var(--xm-ink); }
+
+/* ---- Scrollbar ---------------------------------------------------------------------------- */
+html.xmas ::-webkit-scrollbar { width: 11px; height: 11px; }
+html.xmas ::-webkit-scrollbar-track { background: #07101E; }
+html.xmas ::-webkit-scrollbar-thumb { background: linear-gradient(180deg, #FFFFFF, var(--xm-blue-bright)); border-radius: 8px; border: 2px solid #07101E; }
+
+/* ---- Top navbar --------------------------------------------------------------------------- */
+html.xmas .topnav { background: var(--xm-nav); border-bottom: 1px solid var(--xm-border); }
+html.xmas .topnav-menu > a,
+html.xmas .topnav-dropdown > button { color: var(--xm-text-soft); }
+html.xmas .topnav-menu > a:hover,
+html.xmas .topnav-menu > a.active,
+html.xmas .topnav-dropdown > button:hover,
+html.xmas .topnav-dropdown > button.active,
+html.xmas .topnav-dropdown:hover > button { color: var(--xm-ice); background: rgba(191, 227, 255, 0.08); }
+html.xmas .topnav-dropdown-menu { background: var(--xm-surface); border-color: var(--xm-border-strong); }
+html.xmas .topnav-dropdown-menu a { color: var(--xm-text-soft); }
+html.xmas .topnav-dropdown-menu a:hover,
+html.xmas .topnav-dropdown-menu a.active { color: var(--xm-ice); background: rgba(191, 227, 255, 0.08); }
+html.xmas .topnav-mega-title { color: var(--xm-ice); }
+
+/* The logo: a frosted holly sprig and "T1S" in Mountains of Christmas (Layout renders .xm-logo). */
+.xm-logo { display: none; }
+html.xmas .topnav-brand .topnav-logo { display: none; }
+html.xmas .topnav-brand .xm-logo {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: 'Mountains of Christmas', 'Inter', cursive; font-weight: 700; font-size: 30px; color: var(--xm-ice);
+  text-shadow: 0 0 10px rgba(191, 227, 255, 0.45); line-height: 1;
+}
+
+/* The toggle pill ("Season's Greetings"); the Day / Night / Glass toggle is hidden while it is on. */
+html.xmas .theme-toggle { display: none; }
+html.xmas .season-toggle {
+  background: rgba(191, 227, 255, 0.08); color: var(--xm-ice);
+  border: 1px solid rgba(191, 227, 255, 0.5); border-radius: 999px; padding: 5px 12px; font-weight: 600;
+}
+html.xmas .season-toggle:hover { background: rgba(191, 227, 255, 0.16); color: #fff; }
+
+/* ---- Page title ---------------------------------------------------------------------------- */
+html.xmas .page-header { position: relative; }
+html.xmas .page-header > h1 {
+  font-family: 'Mountains of Christmas', 'Inter', cursive; font-size: 56px; font-weight: 700; line-height: 1.05;
+  color: var(--xm-ice); letter-spacing: 1px; text-shadow: 0 0 18px rgba(191, 227, 255, 0.4);
+}
+/* The section above it ("MASTER LISTS") -- Layout sets --sp-section from the menu. */
+html.xmas .page-header > h1::before {
+  content: var(--sp-section, '');
+  display: block; font-family: var(--font-sans); font-size: 11px; font-weight: 600; letter-spacing: 2px;
+  color: var(--xm-muted); text-shadow: none; text-transform: uppercase; margin-bottom: 4px;
+}
+
+/* ---- Buttons ------------------------------------------------------------------------------- */
+html.xmas .btn:not(.btn-primary):not(.btn-danger):not(.btn-warning):not(.btn-ghost) { background: var(--xm-raised); color: var(--xm-text); border-color: var(--xm-border-strong); }
+html.xmas .btn:not(.btn-primary):not(.btn-danger):not(.btn-warning):not(.btn-ghost):hover:not(:disabled) { border-color: var(--xm-ice); color: #fff; }
+html.xmas .btn-primary { background: var(--xm-ice); color: var(--xm-ink); border-color: var(--xm-ice); font-weight: 700; }
+html.xmas .btn-primary:hover:not(:disabled) { background: var(--xm-ice-light); border-color: var(--xm-ice-light); color: var(--xm-ink); }
+/* The page's main action (Add Record, New Ticket ...): a gift box and a soft pulsing glow. */
+html.xmas .page-header .btn-primary { display: inline-flex; align-items: center; gap: 7px; animation: xm-glow 2.8s ease-in-out infinite; }
+html.xmas .page-header .btn-primary::before {
+  content: ''; width: 15px; height: 15px; flex-shrink: 0;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230A1628' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='8' width='18' height='4' rx='1'/%3E%3Cpath d='M12 8v13M19 12v7a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-7M7.5 8a2.5 2.5 0 0 1 0-5C10 3 12 8 12 8s2-5 4.5-5a2.5 2.5 0 0 1 0 5'/%3E%3C/svg%3E") no-repeat center / contain;
+}
+@keyframes xm-glow {
+  0%, 100% { box-shadow: 0 0 6px rgba(191, 227, 255, 0.4); }
+  50% { box-shadow: 0 0 18px rgba(191, 227, 255, 0.8), 0 0 34px rgba(74, 150, 240, 0.3); }
+}
+html.xmas .btn-danger { background: transparent; color: var(--xm-danger-text); border-color: var(--xm-danger-border); }
+html.xmas .btn-danger:hover:not(:disabled) { background: var(--xm-danger); color: #fff; border-color: var(--xm-danger); }
+
+/* ---- Tabs (pills) -------------------------------------------------------------------------- */
+html.xmas .tabs { flex-wrap: wrap; gap: 8px; }
+html.xmas .tabs button {
+  background: var(--xm-tab); color: var(--xm-text-soft); border: 1px solid var(--xm-border-strong);
+  border-radius: 999px; padding: 7px 14px; font-weight: 500;
+}
+html.xmas .tabs button:hover { border-color: var(--xm-ice); color: #fff; }
+html.xmas .tabs button.active {
+  background: var(--xm-blue); color: #fff; border-color: var(--xm-blue-bright); font-weight: 700;
+  box-shadow: 0 0 14px rgba(74, 150, 240, 0.5);
+}
+/* Underline tabs (Tickets' status tabs): ice blue when active. */
+html.xmas .status-tab:hover, html.xmas .status-tab.active { color: var(--xm-ice); }
+html.xmas .status-tab.active { border-bottom-color: var(--xm-blue-bright); }
+
+/* ---- Cards --------------------------------------------------------------------------------- */
+html.xmas .card {
+  background: var(--xm-surface); border: 1px solid var(--xm-border); border-radius: 16px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45); position: relative;
+}
+/* A snow cap along the top edge, slightly overhanging. */
+html.xmas .card::before {
+  content: ''; position: absolute; left: 10px; right: 10px; top: -9px; height: 20px; pointer-events: none;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 200 20' preserveAspectRatio='none'%3E%3Cpath d='M0 8C10 3 20 3 30 6s18 6 28 2 16-6 28-4 14 9 26 8 16-8 28-8 16 5 26 5 14-6 24-6 10 3 10 3v4c-6 1-10 5-16 4s-8-5-14-4-8 7-14 6-8-5-14-4-10 5-16 4-8-4-14-3-8 6-14 5-8-6-14-5-10 4-16 3-8-4-14-3-8 5-14 4-8-3-14-3-6 2-6 2z' fill='%23F5F9FF'/%3E%3C/svg%3E") no-repeat center / 100% 100%;
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.25));
+}
+/* A frosted holly sprig (white leaves, blue berries) in the top-right corner. */
+html.xmas .card::after {
+  content: ''; position: absolute; top: 6px; right: 10px; width: 46px; height: 30px; pointer-events: none; opacity: 0.9;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 46 30'%3E%3Cpath d='M22 16C16 6 6 5 1 8c4 1 5 4 4 6 3-1 6 0 7 3 2-2 6-2 10-1z' fill='%23E6F0FA'/%3E%3Cpath d='M24 16c6-10 16-11 21-8-4 1-5 4-4 6-3-1-6 0-7 3-2-2-6-2-10-1z' fill='%23CFE0F3'/%3E%3Ccircle cx='20' cy='19' r='3.4' fill='%234A96F0'/%3E%3Ccircle cx='26' cy='20' r='3.4' fill='%232F7DE1'/%3E%3Ccircle cx='23' cy='24.5' r='3.4' fill='%237FC8F8'/%3E%3C/svg%3E") no-repeat center / contain;
+}
+/* The card header Lookups adds while a season is on: the tab name, a count, the search on the right. */
+html.xmas .sp-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; padding-right: 50px; }
+html.xmas .sp-card-head h2 { margin: 0; font-size: 19px; color: #fff; }
+html.xmas .sp-card-head .sp-count { font-size: 12.5px; color: var(--xm-muted); margin-top: 2px; }
+
+/* ---- Inputs and search ---------------------------------------------------------------------- */
+html.xmas input:not([type='checkbox']):not([type='radio']), html.xmas select, html.xmas textarea {
+  background: var(--xm-bg); color: var(--xm-text); border-color: var(--xm-border-strong);
+}
+html.xmas input::placeholder, html.xmas textarea::placeholder { color: var(--xm-placeholder); }
+html.xmas input:focus, html.xmas select:focus, html.xmas textarea:focus {
+  outline: none; border-color: var(--xm-ice); box-shadow: 0 0 0 3px rgba(191, 227, 255, 0.3);
+}
+html.xmas input[type='search'] {
+  height: 44px; border-radius: 10px; padding-left: 38px;
+  background: var(--xm-bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238BA2C2' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3.5-3.5'/%3E%3C/svg%3E") no-repeat 12px center / 17px;
+}
+
+/* ---- Tables --------------------------------------------------------------------------------- */
+html.xmas .table-wrap { overflow-x: auto; border-color: var(--xm-border); border-radius: 12px; }
+html.xmas th {
+  background: var(--xm-surface-2); color: var(--xm-ice); font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.08em;
+}
+html.xmas th, html.xmas td { border-color: var(--xm-border); }
+html.xmas td { color: var(--xm-text-soft); }
+html.xmas tbody tr:hover td { background: rgba(191, 227, 255, 0.05); }
+html.xmas tbody tr:hover td:first-child { box-shadow: inset 3px 0 0 var(--xm-blue-bright); }
+html.xmas a { color: var(--xm-ice); }
+html.xmas a:hover { color: var(--xm-ice-light); }
+
+/* Lookups' display-only pieces (shared class names with spooky.css). */
+html.xmas .sp-code { color: var(--xm-muted); font-variant-numeric: tabular-nums; }
+html.xmas .sp-name { color: #fff; font-weight: 600; }
+.xm-nice { background: rgba(159, 212, 255, 0.12); color: var(--xm-sky); border: 1px solid rgba(159, 212, 255, 0.4); }
+.xm-frozen { background: var(--xm-raised); color: var(--xm-muted); border: 1px solid var(--xm-border-strong); }
+
+/* Tickets' status pills (Tickets.jsx tags each badge ticket-status-<status>). */
+html.xmas .ticket-status-resolved, html.xmas .ticket-status-closed { background: rgba(159, 212, 255, 0.14); color: var(--xm-sky); }
+html.xmas .ticket-status-in_progress { background: rgba(230, 240, 250, 0.14); color: #E6F0FA; }
+html.xmas .ticket-status-declined { background: rgba(192, 57, 43, 0.2); color: var(--xm-danger-text); }
+
+/* ---- Badges, pagination, modals -------------------------------------------------------------- */
+html.xmas .badge-muted { background: var(--xm-raised); color: var(--xm-muted); }
+html.xmas .picker-pagination button,
+html.xmas .pagination button {
+  background: var(--xm-raised); color: var(--xm-text-soft); border: 1px solid var(--xm-border-strong);
+  border-radius: 8px; min-width: 34px; height: 34px;
+}
+html.xmas .picker-pagination button:hover:not(:disabled),
+html.xmas .pagination button:hover:not(:disabled) { border-color: var(--xm-ice); color: #fff; }
+html.xmas .picker-pagination button.active,
+html.xmas .pagination button.active { background: var(--xm-blue); color: #fff; border-color: var(--xm-blue-bright); font-weight: 700; }
+html.xmas .modal { background: var(--xm-surface); border: 1px solid var(--xm-border-strong); color: var(--xm-text); }
+/* A modal's cards keep the cap off -- it would hang over the modal's own header. */
+html.xmas .modal .card::before, html.xmas .modal .card::after { display: none; }
+
+/* The record banner (Purchase Requisition, Sales Order, Estimate ...): a winter night. */
+html.xmas .estimate-banner {
+  background:
+    radial-gradient(ellipse at 80% -20%, rgba(191, 227, 255, 0.25), transparent 55%),
+    linear-gradient(135deg, #0D1D33 0%, #17345E 55%, #0F2443 100%);
+  box-shadow: 0 0 0 1px rgba(191, 227, 255, 0.25), 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+/* ---- Decorations (XmasDecor.jsx) ---------------------------------------------------------------- */
+/* z-index -1: over the page background, under all page content and popups. */
+.xm-decor { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: -1; }
+.xm-lights { position: absolute; top: 56px; left: 0; right: 0; height: 30px; }
+.xm-wire { position: absolute; top: 0; left: 0; width: 100%; height: 20px; }
+.xm-bulbs { position: absolute; top: 6px; left: 0; right: 0; display: flex; justify-content: space-around; }
+.xm-bulb { width: 8px; height: 12px; border-radius: 50% 50% 45% 45%; box-shadow: 0 0 8px currentColor, 0 0 2px currentColor; }
+.xm-bulb:nth-child(even) { margin-top: 5px; }
+.xm-twinkle { animation: xm-twinkle 2s ease-in-out infinite; }
+@keyframes xm-twinkle { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; box-shadow: none; } }
+
+.xm-tree { position: absolute; top: 86px; right: 40px; opacity: 0.9; filter: drop-shadow(0 0 12px rgba(191, 227, 255, 0.25)); }
+.xm-star { transform-origin: 60px 19px; animation: xm-star 2.4s ease-in-out infinite; }
+@keyframes xm-star {
+  0%, 100% { transform: scale(1); filter: drop-shadow(0 0 2px #BFE3FF); }
+  50% { transform: scale(1.15); filter: drop-shadow(0 0 7px #E6F4FF); }
+}
+
+.xm-flake { position: absolute; top: -10px; border-radius: 50%; background: #fff; animation-name: xm-fall; animation-timing-function: linear; animation-iteration-count: infinite; }
+@keyframes xm-fall {
+  0% { transform: translate3d(0, 0, 0); }
+  50% { transform: translate3d(var(--drift), 52vh, 0); }
+  100% { transform: translate3d(0, 105vh, 0); }
+}
+.xm-drifts { position: absolute; left: 0; bottom: 0; width: 100%; height: 120px; }
+
+/* ---- Reduced motion and print ----------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  html.xmas *, html.xmas *::before, html.xmas *::after { animation: none !important; transition: none !important; }
+  .xm-flake { display: none; }
+}
+@media print {
+  /* Paper is white: print in the ordinary light colours, whatever is on screen. */
+  html.xmas[data-theme] {
+    --color-surface: #fff; --color-surface-sunken: #f4f4f4; --color-page-bg: #fff;
+    --color-text-primary: #000; --color-text-secondary: #222; --color-text-muted: #555;
+    --color-border: rgba(0, 0, 0, 0.2); --color-border-strong: rgba(0, 0, 0, 0.35);
+    color-scheme: light;
+  }
+  html.xmas body { background: #fff; color: #000; }
+  html.xmas th { background: #f4f4f4; color: #000; }
+  html.xmas td { color: #000; }
+  html.xmas .page-header > h1 { color: #000; text-shadow: none; }
+  .xm-decor, html.xmas .card::before, html.xmas .card::after { display: none; }
+  html.xmas .page-header .btn-primary { animation: none; }
+}

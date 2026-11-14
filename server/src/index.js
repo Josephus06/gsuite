@@ -445,6 +445,8 @@ app.use('/api/notifications', notificationRoutes);
 app.use('/api/feed/videos', require('./routes/feedVideos'));
 app.use('/api/feed', feedRoutes);
 app.use('/api/profiles', profileRoutes);
+// The company-wide seasonal theme (Halloween / Christmas), set by a System Admin.
+app.use('/api/season-theme', require('./routes/seasonTheme'));
 app.use('/api/non-standard-job-orders', nonStandardJobOrderRoutes);
 app.use('/api/non-standard-sales-orders', nonStandardSalesOrderRoutes);
 app.use('/api/warranty-certificates', warrantyCertificateRoutes);

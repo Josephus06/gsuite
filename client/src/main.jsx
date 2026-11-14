@@ -5,6 +5,7 @@ import './index.css'
 import './styles/mobile.css'
 import './styles/season.css'
 import './styles/spooky.css'
+import './styles/xmas.css'
 import App from './App.jsx'
 import { AuthProvider } from './context/AuthContext.jsx'
 

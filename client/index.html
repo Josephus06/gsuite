@@ -16,10 +16,10 @@
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
     />
-    <!-- The Spooky theme (src/styles/spooky.css): Creepster for headings and the logo, Inter for the rest. -->
+    <!-- The seasonal themes: Creepster (spooky.css) / Mountains of Christmas (xmas.css) for titles and the logo, Inter for the rest. -->
     <link
       rel="stylesheet"
-      href="https://fonts.googleapis.com/css2?family=Creepster&family=Inter:wght@400;500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Creepster&family=Mountains+of+Christmas:wght@700&family=Inter:wght@400;500;600;700&display=swap"
     />
     <title>GSuite</title>
     <script>
@@ -36,17 +36,23 @@
           // 'glass' is a dark theme as far as the browser's own widgets are concerned; passing
           // the name through would leave a near-black page with light scrollbars.
           document.documentElement.style.colorScheme = theme === 'glass' ? 'dark' : theme;
-          // The seasonal look (src/utils/season.js): Oct-Nov spooky, Dec Christmas, unless switched off.
+          // The seasonal theme (src/utils/season.js): the admin's company-wide choice ('season-admin':
+          // auto | halloween | christmas | off; auto = Oct-Nov Halloween, Dec Christmas), unless this
+          // user switched it off for themselves ('season-user' = off; older 'season' / 'season-theme' = off).
+          var choice = localStorage.getItem('season-admin');
+          if (['auto', 'halloween', 'christmas', 'off'].indexOf(choice) < 0) choice = 'auto';
+          var userOn = localStorage.getItem('season-user');
+          if (userOn !== 'on' && userOn !== 'off') userOn = localStorage.getItem('season') === 'off' || localStorage.getItem('season-theme') === 'off' ? 'off' : 'on';
+          if (userOn === 'off') choice = 'off';
           var m = new Date().getMonth();
-          var season = m === 9 || m === 10 ? 'spooky' : (m === 11 ? 'christmas' : '');
-          if (season && localStorage.getItem('season-theme') !== 'off') {
+          var season = choice === 'off' ? '' : choice === 'halloween' ? 'spooky' : choice === 'christmas' ? 'christmas'
+            : (m === 9 || m === 10 ? 'spooky' : (m === 11 ? 'christmas' : ''));
+          if (season) {
+            // Both are dark redesigns: html.spooky (styles/spooky.css) / html.xmas (styles/xmas.css).
             document.documentElement.dataset.season = season;
-            // Spooky is a dark redesign (styles/spooky.css): html.spooky on the dark palette.
-            if (season === 'spooky') {
-              document.documentElement.classList.add('spooky');
-              document.documentElement.dataset.theme = 'dark';
-              document.documentElement.style.colorScheme = 'dark';
-            }
+            document.documentElement.classList.add(season === 'spooky' ? 'spooky' : 'xmas');
+            document.documentElement.dataset.theme = 'dark';
+            document.documentElement.style.colorScheme = 'dark';
           }
           // Same pre-paint reasoning for the user's uploaded background: applied from the
           // cached copy here so it is already on screen at first paint instead of dropping

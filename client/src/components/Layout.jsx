@@ -16,9 +16,9 @@ import api from '../api/client';
 import { fileToScaledDataUrl } from '../utils/image';
 import { nextTheme, resolveTheme, setTheme, watchSystemTheme } from '../utils/theme';
 import { clearBackground, currentBackground, setBackground, subscribeBackground } from '../utils/background';
-import { SEASONS, activeSeason, applySeason, seasonFor, setSeasonEnabled } from '../utils/season';
-import SeasonDecor from './SeasonDecor';
+import { SEASONS, SEASON_CHOICES, activeSeason, adminSeasonChoice, applySeason, companySeason, rememberAdminChoice, setUserSeasonOn } from '../utils/season';
 import SpookyDecor from './SpookyDecor';
+import XmasDecor from './XmasDecor';
 
 // Mirrors the real GraphicStar system's topbar arrangement: a row of category
 // dropdowns (Master Lists, Inventory, Sales, Costing, ...) instead of a left
@@ -494,17 +494,51 @@ export default function Layout() {
   const themeLabel = { light: 'DAY MODE', dark: 'NIGHT MODE', glass: 'GLASS MODE' }[theme] || 'DAY MODE';
   const nextLabel = { light: 'night', dark: 'glass', glass: 'day' }[theme] || 'night';
 
-  // ---- Seasonal look (utils/season.js) ------------------------------------------
-  // Spooky in Oct-Nov, Christmas in December, on by default; the switch beside the theme toggle
-  // goes back to the original look (and on again). Re-checked hourly so it changes with the month.
+  // ---- Seasonal themes (utils/season.js) ----------------------------------------
+  // The season (Halloween html.spooky / Christmas html.xmas) is a company-wide choice only a System
+  // Admin makes -- the caret beside the pill, shown to them alone (routes/seasonTheme.js). Everyone's
+  // pill switches it off and back on for themselves. No reload: the class on <html> changes and the
+  // decorations swap. Re-read from the server on load and hourly, so "auto" follows the month and an
+  // admin's change reaches everyone.
+  const isSystemAdmin = user?.account_type === 'System Admin';
   const [season, setSeason] = useState(activeSeason);
-  const monthSeason = seasonFor();
+  const [adminChoice, setAdminChoice] = useState(adminSeasonChoice);
+  const [seasonMenu, setSeasonMenu] = useState(false);
+  const seasonMenuRef = useRef(null);
+  useEffect(() => { applySeason(season); }, [season]);
   useEffect(() => {
-    applySeason(season);
-    const t = setInterval(() => setSeason(activeSeason()), 60 * 60 * 1000);
-    return () => clearInterval(t);
-  }, [season]);
-  function toggleSeason() { setSeason(setSeasonEnabled(!season)); }
+    let live = true;
+    const load = () => api.get('/season-theme').then(({ data }) => {
+      if (!live) return;
+      rememberAdminChoice(data.season_theme);
+      setAdminChoice(data.season_theme);
+      setSeason(activeSeason());
+    }).catch(() => { if (live) setSeason(activeSeason()); });
+    load();
+    const t = setInterval(load, 60 * 60 * 1000);
+    return () => { live = false; clearInterval(t); };
+  }, []);
+  useEffect(() => {
+    if (!seasonMenu) return undefined;
+    const close = (e) => { if (!seasonMenuRef.current?.contains(e.target)) setSeasonMenu(false); };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  }, [seasonMenu]);
+  // The admin's season for now -- what the pill turns on.
+  const offered = companySeason(adminChoice);
+  function toggleSeason() { setSeason(setUserSeasonOn(!season)); }
+  async function chooseSeason(v) {
+    setSeasonMenu(false);
+    try {
+      const { data } = await api.put('/season-theme', { season_theme: v });
+      rememberAdminChoice(data.season_theme);
+      setAdminChoice(data.season_theme);
+      // Choosing a season shows it to the admin too (their own switch back on).
+      setSeason(companySeason(data.season_theme) ? setUserSeasonOn(true) : activeSeason());
+    } catch (err) {
+      setBgNote(err.response?.data?.error || 'Could not change the seasonal theme.');
+    }
+  }
 
   // ---- Personal site background -------------------------------------------------
   // Sits with the Day/Night toggle because it is the same kind of setting: how the app
@@ -647,8 +681,8 @@ export default function Layout() {
 
   return (
     <div className="app-shell">
-      <SeasonDecor season={season} />
       {season === 'spooky' && <SpookyDecor />}
+      {season === 'christmas' && <XmasDecor />}
       <ImpersonationBanner />
       <header ref={headerRef} className={`topnav${navCompact ? ' topnav-compact' : ''}`}>
         <button
@@ -673,6 +707,17 @@ export default function Layout() {
               <ellipse cx="22" cy="19" rx="7" ry="10" fill="#E8650F" />
               <ellipse cx="16" cy="19" rx="7" ry="11" fill="#FF7A1A" />
               <path d="M10 16l3-3 2 3zM17 16l2-3 3 3zM10 22c3 3 9 3 12 0l-2 1-1-1-2 1-1-1-2 1-1-1-2 1z" fill="#3A1500" />
+            </svg>
+            T1S
+          </span>
+          {/* The Christmas theme's logo (xmas.css): a frosted holly sprig. */}
+          <span className="xm-logo" aria-hidden="true">
+            <svg viewBox="0 0 32 24" width="26" height="20">
+              <path d="M15 12C11 4 4 3 0 6c3 1 4 3 3 5 2-1 5 0 6 2 1-1 4-2 6-1z" fill="#E6F0FA" />
+              <path d="M17 12c4-8 11-9 15-6-3 1-4 3-3 5-2-1-5 0-6 2-1-1-4-2-6-1z" fill="#C3D9F2" />
+              <circle cx="14" cy="15" r="2.8" fill="#4A96F0" />
+              <circle cx="18.5" cy="15.5" r="2.8" fill="#2F7DE1" />
+              <circle cx="16.2" cy="19.4" r="2.8" fill="#7FC8F8" />
             </svg>
             T1S
           </span>
@@ -716,20 +761,43 @@ export default function Layout() {
           )))}
         </nav>
         <div className="topnav-user">
-          {monthSeason && (
+          {(offered || isSystemAdmin) && (
+          <div className="season-switch" ref={seasonMenuRef}>
+            {offered && (
             <button
               type="button"
               className={`btn btn-sm season-toggle${season ? '' : ' is-off'}`}
               onClick={toggleSeason}
-              title={season ? `${SEASONS[season].label} theme -- click to go back to the original theme` : `Original theme -- click for the ${SEASONS[monthSeason].label} theme`}
+              title={season ? `${SEASONS[season].name} theme -- click to go back to the original look` : `Original look -- click for the ${SEASONS[offered].name} theme`}
             >
               <span className="season-toggle-icon" aria-hidden="true">
-                {season === 'spooky' ? (
+                {season === 'spooky' && (
                   <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a7 7 0 1 0 10.5 10.5Z" /></svg>
-                ) : (season ? SEASONS[season].icon : '↺')}
+                )}
+                {season === 'christmas' && (
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 2v20M4.9 4.9l14.2 14.2M2 12h20M4.9 19.1L19.1 4.9M9 3l3 3 3-3M9 21l3-3 3 3M3 9l3 3-3 3M21 9l-3 3 3 3" /></svg>
+                )}
+                {!season && '↺'}
               </span>
               {season ? SEASONS[season].label : 'Original'}
             </button>
+            )}
+            {isSystemAdmin && (
+            <button type="button" className="btn btn-sm season-caret" aria-haspopup="menu" aria-expanded={seasonMenu}
+              title="Seasonal theme for everyone (System Admin)" onClick={() => setSeasonMenu((o) => !o)}>{offered ? '▾' : 'Season ▾'}</button>
+            )}
+            {seasonMenu && (
+              <div className="season-menu" role="menu">
+                <div className="season-menu-title">Seasonal theme for everyone</div>
+                {SEASON_CHOICES.map((c) => (
+                  <button key={c.value} type="button" role="menuitemradio" aria-checked={adminChoice === c.value}
+                    className={adminChoice === c.value ? 'active' : ''} onClick={() => chooseSeason(c.value)}>
+                    {adminChoice === c.value ? '● ' : '○ '}{c.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           )}
           <button
             type="button"

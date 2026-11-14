@@ -183,7 +183,7 @@ export default function Tickets() {
       label: 'Status',
       render: (r) => (
         <>
-          <span className={`badge ${STATUS_BADGE[r.status] || 'badge-muted'}`}>{STATUS_LABELS[r.status] || r.status}</span>
+          <span className={`badge ${STATUS_BADGE[r.status] || 'badge-muted'} ticket-status-${r.status}`}>{STATUS_LABELS[r.status] || r.status}</span>
           {isPending(r) && <span className="badge badge-danger" style={{ marginLeft: 6 }} title={`Awaiting: ${r.approver_names}`}>Pending Approval</span>}
           {isGmPending(r) && <span className="badge badge-danger" style={{ marginLeft: 6 }}>Pending GM Approval</span>}
         </>
