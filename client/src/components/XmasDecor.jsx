@@ -9,8 +9,8 @@ import { useMemo } from 'react';
 //   - about 40 snowflakes falling at their own speeds with a slight sideways drift;
 //   - soft snowdrifts along the bottom.
 // The snow cap and holly on each card are drawn by xmas.css. prefers-reduced-motion stops it all.
-// Blue and white (2026-11-14: the frosty winter-night palette).
-const BULBS = ['#FFFFFF', '#7FC8F8', '#BFE3FF', '#4A96F0', '#E6F4FF'];
+// The lights alternate red and green (asked 2026-11-14); the rest of the theme stays blue and white.
+const BULBS = ['#E53935', '#2EB85C'];
 
 function Tree() {
   return (
@@ -48,7 +48,9 @@ export default function XmasDecor() {
         <div className="xm-bulbs">
           {Array.from({ length: 30 }, (_, i) => {
             const c = BULBS[i % BULBS.length];
-            return <span key={i} className={i % 2 ? 'xm-bulb xm-twinkle' : 'xm-bulb'} style={{ background: c, color: c, animationDelay: `${-((i * 0.37) % 2)}s` }} />;
+            // Twinkling in pairs, so red and green bulbs both twinkle (with two colours, every other
+            // bulb would be every green one).
+            return <span key={i} className={Math.floor(i / 2) % 2 ? 'xm-bulb xm-twinkle' : 'xm-bulb'} style={{ background: c, color: c, animationDelay: `${-((i * 0.37) % 2)}s` }} />;
           })}
         </div>
       </div>
