@@ -8,6 +8,8 @@ import { DecisionModal, RescheduleModal, rangeLabel } from './installation/resch
 import { downloadBlob, renderDayPng } from './installation/dayReport';
 import ButtonMenu from '../components/ButtonMenu';
 import ProjectSummaryModal from './installation/ProjectSummaryModal';
+import { WeekHead, withWeeks } from '../components/CalendarWeeks';
+import { rowWeekLabel, weekLabel } from '../utils/isoWeek';
 
 // Production > Installation Planner -- the dashboard (server: routes/installationPlanner.js). PLANNER's
 // planner dashboard: the counts on top, then the Project Schedule Calendar -- every project across its
@@ -209,9 +211,10 @@ export default function InstallationPlanner({ readOnly = false }) {
     else setAnchor(new Date(anchor.getFullYear(), anchor.getMonth() + n, 1));
   }
 
-  const title = view === 'day' ? `${WEEKDAYS[anchor.getDay()]}, ${displayDate(from)}`
+  // Week and day titles carry the ISO week (2026-11-14).
+  const title = view === 'day' ? `${WEEKDAYS[anchor.getDay()]}, ${displayDate(from)} · ${weekLabel(anchor)}`
     : view === 'week' || view === 'crew'
-    ? `${displayDate(from)} – ${displayDate(to)}`
+    ? `${displayDate(from)} – ${displayDate(to)} · ${rowWeekLabel(from)}`
     : `${MONTHS[anchor.getMonth()]} ${anchor.getFullYear()}`;
 
   // Read only, a bar or a booking opens nothing -- its tooltip says what it is.
@@ -377,9 +380,10 @@ export default function InstallationPlanner({ readOnly = false }) {
             onWholeMonth={listDay ? () => setListDay('') : null} />
         ) : (
           <div style={{ overflowX: 'auto' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(110px, 1fr))', gap: 1, background: 'var(--border)', minWidth: 770 }}>
+            <div className="cal-inline-weeks" style={{ display: 'grid', gridTemplateColumns: '44px repeat(7, minmax(110px, 1fr))', gap: 1, background: 'var(--border)', minWidth: 814 }}>
+              <WeekHead className="" style={{ background: 'var(--surface)', padding: 6, fontWeight: 600, fontSize: 12 }} />
               {WEEKDAYS.map((w) => <div key={w} style={{ background: 'var(--surface)', padding: 6, fontWeight: 600, fontSize: 12 }}>{w}</div>)}
-              {days.map((d) => {
+              {withWeeks(days, (d) => {
                 const k = ymd(d);
                 const list = byDay.get(k) || [];
                 const inMonth = view === 'week' || d.getMonth() === anchor.getMonth();

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import api from '../api/client';
 import Modal from './Modal';
 import { useCalendarRange, CalAmount } from '../utils/calendarRange';
+import { WeekHead, withWeeks } from './CalendarWeeks';
 
 // The month of expected collections, in the shape of the production schedule so the two read
 // alike -- but the chips carry CUSTOMER names, because the question here is who is paying us on
@@ -76,9 +77,10 @@ export default function CollectionForecastCalendar({ customerId, range = 'month'
       {/* Day: the day's breakdown in place of a single-cell grid. */}
       {range === 'day' && !loading && <DayBreakdown entry={byDay.get(days[0])} />}
 
-      {range !== 'day' && <div className="artist-calendar-grid cal-compact">
+      {range !== 'day' && <div className="artist-calendar-grid cal-compact cal-with-weeks">
+        <WeekHead />
         {WEEKDAYS.map((w) => <div key={w} className="artist-calendar-weekday">{w}</div>)}
-        {cells.map((key, i) => {
+        {withWeeks(cells, (key, i) => {
           if (!key) return <div key={`pad-${i}`} className="artist-calendar-day is-empty" />;
           const entry = byDay.get(key);
           const customers = entry?.customers || [];

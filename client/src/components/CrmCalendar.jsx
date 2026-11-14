@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from './LoadingSpinner';
 import { displayMonth } from '../utils/dates';
+import { WeekHead, withWeeks } from './CalendarWeeks';
 
 const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const ICON = { visit: '🚗', meeting: '👥' };
@@ -63,9 +64,10 @@ export default function CrmCalendar() {
       </div>
       {loading ? <LoadingSpinner /> : (
         <div style={{ overflowX: 'auto' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(110px, 1fr))', gap: 1, background: 'var(--color-border)', minWidth: 770 }}>
+          <div className="cal-inline-weeks" style={{ display: 'grid', gridTemplateColumns: '44px repeat(7, minmax(110px, 1fr))', gap: 1, background: 'var(--color-border)', minWidth: 814 }}>
+            <WeekHead className="" style={{ background: 'var(--color-surface)', padding: 6, fontWeight: 600, fontSize: 12 }} />
             {WEEKDAYS.map((w) => <div key={w} style={{ background: 'var(--color-surface)', padding: 6, fontWeight: 600, fontSize: 12 }}>{w}</div>)}
-            {days.map((d) => {
+            {withWeeks(days, (d) => {
               const k = ymd(d);
               const list = byDay.get(k) || [];
               const inMonth = d.getMonth() === month.getMonth();

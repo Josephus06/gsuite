@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { rowWeekLabel, weekLabel } from './isoWeek';
 
 // The Day / Week / Month switch shared by the General Manager's dashboard calendars (asked
 // 2026-10-06). One anchor date, three ways to look around it:
@@ -30,7 +31,8 @@ export function useCalendarRange(range = 'month') {
   let title = '';
   if (range === 'day') {
     cells = [anchor];
-    title = a.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    // With its ISO week (2026-11-14).
+    title = `${a.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} · ${weekLabel(anchor)}`;
   } else if (range === 'week') {
     const start = new Date(a.getFullYear(), a.getMonth(), a.getDate() - a.getDay());
     for (let i = 0; i < 7; i += 1) {
@@ -44,6 +46,7 @@ export function useCalendarRange(range = 'month') {
     title = first.getTime() === end.getTime()
       ? `${short(first)}, ${end.getFullYear()}`
       : `${short(first)} – ${end.getDate()}, ${end.getFullYear()}`;
+    title = `${title} · ${rowWeekLabel(anchor)}`;
   } else {
     const y = a.getFullYear(); const m = a.getMonth();
     const leading = new Date(y, m, 1).getDay();

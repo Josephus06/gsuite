@@ -6,6 +6,8 @@ import EntityPicker from '../components/EntityPicker';
 import LoadingSpinner from '../components/LoadingSpinner';
 import Pagination from '../components/Pagination';
 import { displayDate, displayMonth, displayAuditTime } from '../utils/dates';
+import { WeekHead, withWeeks } from '../components/CalendarWeeks';
+import { rowWeekLabel, weekLabel } from '../utils/isoWeek';
 
 // Design > Design Schedule (flow of 2026-11-03; server: routes/designSchedule.js). Sales -- Account
 // Officers, their Supervisors, the SBU -- put their JO / NSTDJO on the calendar with a preferred artist;
@@ -207,9 +209,10 @@ export default function DesignSchedule() {
     goTo(k);
     setModal({ kind: 'day', date: k });
   }
+  // Week and day titles carry the ISO week (2026-11-14).
   const title = view === 'month' ? displayMonth(month)
-    : view === 'week' ? `${displayDate(from)} – ${displayDate(to)}`
-      : `${WEEKDAYS[days[0].getDay()]}, ${displayDate(from)}`;
+    : view === 'week' ? `${displayDate(from)} – ${displayDate(to)} · ${rowWeekLabel(days[0])}`
+      : `${WEEKDAYS[days[0].getDay()]}, ${displayDate(from)} · ${weekLabel(days[0])}`;
 
   // A Design Supervisor clicking a slot that is waiting on them gets its whole calendar -- that is where
   // the job types, revisions and the Approve / Send back buttons are.
@@ -304,8 +307,8 @@ export default function DesignSchedule() {
           </>
         ) : view === 'week' ? (
           <div style={{ overflowX: 'auto' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(130px, 1fr))', gap: 1, background: 'var(--color-border)', minWidth: 910 }}>
-              {days.map((d) => {
+            <div className="cal-inline-weeks" style={{ display: 'grid', gridTemplateColumns: '44px repeat(7, minmax(130px, 1fr))', gap: 1, background: 'var(--color-border)', minWidth: 954 }}>
+              {withWeeks(days, (d) => {
                 const k = ymd(d);
                 const list = byDay.get(k) || [];
                 return (
@@ -338,9 +341,10 @@ export default function DesignSchedule() {
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, minmax(110px, 1fr))', gap: 1, background: 'var(--color-border)', minWidth: 770 }}>
+            <div className="cal-inline-weeks" style={{ display: 'grid', gridTemplateColumns: '44px repeat(7, minmax(110px, 1fr))', gap: 1, background: 'var(--color-border)', minWidth: 814 }}>
+              <WeekHead className="" style={{ background: 'var(--color-surface)', padding: 6, fontWeight: 600, fontSize: 12 }} />
               {WEEKDAYS.map((w) => <div key={w} style={{ background: 'var(--color-surface)', padding: 6, fontWeight: 600, fontSize: 12 }}>{w}</div>)}
-              {days.map((d) => {
+              {withWeeks(days, (d) => {
                 const k = ymd(d);
                 const list = byDay.get(k) || [];
                 const inMonth = d.getMonth() === month.getMonth();

@@ -5,6 +5,7 @@ import Modal from './Modal';
 import { useCalendarRange, CalAmount } from '../utils/calendarRange';
 import FilterPicker from './FilterPicker';
 import SearchInput from './SearchInput';
+import { WeekHead, withWeeks } from './CalendarWeeks';
 
 // The General Manager dashboard's Weighted Sales and Invoice calendars: one month of sales orders
 // or invoices by the day they were created, as customer chips with the day's total -- laid out
@@ -138,9 +139,10 @@ export default function GmDocumentCalendar({ type, range = 'month' }) {
         ? <CustomerTable cfg={cfg} customers={dayEntry.customers} count={dayEntry.count} total={dayEntry.total} />
         : <div className="muted" style={{ padding: 20, textAlign: 'center' }}>Nothing on this day.</div>)}
 
-      {range !== 'day' && <div className="artist-calendar-grid cal-compact">
+      {range !== 'day' && <div className="artist-calendar-grid cal-compact cal-with-weeks">
+        <WeekHead />
         {WEEKDAYS.map((w) => <div key={w} className="artist-calendar-weekday">{w}</div>)}
-        {cells.map((key, i) => {
+        {withWeeks(cells, (key, i) => {
           if (!key) return <div key={`pad-${i}`} className="artist-calendar-day is-empty" />;
           const entry = byDay.get(key);
           const customers = entry?.customers || [];

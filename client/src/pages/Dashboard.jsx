@@ -19,6 +19,7 @@ import SalesBreakdownCard from '../components/SalesBreakdownCard';
 import Feed from './Feed';
 import InstallationPlanner from './InstallationPlanner';
 import '../styles/feed.css';
+import { WeekHead, withWeeks } from '../components/CalendarWeeks';
 
 // "20 August 2026" from a YYYY-MM-DD key. Built from the parts rather than new Date(key):
 // a bare date string is parsed as UTC midnight, which displays as the previous day at UTC+8.
@@ -1091,9 +1092,10 @@ function ForecastCalendarCard({ navigate, embedded = false, range = 'month' }) {
         {/* Day: that day's jobs as the table the popup shows, in place of a single-cell grid. */}
         {range === 'day' && !loading && <ProductionDayTable list={byDay.get(days[0]) || []} spanLabel={spanLabel} navigate={navigate} />}
 
-        {range !== 'day' && <div className="artist-calendar-grid">
+        {range !== 'day' && <div className="artist-calendar-grid cal-with-weeks">
+          <WeekHead />
           {WEEKDAYS.map((w) => <div key={w} className="artist-calendar-weekday">{w}</div>)}
-          {cells.map((key, i) => {
+          {withWeeks(cells, (key, i) => {
             if (!key) return <div key={`pad-${i}`} className="artist-calendar-day is-empty" />;
             const dayJobs = byDay.get(key) || [];
             return (
@@ -1382,9 +1384,10 @@ function ScheduleCalendar({
         </div>
       )}
 
-      <div className="artist-calendar-grid">
+      <div className="artist-calendar-grid cal-with-weeks">
+        <WeekHead />
         {WEEKDAYS.map((w) => <div key={w} className="artist-calendar-weekday">{w}</div>)}
-        {cells.map((key, i) => {
+        {withWeeks(cells, (key, i) => {
           if (!key) return <div key={`pad-${i}`} className="artist-calendar-day is-empty" />;
           const dayJobs = byDay.get(key) || [];
           const dayNo = Number(key.slice(8, 10));
