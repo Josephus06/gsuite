@@ -16,6 +16,8 @@ import api from '../api/client';
 import { fileToScaledDataUrl } from '../utils/image';
 import { nextTheme, resolveTheme, setTheme, watchSystemTheme } from '../utils/theme';
 import { clearBackground, currentBackground, setBackground, subscribeBackground } from '../utils/background';
+import { SEASONS, activeSeason, applySeason, seasonFor, setSeasonEnabled } from '../utils/season';
+import SeasonDecor from './SeasonDecor';
 
 // Mirrors the real GraphicStar system's topbar arrangement: a row of category
 // dropdowns (Master Lists, Inventory, Sales, Costing, ...) instead of a left
@@ -491,6 +493,18 @@ export default function Layout() {
   const themeLabel = { light: 'DAY MODE', dark: 'NIGHT MODE', glass: 'GLASS MODE' }[theme] || 'DAY MODE';
   const nextLabel = { light: 'night', dark: 'glass', glass: 'day' }[theme] || 'night';
 
+  // ---- Seasonal look (utils/season.js) ------------------------------------------
+  // Spooky in Oct-Nov, Christmas in December, on by default; the switch beside the theme toggle
+  // goes back to the original look (and on again). Re-checked hourly so it changes with the month.
+  const [season, setSeason] = useState(activeSeason);
+  const monthSeason = seasonFor();
+  useEffect(() => {
+    applySeason(season);
+    const t = setInterval(() => setSeason(activeSeason()), 60 * 60 * 1000);
+    return () => clearInterval(t);
+  }, [season]);
+  function toggleSeason() { setSeason(setSeasonEnabled(!season)); }
+
   // ---- Personal site background -------------------------------------------------
   // Sits with the Day/Night toggle because it is the same kind of setting: how the app
   // looks to this one person, changed from wherever they happen to be rather than from a
@@ -623,6 +637,7 @@ export default function Layout() {
 
   return (
     <div className="app-shell">
+      <SeasonDecor season={season} />
       <ImpersonationBanner />
       <header ref={headerRef} className={`topnav${navCompact ? ' topnav-compact' : ''}`}>
         <button
@@ -679,6 +694,17 @@ export default function Layout() {
           )))}
         </nav>
         <div className="topnav-user">
+          {monthSeason && (
+            <button
+              type="button"
+              className={`btn btn-sm season-toggle${season ? '' : ' is-off'}`}
+              onClick={toggleSeason}
+              title={season ? `${SEASONS[season].label} theme -- click to go back to the original theme` : `Original theme -- click for the ${SEASONS[monthSeason].label} theme`}
+            >
+              <span className="season-toggle-icon" aria-hidden="true">{season ? SEASONS[season].icon : '↺'}</span>
+              {season ? SEASONS[season].label : 'Original'}
+            </button>
+          )}
           <button
             type="button"
             className={`theme-toggle is-${theme === 'light' ? 'day' : theme === 'dark' ? 'night' : 'glass'}`}

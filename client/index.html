@@ -31,6 +31,10 @@
           // 'glass' is a dark theme as far as the browser's own widgets are concerned; passing
           // the name through would leave a near-black page with light scrollbars.
           document.documentElement.style.colorScheme = theme === 'glass' ? 'dark' : theme;
+          // The seasonal look (src/utils/season.js): Oct-Nov spooky, Dec Christmas, unless switched off.
+          var m = new Date().getMonth();
+          var season = m === 9 || m === 10 ? 'spooky' : (m === 11 ? 'christmas' : '');
+          if (season && localStorage.getItem('season-theme') !== 'off') document.documentElement.dataset.season = season;
           // Same pre-paint reasoning for the user's uploaded background: applied from the
           // cached copy here so it is already on screen at first paint instead of dropping
           // in after React mounts. Mirrors applyBackground() in src/utils/background.js;
