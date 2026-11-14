@@ -18,6 +18,7 @@ import { nextTheme, resolveTheme, setTheme, watchSystemTheme } from '../utils/th
 import { clearBackground, currentBackground, setBackground, subscribeBackground } from '../utils/background';
 import { SEASONS, activeSeason, applySeason, seasonFor, setSeasonEnabled } from '../utils/season';
 import SeasonDecor from './SeasonDecor';
+import SpookyDecor from './SpookyDecor';
 
 // Mirrors the real GraphicStar system's topbar arrangement: a row of category
 // dropdowns (Master Lists, Inventory, Sales, Costing, ...) instead of a left
@@ -635,9 +636,19 @@ export default function Layout() {
     return () => ro.disconnect();
   }, [navKey]);
 
+  // The Spooky theme prints the page's menu section ("MASTER LISTS") above its title, from the
+  // same menu (spooky.css reads --sp-section).
+  useEffect(() => {
+    const p = location.pathname;
+    const group = NAV_STRUCTURE.find((g) => childrenOf(g).some((c) => p === c.route || p.startsWith(`${c.route}/`)));
+    const label = group && (group.children || group.sections) ? group.label : '';
+    document.documentElement.style.setProperty('--sp-section', JSON.stringify(label.toUpperCase()));
+  }, [location.pathname]);
+
   return (
     <div className="app-shell">
       <SeasonDecor season={season} />
+      {season === 'spooky' && <SpookyDecor />}
       <ImpersonationBanner />
       <header ref={headerRef} className={`topnav${navCompact ? ' topnav-compact' : ''}`}>
         <button
@@ -654,6 +665,17 @@ export default function Layout() {
         <div className="topnav-brand">
           <img className="topnav-logo topnav-logo-light" src={t1sLogo} alt="T1S — The One System" />
           <img className="topnav-logo topnav-logo-dark" src={t1sLogoDark} alt="" aria-hidden="true" />
+          {/* The Spooky theme's logo (spooky.css shows it instead of the image). */}
+          <span className="sp-logo" aria-hidden="true">
+            <svg viewBox="0 0 32 32" width="24" height="24">
+              <path d="M16 7c-1-3 0-5 2-6l1 1c-2 1-2 3-2 5z" fill="#4E8B2E" />
+              <ellipse cx="10" cy="19" rx="7" ry="10" fill="#E8650F" />
+              <ellipse cx="22" cy="19" rx="7" ry="10" fill="#E8650F" />
+              <ellipse cx="16" cy="19" rx="7" ry="11" fill="#FF7A1A" />
+              <path d="M10 16l3-3 2 3zM17 16l2-3 3 3zM10 22c3 3 9 3 12 0l-2 1-1-1-2 1-1-1-2 1-1-1-2 1z" fill="#3A1500" />
+            </svg>
+            T1S
+          </span>
         </div>
         <nav className="topnav-menu">
           {visibleStructure.map((item) => (item.children || item.sections ? (
@@ -701,7 +723,11 @@ export default function Layout() {
               onClick={toggleSeason}
               title={season ? `${SEASONS[season].label} theme -- click to go back to the original theme` : `Original theme -- click for the ${SEASONS[monthSeason].label} theme`}
             >
-              <span className="season-toggle-icon" aria-hidden="true">{season ? SEASONS[season].icon : '↺'}</span>
+              <span className="season-toggle-icon" aria-hidden="true">
+                {season === 'spooky' ? (
+                  <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a7 7 0 1 0 10.5 10.5Z" /></svg>
+                ) : (season ? SEASONS[season].icon : '↺')}
+              </span>
               {season ? SEASONS[season].label : 'Original'}
             </button>
           )}

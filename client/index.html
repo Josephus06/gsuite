@@ -16,6 +16,11 @@
       rel="stylesheet"
       href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
     />
+    <!-- The Spooky theme (src/styles/spooky.css): Creepster for headings and the logo, Inter for the rest. -->
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Creepster&family=Inter:wght@400;500;600;700&display=swap"
+    />
     <title>GSuite</title>
     <script>
       // Runs before first paint so a dark-mode user never sees a flash of the light theme.
@@ -34,7 +39,15 @@
           // The seasonal look (src/utils/season.js): Oct-Nov spooky, Dec Christmas, unless switched off.
           var m = new Date().getMonth();
           var season = m === 9 || m === 10 ? 'spooky' : (m === 11 ? 'christmas' : '');
-          if (season && localStorage.getItem('season-theme') !== 'off') document.documentElement.dataset.season = season;
+          if (season && localStorage.getItem('season-theme') !== 'off') {
+            document.documentElement.dataset.season = season;
+            // Spooky is a dark redesign (styles/spooky.css): html.spooky on the dark palette.
+            if (season === 'spooky') {
+              document.documentElement.classList.add('spooky');
+              document.documentElement.dataset.theme = 'dark';
+              document.documentElement.style.colorScheme = 'dark';
+            }
+          }
           // Same pre-paint reasoning for the user's uploaded background: applied from the
           // cached copy here so it is already on screen at first paint instead of dropping
           // in after React mounts. Mirrors applyBackground() in src/utils/background.js;

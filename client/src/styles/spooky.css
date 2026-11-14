@@ -1,0 +1,285 @@
+/* =============================================================================
+   SPOOKY THEME -- "Night of the Ledger" (2026-11-14)
+   On while <html> has the class `spooky` (utils/season.js: Oct-Nov by default, the topbar toggle
+   switches it off and on, kept in localStorage). Every rule here is scoped to html.spooky, so with
+   it off the app looks exactly as before.
+
+   It sits on the dark palette (season.js sets data-theme="dark" while it is on) and re-points the
+   design tokens (styles/tokens.css) at the colours below, so every page follows; then the topbar,
+   page titles, tabs, cards, tables, buttons and pagination get their spooky shapes. Decorations:
+   SpookyDecor.jsx (moon, bats, fog) plus the drip and card cobwebs drawn here -- all
+   pointer-events: none and behind the page content. prefers-reduced-motion stops every animation.
+   ========================================================================== */
+
+html.spooky {
+  --sp-bg: #0E0A14;
+  --sp-nav: #120C1A;
+  --sp-surface: #17111F;
+  --sp-surface-2: #1F1729;
+  --sp-raised: #241C2E;
+  --sp-border: #2A2135;
+  --sp-border-strong: #3A2C4A;
+  --sp-text: #EDE6F5;
+  --sp-text-soft: #D9CFE6;
+  --sp-muted: #B7A8CB;
+  --sp-placeholder: #9A8CAD;
+  --sp-accent: #FF7A1A;
+  --sp-accent-soft: #FFB070;
+  --sp-accent-hover: #FF9A4A;
+  --sp-purple: #9B6BFF;
+  --sp-alive: #8EF08A;
+  --sp-danger: #B3192E;
+  --sp-danger-text: #FF8A9A;
+  --sp-ink: #1A0B00; /* dark text on orange */
+}
+
+/* The app's own tokens, re-pointed. [data-theme] lifts this above :root[data-theme='dark']. */
+html.spooky[data-theme] {
+  --color-primary: var(--sp-accent);
+  --color-primary-bg: rgba(255, 122, 26, 0.14);
+  --color-primary-text: var(--sp-accent-soft);
+  --color-on-primary: var(--sp-ink);
+
+  --color-success: var(--sp-alive);
+  --color-success-bg: rgba(142, 240, 138, 0.12);
+  --color-success-text: var(--sp-alive);
+  --color-danger: var(--sp-danger-text);
+  --color-danger-bg: rgba(179, 25, 46, 0.18);
+  --color-danger-text: var(--sp-danger-text);
+  --color-warning: #FFC46B;
+  --color-warning-bg: rgba(255, 196, 107, 0.14);
+  --color-warning-text: #FFD79A;
+  --color-neutral-bg: var(--sp-raised);
+  --color-neutral-text: var(--sp-text-soft);
+
+  --color-surface: var(--sp-surface);
+  --color-surface-sunken: var(--sp-surface-2);
+  --color-page-bg: var(--sp-bg);
+  --color-text-primary: var(--sp-text);
+  --color-text-secondary: var(--sp-text-soft);
+  --color-text-muted: var(--sp-muted);
+  --color-border: var(--sp-border);
+  --color-border-strong: var(--sp-border-strong);
+  --focus-ring: 0 0 0 3px rgba(255, 122, 26, 0.35);
+  --card-glass: rgba(23, 17, 31, 0.6);
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --sans: var(--font-sans);
+  color-scheme: dark;
+}
+
+html.spooky body { background: var(--sp-bg); color: var(--sp-text); font-family: var(--font-sans); }
+html.spooky ::selection { background: var(--sp-accent); color: var(--sp-ink); }
+
+
+/* ---- Scrollbar ---------------------------------------------------------------------------- */
+html.spooky ::-webkit-scrollbar { width: 11px; height: 11px; }
+html.spooky ::-webkit-scrollbar-track { background: #0B0710; }
+html.spooky ::-webkit-scrollbar-thumb { background: linear-gradient(180deg, var(--sp-accent), var(--sp-purple)); border-radius: 8px; border: 2px solid #0B0710; }
+
+/* ---- Top navbar --------------------------------------------------------------------------- */
+html.spooky .topnav { background: var(--sp-nav); border-bottom: 1px solid var(--sp-border); }
+html.spooky .topnav-menu > a,
+html.spooky .topnav-dropdown > button { color: var(--sp-text-soft); }
+html.spooky .topnav-menu > a:hover,
+html.spooky .topnav-menu > a.active,
+html.spooky .topnav-dropdown > button:hover,
+html.spooky .topnav-dropdown > button.active,
+html.spooky .topnav-dropdown:hover > button { color: var(--sp-accent-hover); background: rgba(255, 122, 26, 0.08); }
+html.spooky .topnav-dropdown-menu { background: var(--sp-surface); border-color: var(--sp-border-strong); }
+html.spooky .topnav-dropdown-menu a { color: var(--sp-text-soft); }
+html.spooky .topnav-dropdown-menu a:hover,
+html.spooky .topnav-dropdown-menu a.active { color: var(--sp-accent-hover); background: rgba(255, 122, 26, 0.08); }
+html.spooky .topnav-mega-title { color: var(--sp-accent-soft); }
+
+/* The slime drip: a wavy orange strip hanging under the navbar. */
+html.spooky .topnav::after {
+  content: '';
+  position: absolute; left: 0; right: 0; top: 100%; height: 18px; pointer-events: none;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 18' preserveAspectRatio='none'%3E%3Cpath d='M0 0h120v4c-4 0-5 3-7 3s-3-3-7-3-4 9-7 9-3-9-7-9-5 5-9 5-4-5-8-5-3 12-6 12-3-12-6-12-6 4-10 4-5-4-9-4-3 7-6 7-3-7-7-7-4 3-8 3-5-3-8-3-3 10-6 10S9 4 5 4 2 6 0 6z' fill='%23FF7A1A'/%3E%3C/svg%3E") repeat-x;
+  background-size: 120px 18px;
+  filter: drop-shadow(0 2px 4px rgba(255, 122, 26, 0.35));
+}
+
+/* The logo: a pumpkin and "T1S" in Creepster (Layout renders .sp-logo; the image hides). */
+.sp-logo { display: none; }
+html.spooky .topnav-brand .topnav-logo { display: none; }
+html.spooky .topnav-brand .sp-logo {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: 'Creepster', 'Inter', cursive; font-size: 28px; letter-spacing: 2px; color: var(--sp-accent);
+  text-shadow: 0 0 10px rgba(255, 122, 26, 0.45); line-height: 1;
+}
+
+/* The toggle pill ("Night of the Ledger"); the Day / Night / Glass toggle is hidden while spooky. */
+html.spooky .theme-toggle { display: none; }
+html.spooky .season-toggle {
+  background: rgba(255, 122, 26, 0.1); color: var(--sp-accent-soft);
+  border: 1px solid rgba(255, 122, 26, 0.5); border-radius: 999px; padding: 5px 12px; font-weight: 600;
+}
+html.spooky .season-toggle:hover { background: rgba(255, 122, 26, 0.18); color: #FFD3A8; }
+
+/* ---- Page title ---------------------------------------------------------------------------- */
+html.spooky .page-header { position: relative; }
+html.spooky .page-header > h1 {
+  font-family: 'Creepster', 'Inter', cursive; font-size: 52px; font-weight: 400; line-height: 1.05;
+  color: var(--sp-accent); letter-spacing: 3px; text-shadow: 0 0 18px rgba(255, 122, 26, 0.35);
+}
+/* The section above it ("MASTER LISTS") -- Layout sets --sp-section from the menu. */
+html.spooky .page-header > h1::before {
+  content: var(--sp-section, '');
+  display: block; font-family: var(--font-sans); font-size: 11px; font-weight: 600; letter-spacing: 2px;
+  color: var(--sp-muted); text-shadow: none; text-transform: uppercase; margin-bottom: 2px;
+}
+
+/* ---- Buttons ------------------------------------------------------------------------------- */
+/* Plain buttons (Edit, Back, Extract ...); the coloured kinds keep their own below / in index.css. */
+html.spooky .btn:not(.btn-primary):not(.btn-danger):not(.btn-warning):not(.btn-ghost) { background: var(--sp-raised); color: var(--sp-text); border-color: var(--sp-border-strong); }
+html.spooky .btn:not(.btn-primary):not(.btn-danger):not(.btn-warning):not(.btn-ghost):hover:not(:disabled) { border-color: var(--sp-purple); color: #fff; }
+html.spooky .btn-primary {
+  background: var(--sp-accent); color: var(--sp-ink); border-color: var(--sp-accent); font-weight: 700;
+}
+html.spooky .btn-primary:hover:not(:disabled) { background: var(--sp-accent-hover); border-color: var(--sp-accent-hover); color: var(--sp-ink); }
+/* The page's main action (Add Record and friends) glows like a jack-o'-lantern. */
+html.spooky .page-header .btn-primary { animation: sp-lantern 2.6s ease-in-out infinite; }
+@keyframes sp-lantern {
+  0%, 100% { box-shadow: 0 0 6px rgba(255, 122, 26, 0.45); }
+  50% { box-shadow: 0 0 18px rgba(255, 122, 26, 0.85), 0 0 34px rgba(255, 122, 26, 0.3); }
+}
+html.spooky .btn-danger { background: transparent; color: var(--sp-danger-text); border-color: #5A1A26; }
+html.spooky .btn-danger:hover:not(:disabled) { background: var(--sp-danger); color: #fff; border-color: var(--sp-danger); }
+/* Shown only while spooky (the + on Add Record); .sp-hide is the reverse. */
+.sp-only { display: none; }
+html.spooky .sp-only { display: inline-flex; }
+html.spooky .sp-hide { display: none; }
+
+/* ---- Tabs (pills) -------------------------------------------------------------------------- */
+html.spooky .tabs { flex-wrap: wrap; gap: 8px; }
+html.spooky .tabs button {
+  background: #1A1324; color: var(--sp-text-soft); border: 1px solid var(--sp-border-strong);
+  border-radius: 999px; padding: 7px 14px; font-weight: 500;
+}
+html.spooky .tabs button:hover { border-color: var(--sp-accent); color: #fff; }
+html.spooky .tabs button.active {
+  background: var(--sp-accent); color: var(--sp-ink); border-color: var(--sp-accent); font-weight: 700;
+  box-shadow: 0 0 14px rgba(255, 122, 26, 0.45);
+}
+
+/* ---- Cards --------------------------------------------------------------------------------- */
+html.spooky .card {
+  background: var(--sp-surface); border: 1px solid var(--sp-border); border-radius: 16px;
+  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45); position: relative;
+}
+/* A faint cobweb in the card's top-right corner. */
+html.spooky .card::after {
+  content: ''; position: absolute; top: 0; right: 0; width: 90px; height: 90px; pointer-events: none; opacity: 0.28;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100' fill='none' stroke='%23CFC3E6' stroke-width='0.8'%3E%3Cpath d='M100 0L0 100M100 0L30 100M100 0L65 100M100 0L0 30M100 0L0 65'/%3E%3Cpath d='M78 0Q82 10 100 22M56 0Q66 22 100 44M34 0Q50 34 100 66M12 0Q34 46 100 88'/%3E%3C/svg%3E") no-repeat top right / contain;
+  border-top-right-radius: 16px;
+}
+/* The card header Lookups adds while spooky: the tab name, a count, the search on the right. */
+html.spooky .sp-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; }
+html.spooky .sp-card-head h2 { margin: 0; font-size: 19px; color: #fff; }
+html.spooky .sp-card-head .sp-count { font-size: 12.5px; color: var(--sp-muted); margin-top: 2px; }
+
+/* ---- Inputs and search ---------------------------------------------------------------------- */
+html.spooky input:not([type='checkbox']):not([type='radio']), html.spooky select, html.spooky textarea {
+  background: #0F0A16; color: var(--sp-text); border-color: var(--sp-border-strong);
+}
+html.spooky input::placeholder, html.spooky textarea::placeholder { color: var(--sp-placeholder); }
+html.spooky input:focus, html.spooky select:focus, html.spooky textarea:focus {
+  outline: none; border-color: var(--sp-accent); box-shadow: 0 0 0 3px rgba(255, 122, 26, 0.3);
+}
+html.spooky input[type='search'] {
+  height: 44px; border-radius: 10px; padding-left: 38px;
+  background: #0F0A16 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%239A8CAD' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='M20 20l-3.5-3.5'/%3E%3C/svg%3E") no-repeat 12px center / 17px;
+}
+
+/* ---- Tables --------------------------------------------------------------------------------- */
+html.spooky .table-wrap { overflow-x: auto; border-color: var(--sp-border); border-radius: 12px; }
+html.spooky th {
+  background: var(--sp-surface-2); color: var(--sp-accent-soft); font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.08em;
+}
+html.spooky th, html.spooky td { border-color: var(--sp-border); }
+html.spooky td { color: var(--sp-text-soft); }
+html.spooky tbody tr:hover td { background: rgba(255, 122, 26, 0.06); }
+html.spooky tbody tr:hover td:first-child { box-shadow: inset 3px 0 0 var(--sp-accent); }
+html.spooky a { color: var(--sp-accent-soft); }
+
+/* Lookups' display-only pieces (Chart of Accounts type dot; Active as Alive / Dormant). */
+html.spooky .sp-code { color: var(--sp-muted); font-variant-numeric: tabular-nums; }
+html.spooky .sp-name { color: #fff; font-weight: 600; }
+.sp-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; vertical-align: middle; }
+.sp-pill { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 2px 10px; font-size: 11.5px; font-weight: 600; }
+.sp-alive { background: rgba(142, 240, 138, 0.12); color: var(--sp-alive); border: 1px solid rgba(142, 240, 138, 0.35); }
+.sp-alive i { width: 7px; height: 7px; border-radius: 50%; background: var(--sp-alive); box-shadow: 0 0 6px var(--sp-alive); }
+.sp-dormant { background: var(--sp-raised); color: var(--sp-muted); border: 1px solid var(--sp-border-strong); }
+
+/* ---- Badges, pagination, modals -------------------------------------------------------------- */
+html.spooky .badge-muted { background: var(--sp-raised); color: var(--sp-muted); }
+html.spooky .picker-pagination button,
+html.spooky .pagination button {
+  background: var(--sp-raised); color: var(--sp-text-soft); border: 1px solid var(--sp-border-strong);
+  border-radius: 8px; min-width: 34px; height: 34px;
+}
+html.spooky .picker-pagination button:hover:not(:disabled),
+html.spooky .pagination button:hover:not(:disabled) { border-color: var(--sp-accent); color: #fff; }
+html.spooky .picker-pagination button.active,
+html.spooky .pagination button.active { background: var(--sp-accent); color: var(--sp-ink); border-color: var(--sp-accent); font-weight: 700; }
+html.spooky .modal { background: var(--sp-surface); border: 1px solid var(--sp-border-strong); color: var(--sp-text); }
+
+/* The record banner (Purchase Requisition, Sales Order, Estimate ...): a night sky. */
+html.spooky .estimate-banner {
+  background:
+    radial-gradient(ellipse at 20% 130%, rgba(255, 122, 26, 0.35), transparent 60%),
+    linear-gradient(135deg, #1A0B2E 0%, #3B1263 55%, #24093D 100%);
+  box-shadow: 0 0 0 1px rgba(255, 122, 26, 0.3), 0 10px 30px rgba(0, 0, 0, 0.45);
+}
+
+/* ---- Decorations (SpookyDecor.jsx) ----------------------------------------------------------- */
+/* z-index -1: painted over the page background but under all page content, so the moon, bats and
+   fog never cover a card, a table or a popup (body's background is drawn on the canvas below). */
+.sp-decor { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: -1; }
+.sp-moon {
+  position: absolute; top: 92px; right: 64px; width: 96px; height: 96px; border-radius: 50%;
+  background: radial-gradient(circle at 38% 36%, #FFF6DD, #F6E7C1 55%, #E6D19E 100%);
+  box-shadow: 0 0 40px rgba(246, 231, 193, 0.45), 0 0 110px rgba(246, 231, 193, 0.18);
+  opacity: 0.85;
+}
+.sp-bat { position: absolute; animation: sp-drift 9s ease-in-out infinite; }
+.sp-bat-1 { top: 104px; right: 190px; }
+.sp-bat-2 { top: 160px; right: 150px; width: 34px; animation-delay: -3s; animation-duration: 11s; }
+.sp-bat-3 { top: 84px; right: 28px; width: 30px; animation-delay: -6s; animation-duration: 13s; }
+.sp-bat-wings { transform-origin: 32px 14px; animation: sp-flap 0.25s ease-in-out infinite alternate; }
+@keyframes sp-flap { from { transform: scaleY(1); } to { transform: scaleY(0.35); } }
+@keyframes sp-drift {
+  0%, 100% { transform: translate(0, 0); }
+  25% { transform: translate(-18px, 10px); }
+  50% { transform: translate(-6px, -12px); }
+  75% { transform: translate(14px, 6px); }
+}
+.sp-fog {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 160px;
+  background:
+    radial-gradient(ellipse at 15% 100%, rgba(155, 107, 255, 0.16), transparent 60%),
+    radial-gradient(ellipse at 55% 100%, rgba(255, 122, 26, 0.09), transparent 55%),
+    radial-gradient(ellipse at 90% 100%, rgba(155, 107, 255, 0.14), transparent 60%);
+}
+
+/* ---- Reduced motion and print ----------------------------------------------------------------- */
+@media (prefers-reduced-motion: reduce) {
+  html.spooky *, html.spooky *::before, html.spooky *::after { animation: none !important; transition: none !important; }
+}
+@media print {
+  /* Paper is white: print in the ordinary light colours, whatever is on screen. */
+  html.spooky[data-theme] {
+    --color-surface: #fff; --color-surface-sunken: #f4f4f4; --color-page-bg: #fff;
+    --color-text-primary: #000; --color-text-secondary: #222; --color-text-muted: #555;
+    --color-border: rgba(0, 0, 0, 0.2); --color-border-strong: rgba(0, 0, 0, 0.35);
+    color-scheme: light;
+  }
+  html.spooky body { background: #fff; color: #000; }
+  html.spooky th { background: #f4f4f4; color: #000; }
+  html.spooky td { color: #000; }
+  html.spooky .page-header > h1 { color: #000; text-shadow: none; }
+  .sp-decor, html.spooky .topnav::after, html.spooky .card::after { display: none; }
+  html.spooky .page-header .btn-primary { animation: none; }
+}

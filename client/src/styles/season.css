@@ -1,26 +1,9 @@
-/* Seasonal look (utils/season.js) -- :root[data-season] on top of Day / Night / Glass.
-   It recolours the accent (buttons, links, active tabs), adds a striped band under the topbar,
-   a mark on the logo and a faint drift of pieces (SeasonDecor). Surfaces and text are left alone
-   so every screen stays as readable as it was. Switching to the original removes all of it. */
+/* Seasonal look (utils/season.js). Spooky (Oct-Nov) is a full redesign of its own -- see
+   styles/spooky.css. This file is Christmas (December): it recolours the accent (buttons, links,
+   active tabs), adds a candy-cane band under the topbar, Santa on the logo and static decorations
+   (SeasonDecor). Surfaces and text are left alone so every screen stays as readable as it was.
+   Switching to the original removes all of it. */
 
-/* ---- Spooky: pumpkin orange and witch purple ---- */
-:root[data-season='spooky'] {
-  --color-primary: #C2560B;
-  --color-primary-bg: #FDEBDC;
-  --color-primary-text: #7E3504;
-  --season-a: #F07A1A;
-  --season-b: #5B2A86;
-  --season-tint: rgba(91, 42, 134, 0.09);
-}
-:root[data-season='spooky'][data-theme='dark'],
-:root[data-season='spooky'][data-theme='glass'] {
-  --color-primary: #F28C38;
-  --color-primary-bg: rgba(242, 140, 56, 0.16);
-  --color-primary-text: #FBC08A;
-  --season-tint: rgba(150, 90, 220, 0.08);
-}
-
-/* ---- Christmas: holly red and pine green ---- */
 :root[data-season='christmas'] {
   --color-primary: #B3202A;
   --color-primary-bg: #FBE6E7;
@@ -36,9 +19,8 @@
   --color-primary-text: #F6B3B7;
   --season-tint: rgba(60, 170, 100, 0.07);
 }
-
 /* The glass theme sets its own accent names; point them at the season's too. */
-:root[data-season][data-theme='glass'] {
+:root[data-season='christmas'][data-theme='glass'] {
   --accent: var(--color-primary);
   --accent-hover: var(--color-primary-text);
   --accent-bg: var(--color-primary-bg);
@@ -46,82 +28,24 @@
 }
 
 /* A faint wash of the season's colour over the page (cards keep their own surface). */
-:root[data-season]:not([data-bg='on']) body { background-image: linear-gradient(var(--season-tint), var(--season-tint)); }
+:root[data-season='christmas']:not([data-bg='on']) body { background-image: linear-gradient(var(--season-tint), var(--season-tint)); }
 
-/* The striped band under the topbar: candy cane for Christmas, orange and purple for spooky. */
-:root[data-season] .topnav::after {
+/* The candy-cane band under the topbar. */
+:root[data-season='christmas'] .topnav::after {
   content: '';
   position: absolute; left: 0; right: 0; bottom: -4px; height: 4px; pointer-events: none;
-  background: repeating-linear-gradient(-45deg, var(--season-a) 0 10px, var(--season-b) 10px 20px);
-}
-:root[data-season='christmas'] .topnav::after {
   background: repeating-linear-gradient(-45deg, var(--season-a) 0 10px, #fff 10px 20px, var(--season-b) 20px 30px, #fff 30px 40px);
 }
 
-/* A mark on the logo: a pumpkin, or Santa. */
-:root[data-season] .topnav-brand { position: relative; }
-:root[data-season] .topnav-brand::after { position: absolute; pointer-events: none; line-height: 1; }
-:root[data-season='spooky'] .topnav-brand::after { content: '🎃'; right: 4px; bottom: 4px; font-size: 15px; }
-:root[data-season='christmas'] .topnav-brand::after { content: '🎅'; left: -8px; top: 2px; font-size: 16px; transform: rotate(-18deg); }
-
-
-/* ---- Spooky, static (2026-11-14: "more spooky", then "remove the moving objects, keep the static
-   design like the cobwebs") ---- */
-/* The record banner (Purchase Requisition, Sales Order, Estimate ...): a haunted night sky with a
-   moon, instead of the plain blue. Text on it stays white, so it reads the same. */
-:root[data-season='spooky'] .estimate-banner {
-  background:
-    radial-gradient(circle at 92% 22%, rgba(255, 236, 170, 0.95) 0 22px, rgba(255, 220, 120, 0.25) 23px 40px, transparent 41px),
-    radial-gradient(ellipse at 20% 120%, rgba(240, 122, 26, 0.45), transparent 60%),
-    linear-gradient(135deg, #1a0b2e 0%, #3b1263 55%, #24093d 100%);
-  box-shadow: 0 0 0 1px rgba(240, 122, 26, 0.35), 0 6px 24px rgba(91, 42, 134, 0.35);
-  position: relative; overflow: hidden;
+/* Santa on the logo. */
+:root[data-season='christmas'] .topnav-brand { position: relative; }
+:root[data-season='christmas'] .topnav-brand::after {
+  content: '🎅'; position: absolute; left: -8px; top: 2px; font-size: 16px; line-height: 1;
+  transform: rotate(-18deg); pointer-events: none;
 }
-:root[data-season='spooky'] .estimate-banner::after {
-  content: '🦇  🦇 🦇'; position: absolute; right: 70px; top: 10px; font-size: 16px; opacity: 0.8;
-  letter-spacing: 4px; pointer-events: none;
-}
-/* The top bar glows orange along its edge; the pumpkin on the logo glows too. */
-:root[data-season='spooky'] .topnav { box-shadow: 0 4px 18px rgba(240, 122, 26, 0.35); }
-:root[data-season='spooky'] .topnav-brand::after { font-size: 17px; filter: drop-shadow(0 0 5px rgba(255, 140, 0, 0.9)); }
 
 .season-decor { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 5; }
 
-/* Cobwebs in the four corners (the top ones under the menu bar). */
-.season-web { position: absolute; opacity: 0.5; }
-.season-web line, .season-web path { stroke: #6b6478; stroke-width: 0.9; fill: none; }
-:root[data-theme='dark'] .season-web line, :root[data-theme='dark'] .season-web path,
-:root[data-theme='glass'] .season-web line, :root[data-theme='glass'] .season-web path { stroke: #d8d0e8; }
-.season-web-tl { top: 56px; left: 0; }
-.season-web-tr { top: 56px; right: 0; transform: scaleX(-1); }
-.season-web-bl { bottom: 0; left: 0; transform: scaleY(-1); }
-.season-web-br { bottom: 0; right: 0; transform: scale(-1, -1); }
-
-/* A spider hanging from the top-left web. */
-.season-spider { position: absolute; top: 96px; left: 70px; font-size: 20px; display: flex; flex-direction: column; align-items: center; opacity: 0.85; }
-.season-spider-thread { width: 1px; height: 60px; background: rgba(110, 100, 130, 0.7); }
-:root[data-theme='dark'] .season-spider-thread, :root[data-theme='glass'] .season-spider-thread { background: rgba(220, 210, 240, 0.6); }
-
-/* Bats near the top-right web. */
-.season-bats { position: absolute; top: 140px; right: 40px; font-size: 22px; opacity: 0.7; letter-spacing: 6px; transform: rotate(-8deg); }
-.season-bats small { font-size: 15px; vertical-align: top; }
-
-/* Pumpkins sitting in the bottom corners, glowing. */
-.season-pumpkin { position: absolute; bottom: 8px; font-size: 34px; filter: drop-shadow(0 0 10px rgba(255, 140, 0, 0.7)); opacity: 0.9; }
-.season-pumpkin-left { left: 24px; }
-.season-pumpkin-right { right: 110px; }
-.season-pumpkin small { font-size: 20px; margin-left: 4px; vertical-align: bottom; }
-
-/* A purple mist along the bottom of the screen. */
-.season-fog {
-  position: absolute; left: 0; right: 0; bottom: 0; height: 140px;
-  background:
-    radial-gradient(ellipse at 15% 100%, rgba(120, 70, 170, 0.28), transparent 60%),
-    radial-gradient(ellipse at 55% 100%, rgba(240, 122, 26, 0.12), transparent 55%),
-    radial-gradient(ellipse at 90% 100%, rgba(120, 70, 170, 0.24), transparent 60%);
-}
-
-/* ---- Christmas, static ---- */
 /* A string of lights hanging under the menu bar. */
 .season-lights { position: absolute; top: 60px; left: 0; right: 0; display: flex; justify-content: space-between; padding: 0 12px; }
 .season-lights span { width: 7px; height: 11px; border-radius: 50% 50% 45% 45%; box-shadow: 0 0 6px currentColor; opacity: 0.9; }
@@ -145,12 +69,11 @@
 :root[data-theme='dark'] .season-snow, :root[data-theme='glass'] .season-snow { opacity: 0.25; }
 
 @media print {
-  :root[data-season] .estimate-banner::after { display: none; }
   .season-decor, :root[data-season] .topnav::after, :root[data-season] .topnav-brand::after { display: none; }
   :root[data-season] body { background-image: none; }
 }
 
 /* The topbar switch. */
-.season-toggle { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
-.season-toggle-icon { font-size: 15px; line-height: 1; }
+.season-toggle { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.season-toggle-icon { font-size: 14px; line-height: 1; display: inline-flex; }
 .season-toggle.is-off { opacity: 0.75; }

@@ -6,6 +6,10 @@ import DataTable from '../components/DataTable';
 import Modal from '../components/Modal';
 import LoadingSpinner from '../components/LoadingSpinner';
 import EntityPicker from '../components/EntityPicker';
+import { useSeason } from '../utils/season';
+
+// Spooky theme (styles/spooky.css), display only: an account type as a coloured dot.
+const TYPE_DOT = { Asset: '#5AB0FF', Liability: '#FF9A4A', Expense: '#FF6B8A', Revenue: '#8EF08A', Equity: '#9B6BFF', 'Cost of Sales': '#FFC46B' };
 
 const CONFIG = [
   { key: 'chart-of-accounts', label: 'Chart of Accounts', fields: [
@@ -159,6 +163,7 @@ const noteTypesOf = (a) => (a.note_form_types ? String(a.note_form_types).split(
 
 export default function Lookups() {
   const { can } = useAuth();
+  const spooky = useSeason() === 'spooky';
   const navigate = useNavigate();
   // ?tab=processes: the process view / edit pages come back to their own tab.
   const [params] = useSearchParams();
@@ -302,32 +307,57 @@ export default function Lookups() {
     }
   }
 
+  // Spooky (styles/spooky.css), display only: the account code muted, the name bright, the type
+  // as a coloured dot, Active as Alive / Dormant. The values themselves are unchanged and the
+  // search reads them (searchRaw), not what is drawn.
+  const spookyRender = (f) => {
+    if (!spooky) return null;
+    if (f.name === 'account_type') return (r) => <span><i className="sp-dot" style={{ background: TYPE_DOT[r.account_type] || '#B7A8CB' }} />{r.account_type}</span>;
+    if (f.name === 'account_code') return (r) => <span className="sp-code">{r.account_code}</span>;
+    if (f.name === 'account_name') return (r) => <span className="sp-name">{r.account_name}</span>;
+    if (f.type === 'checkbox') {
+      return (r) => (r[f.name]
+        ? <span className="sp-pill sp-alive"><i />Alive</span>
+        : (
+          <span className="sp-pill sp-dormant">
+            <svg viewBox="0 0 16 16" width="11" height="11" fill="currentColor" aria-hidden="true"><path d="M8 1a5 5 0 0 0-5 5v8l2-1.5L6.5 14 8 12.5 9.5 14 11 12.5l2 1.5V6a5 5 0 0 0-5-5zM6 5.5a1 1 0 1 1 0 2 1 1 0 0 1 0-2zm4 0a1 1 0 1 1 0 2 1 1 0 0 1 0-2z" /></svg>
+            Dormant
+          </span>
+        ));
+    }
+    return null;
+  };
+
   const columns = active.fields
     .filter((f) => f.type !== 'textarea')
-    .map((f) => ({
-      key: f.name,
-      label: f.label,
-      render: f.type === 'checkbox'
-        ? (r) => (r[f.name] ? <span className="badge badge-success">Yes</span> : <span className="badge badge-muted">No</span>)
-        : f.type === 'ref'
-          ? (r) => {
-            const list = refOptions[f.ref] || [];
-            const match = list.find((o) => o.id === r[f.name]);
-            return match ? match[f.refLabel] : '—';
-          }
-          : f.type === 'user-ref'
+    .map((f) => {
+      const sp = spookyRender(f);
+      if (sp) return { key: f.name, label: f.label, render: sp, searchRaw: true };
+      return {
+        key: f.name,
+        label: f.label,
+        render: f.type === 'checkbox'
+          ? (r) => (r[f.name] ? <span className="badge badge-success">Yes</span> : <span className="badge badge-muted">No</span>)
+          : f.type === 'ref'
             ? (r) => {
-              const match = userOptions.find((u) => u.id === r[f.name]);
-              return match ? match.display_name : '—';
+              const list = refOptions[f.ref] || [];
+              const match = list.find((o) => o.id === r[f.name]);
+              return match ? match[f.refLabel] : '—';
             }
-            : (isProcesses && f.name === 'process_code' ? (r) => <Link to={`/processes/${r.id}`}>{r.process_code}</Link> : undefined),
-    }));
+            : f.type === 'user-ref'
+              ? (r) => {
+                const match = userOptions.find((u) => u.id === r[f.name]);
+                return match ? match.display_name : '—';
+              }
+              : (isProcesses && f.name === 'process_code' ? (r) => <Link to={`/processes/${r.id}`}>{r.process_code}</Link> : undefined),
+      };
+    });
 
   // Search box over whichever tab is open: matches any column as shown (a referenced name, not its id).
   const q = search.trim().toLowerCase();
   const shownRows = !q ? rows : rows.filter((r) => columns.some((c) => {
     // A link (the process code) searches by its own text.
-    const v = c.render && !(isProcesses && c.key === 'process_code') ? c.render(r) : r[c.key];
+    const v = c.render && !c.searchRaw && !(isProcesses && c.key === 'process_code') ? c.render(r) : r[c.key];
     return (typeof v === 'string' || typeof v === 'number') && String(v).toLowerCase().includes(q);
   }));
 
@@ -336,7 +366,7 @@ export default function Lookups() {
       <div className="page-header">
         <h1>Lookups</h1>
         {activeKey !== 'general-managers' && can('/lookups', 'can_add') && (
-          <button className="btn btn-primary" onClick={openCreate}>Add Record</button>
+          <button className="btn btn-primary" onClick={openCreate}><span className="sp-only" aria-hidden="true" style={{ marginRight: 6 }}>+</span>Add Record</button>
         )}
       </div>
       <div className="tabs">
@@ -377,10 +407,21 @@ export default function Lookups() {
           </div>
         ) : (
           <>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
-            <input type="search" placeholder={`Search ${active.label}…`} value={search} onChange={(e) => setSearch(e.target.value)} style={{ maxWidth: 360 }} />
-            {q && <span className="muted" style={{ fontSize: 13 }}>{shownRows.length} of {rows.length}</span>}
-          </div>
+          {spooky ? (
+            // Spooky: the tab's name, a count, and the search on the right.
+            <div className="sp-card-head">
+              <div>
+                <h2>{active.label}</h2>
+                <div className="sp-count">{shownRows.length} of {rows.length} {active.key === 'chart-of-accounts' ? 'accounts' : 'records'}{q ? ' matching' : ''}</div>
+              </div>
+              <input type="search" placeholder="Search the crypt…" value={search} onChange={(e) => setSearch(e.target.value)} style={{ maxWidth: 360, width: '100%' }} />
+            </div>
+          ) : (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+              <input type="search" placeholder={`Search ${active.label}…`} value={search} onChange={(e) => setSearch(e.target.value)} style={{ maxWidth: 360 }} />
+              {q && <span className="muted" style={{ fontSize: 13 }}>{shownRows.length} of {rows.length}</span>}
+            </div>
+          )}
           <DataTable
             paginate
             columns={columns}
