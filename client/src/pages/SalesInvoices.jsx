@@ -23,14 +23,21 @@ function money(v) {
 }
 function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
-// No. of days overdue: whole days from Date Due to today, only for an invoice still owing money
-// (not Void, Amount Due above zero) and past its due date -- blank otherwise. Same rule as the extract.
-function daysOverdue(row) {
+// No. of days overdue: whole days from Date Due to the cut-off -- the Date To the list was searched
+// with, or today without one. Negative while not yet due (-4 = due in 4 days), 0 on the due date.
+// Blank for a Void invoice or one with no Amount Due left. Same rule as the extract.
+function daysOverdue(row, cutOff) {
   if (!row.date_due || row.status === 'cancelled' || !(Number(row.amount_due) > 0)) return '';
   const [y, m, d] = String(row.date_due).slice(0, 10).split('-').map(Number);
-  const now = new Date();
-  const days = Math.round((Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) - Date.UTC(y, m - 1, d)) / 86400000);
-  return days > 0 ? days : '';
+  let asOf;
+  if (cutOff) {
+    const [cy, cm, cd] = cutOff.split('-').map(Number);
+    asOf = Date.UTC(cy, cm - 1, cd);
+  } else {
+    const now = new Date();
+    asOf = Date.UTC(now.getFullYear(), now.getMonth(), now.getDate());
+  }
+  return Math.round((asOf - Date.UTC(y, m - 1, d)) / 86400000);
 }
 
 // Mirrors the real system's "Saved Invoices" list -- reached from Accounting > Invoice
@@ -59,6 +66,9 @@ export default function SalesInvoices() {
   // Date object in between to drag the value through a timezone on the way.
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
+  // The Date To the rows on screen were loaded with: the overdue cut-off. Not `to` itself, so
+  // typing a date doesn't change the column before Search is pressed.
+  const [cutOff, setCutOff] = useState('');
   const [departmentId, setDepartmentId] = useState('');
   // Head Office by default (2026-10-14; utils/useHeadOffice); null until known, and the list waits for it.
   const [locationId, setLocationId] = useHeadOfficeFilter();
@@ -93,6 +103,7 @@ export default function SalesInvoices() {
       const { data } = await api.get('/sales-invoices', { params });
       setRows(data.rows || []);
       setTotal(Number(data.total) || 0);
+      setCutOff(to || '');
     } finally {
       setLoading(false);
     }
@@ -121,7 +132,7 @@ export default function SalesInvoices() {
     setPage(1);
     setLoading(true);
     api.get('/sales-invoices', { params: { page: 1, limit: PAGE_SIZE } })
-      .then(({ data }) => { setRows(data.rows || []); setTotal(Number(data.total) || 0); })
+      .then(({ data }) => { setRows(data.rows || []); setTotal(Number(data.total) || 0); setCutOff(''); })
       .finally(() => setLoading(false));
   }
 
@@ -270,7 +281,7 @@ export default function SalesInvoices() {
                     <td data-label="SO #">{row.sales_order_no}</td>
                     <td data-label="Date Created">{formatDate(row.date_created)}</td>
                     <td data-label="Date Due">{formatDate(row.date_due)}</td>
-                    <td data-label="No. of days overdue">{daysOverdue(row)}</td>
+                    <td data-label="No. of days overdue">{daysOverdue(row, cutOff)}</td>
                     <td data-label="DT #">{row.dt_no}</td>
                     <td data-label="DT Date Created">{formatDate(row.dt_date_created)}</td>
                     <td data-label="Office Location">{row.office_location_name}</td>

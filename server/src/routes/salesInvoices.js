@@ -233,14 +233,16 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
     // Dates as the plain YYYY-MM-DD the columns hold, so Excel can sort and filter them.
     const day = (v) => (v ? String(v instanceof Date ? v.toISOString() : v).slice(0, 10) : '');
     const STATUS = { saved: 'Open', cancelled: 'Void' };
-    // No. of days overdue, as on the list: days past Date Due (Philippine today) for an invoice
-    // still owing money and not Void; blank otherwise.
-    const today = Date.parse(new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10));
+    // No. of days overdue, as on the list: days from Date Due to the cut-off -- the Date To filter,
+    // or Philippine today without one. Negative while not yet due. Blank for a Void invoice or one
+    // with no Amount Due left.
+    const cutOff = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.to || ''))
+      ? req.query.to : new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10);
+    const asOf = Date.parse(cutOff);
     const overdue = (r) => {
       const due = day(r.date_due);
       if (!due || r.status === 'cancelled' || !(Number(r.amount_due) > 0)) return '';
-      const days = Math.round((today - Date.parse(due)) / 86400000);
-      return days > 0 ? days : '';
+      return Math.round((asOf - Date.parse(due)) / 86400000);
     };
     for (const r of rows) {
       ws.addRow({
