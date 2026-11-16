@@ -25,6 +25,11 @@ const {
   maySalesReviseJobOrder, isOpenForSalesRework, isBeforeProduction, REWORK_PROTECTED_FIELDS, REVISION_MATERIAL_PROCESS,
 } = require('../lib/jobOrderRevision');
 
+const { countOpenRework } = require('../lib/reworkJobOrder');
+const {
+  isChecklistJobOrder, getChecklist, openRequiredItems, CHECKLIST_LIST_COLUMNS,
+} = require('../lib/joChecklist');
+
 const router = express.Router();
 const ROUTE = '/job-orders';
 // NSJOs -- the job orders raised from a Non-Standard Sales Order (jo.nsso_id) -- are their own module
@@ -273,7 +278,8 @@ const LIST_SELECT = `SELECT jo.*, so.sales_order_no, ns.nsso_no, c.name AS custo
               oloc.location_name AS office_location_name, sd.name AS sales_division_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name,
               CONCAT(pb.first_name, ' ', pb.last_name) AS prepared_by_name,
-              CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name
+              CONCAT(ar.first_name, ' ', ar.last_name) AS artist_name,
+              ${CHECKLIST_LIST_COLUMNS}
        ${LIST_FROM}`;
 
 // Mirrors the real system's "Saved Job Orders" list -- a flat table (no status tabs)
@@ -346,6 +352,106 @@ router.get('/export', requireAuth, listPermission, async (req, res, next) => {
         // A released JO's Sub Status is its production stage, as on screen (pages/JobOrders.jsx).
         status: r.status || '', sub_status: Number(r.is_on_hold) ? 'On Hold' : (EXTRACT_STAGE_LABELS[r.production_stage] || r.sub_status || ''),
       })),
+    });
+  } catch (err) {
+    if (res.headersSent) { res.destroy(err); return; }
+    next(err);
+  }
+});
+
+// Extract Punchlist (asked 2026-11-16): the checklist of every regular job order under the list's
+// current filters and tab, one row per item -- the JO's process lines (lib/joChecklist.js) and its
+// extra items. Read without syncing: a line nobody has opened yet is simply open and required.
+// open_only=1 leaves out the ticked items. Registered before /:id.
+const PUNCHLIST_MAX_JOS = 3000;
+router.get('/checklist-export', requireAuth, listPermission, async (req, res, next) => {
+  try {
+    const { listWhereSql, listParams } = await listFilter(req);
+    const regular = "jo.nsso_id IS NULL AND jo.job_order_no NOT LIKE 'RWIP-%' AND jo.job_order_no NOT LIKE 'RFQC-%'";
+    const where = listWhereSql ? `${listWhereSql} AND ${regular}` : `WHERE ${regular}`;
+    const [jos] = await pool.query(
+      `SELECT jo.id, jo.job_order_no, jo.description, jo.status, jo.sub_status, jo.production_stage, jo.is_on_hold, jo.quantity,
+              so.sales_order_no, c.name AS customer_name, jt.display_name AS job_type_name, jloc.location_name AS job_location_name,
+              CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name
+       ${LIST_FROM} ${where} ORDER BY jo.id DESC LIMIT ${PUNCHLIST_MAX_JOS + 1}`,
+      listParams);
+    if (jos.length > PUNCHLIST_MAX_JOS) {
+      return res.status(400).json({ error: `More than ${PUNCHLIST_MAX_JOS.toLocaleString()} job orders match. Narrow the filters (a status tab, Period From / As of) and extract again.` });
+    }
+    const ids = jos.length ? jos.map((j) => j.id) : [0];
+    // Two queries, not a UNION: the process / item names and the typed item_text differ in collation.
+    const [processLines] = await pool.query(
+      `SELECT p.job_order_id, 0 AS extra, p.line_no, pr.process_name, inv.display_name AS item_name, loc.location_name,
+              COALESCE(p.qty, p.process_qty) AS qty, COALESCE(p.uom, p.process_uom) AS uom,
+              COALESCE(i.is_required, TRUE) AS is_required, COALESCE(i.is_done, FALSE) AS is_done,
+              COALESCE(u.display_name, u.username) AS done_by, DATE_FORMAT(i.done_at, '%Y-%m-%d %H:%i') AS done_at, i.note, i.sort_order, i.id AS item_id
+         FROM job_order_processes p
+         LEFT JOIN job_order_checklist_items i ON i.job_order_process_id = p.id
+         LEFT JOIN processes pr ON pr.id = p.process_id
+         LEFT JOIN inventories inv ON inv.id = p.item_id
+         LEFT JOIN locations loc ON loc.id = p.location_id
+         LEFT JOIN users u ON u.id = i.done_by_user_id
+        WHERE p.job_order_id IN (?)`,
+      [ids]);
+    const [extraLines] = await pool.query(
+      `SELECT i.job_order_id, 1 AS extra, NULL AS line_no, i.item_text AS process_name, 'Added for this JO' AS item_name,
+              NULL AS location_name, NULL AS qty, NULL AS uom, i.is_required, i.is_done,
+              COALESCE(u.display_name, u.username) AS done_by, DATE_FORMAT(i.done_at, '%Y-%m-%d %H:%i') AS done_at, i.note, i.sort_order, i.id AS item_id
+         FROM job_order_checklist_items i
+         LEFT JOIN users u ON u.id = i.done_by_user_id
+        WHERE i.job_order_id IN (?) AND i.job_order_process_id IS NULL`,
+      [ids]);
+    const lines = [...processLines, ...extraLines];
+    const openOnly = req.query.open_only === '1';
+    const byJo = new Map();
+    for (const l of lines) {
+      if (openOnly && Number(l.is_done)) continue;
+      if (!byJo.has(l.job_order_id)) byJo.set(l.job_order_id, []);
+      byJo.get(l.job_order_id).push(l);
+    }
+    const rows = [];
+    for (const jo of jos) {
+      const items = (byJo.get(jo.id) || []).sort((a, b) => (a.extra - b.extra)
+        || (Number(a.line_no) - Number(b.line_no)) || (Number(a.sort_order) - Number(b.sort_order)) || (Number(a.item_id) - Number(b.item_id)));
+      for (const l of items) {
+        rows.push({
+          jo_no: jo.job_order_no, so_no: jo.sales_order_no || '', customer: jo.customer_name || '', job_type: jo.job_type_name || '',
+          description: jo.description || '', jo_location: jo.job_location_name || '', sales_rep: jo.sales_rep_name || '',
+          status: jo.status || '', sub_status: Number(jo.is_on_hold) ? 'On Hold' : (EXTRACT_STAGE_LABELS[jo.production_stage] || jo.sub_status || ''),
+          line_no: l.line_no == null ? '' : Number(l.line_no), process: l.process_name || '', item: l.item_name || '',
+          location: l.location_name || '', qty: l.qty == null ? '' : Number(l.qty), uom: l.uom || '',
+          required: Number(l.is_required) ? 'Yes' : 'No', done: Number(l.is_done) ? 'Yes' : 'No',
+          done_by: Number(l.is_done) ? (l.done_by || '') : '', done_at: Number(l.is_done) ? (l.done_at || '') : '',
+          note: l.note || '',
+        });
+      }
+    }
+    await sendXlsx(res, {
+      filename: openOnly ? 'jo-punchlist-open.xlsx' : 'jo-punchlist.xlsx',
+      sheet: 'Punchlist',
+      columns: [
+        { header: 'JO #', key: 'jo_no', width: 16 },
+        { header: 'SO #', key: 'so_no', width: 14 },
+        { header: 'Customer', key: 'customer', width: 34 },
+        { header: 'Job Type', key: 'job_type', width: 22 },
+        { header: 'Job Desc', key: 'description', width: 44 },
+        { header: 'JO Location', key: 'jo_location', width: 20 },
+        { header: 'Sales Rep', key: 'sales_rep', width: 22 },
+        { header: 'Status', key: 'status', width: 22 },
+        { header: 'Sub Status', key: 'sub_status', width: 18 },
+        { header: 'Line #', key: 'line_no', width: 7 },
+        { header: 'Process / Item', key: 'process', width: 34 },
+        { header: 'Material', key: 'item', width: 30 },
+        { header: 'Location', key: 'location', width: 20 },
+        { header: 'Qty', key: 'qty', width: 10 },
+        { header: 'UOM', key: 'uom', width: 8 },
+        { header: 'Required', key: 'required', width: 10 },
+        { header: 'Done', key: 'done', width: 8 },
+        { header: 'Done By', key: 'done_by', width: 22 },
+        { header: 'Done At', key: 'done_at', width: 17 },
+        { header: 'Note', key: 'note', width: 36 },
+      ],
+      rows,
     });
   } catch (err) {
     if (res.headersSent) { res.destroy(err); return; }
@@ -1874,6 +1980,122 @@ router.put('/:id/rma-details', requireAuth, async (req, res, next) => {
       if (String(before ?? '') === String(after ?? '')) continue;
       await logAudit(conn, { jobOrderId: jo.id, userId: req.user.id, eventType: 'Updated', fieldName: field, oldValue: before, newValue: after });
     }
+    await conn.commit();
+    res.json({ ok: true });
+  } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
+});
+
+// ---------------------------------------------------------------- JO checklist / punchlist
+// (asked 2026-11-16; lib/joChecklist.js): the JO's own Processes lines, plus extra items. Read by whoever can open the JO here or in Production;
+// ticked, added to and pruned by anyone who can edit / update a Job Order, or update Production.
+async function mayWorkChecklist(userId) {
+  return (await userCan(userId, ROUTE, 'can_edit')) || (await userCan(userId, ROUTE, 'can_update'))
+    || (await userCan(userId, '/production', 'can_update'));
+}
+
+async function checklistViewPermission(req, res, next) {
+  try {
+    if (await userCan(req.user.id, '/production', 'can_view')) return next();
+    return viewPermission(req, res, next);
+  } catch (err) { return next(err); }
+}
+
+async function checklistJobOrder(req, res) {
+  const [[jo]] = await pool.query(
+    'SELECT id, job_order_no, nsso_id, production_stage, quantity, quantity_inspected FROM job_orders WHERE id = ?',
+    [req.params.id]);
+  if (!jo) { res.status(404).json({ error: 'Not found' }); return null; }
+  if (!isChecklistJobOrder(jo)) { res.status(400).json({ error: 'Only regular Job Orders have a checklist.' }); return null; }
+  return jo;
+}
+
+// A JO held at Partially Completed only because its checklist was open (a completed RFQC crediting
+// the mother back -- routes/qualityInspections.js) moves on to Completed once the last required item is ticked.
+async function completeIfChecklistDone(conn, jo, userId) {
+  if (jo.production_stage !== 'partially_completed') return;
+  if (Number(jo.quantity_inspected || 0) < Number(jo.quantity || 0) || !Number(jo.quantity)) return;
+  if ((await openRequiredItems(conn, jo)).length) return;
+  if ((await countOpenRework(conn, jo.id)) > 0) return;
+  await conn.query("UPDATE job_orders SET production_stage = 'completed', updated_at = NOW() WHERE id = ?", [jo.id]);
+  await logAudit(conn, { jobOrderId: jo.id, userId, eventType: 'Updated', fieldName: 'production_stage', oldValue: 'partially_completed', newValue: 'completed' });
+}
+
+router.get('/:id/checklist', requireAuth, checklistViewPermission, async (req, res, next) => {
+  try {
+    const [[jo]] = await pool.query('SELECT id, job_order_no, nsso_id FROM job_orders WHERE id = ?', [req.params.id]);
+    if (!jo) return res.status(404).json({ error: 'Not found' });
+    if (!isChecklistJobOrder(jo)) return res.json({ applicable: false, items: [], can_work: false });
+    const items = await getChecklist(pool, jo);
+    res.json({ applicable: true, items, can_work: await mayWorkChecklist(req.user.id) });
+  } catch (err) { next(err); }
+});
+
+router.post('/:id/checklist', requireAuth, async (req, res, next) => {
+  try {
+    if (!(await mayWorkChecklist(req.user.id))) return res.status(403).json({ error: 'You do not have permission to change this checklist.' });
+    const jo = await checklistJobOrder(req, res);
+    if (!jo) return;
+    const text = String(req.body.item_text || '').trim().slice(0, 255);
+    if (!text) return res.status(400).json({ error: 'Type the checklist item.' });
+    const [[{ next: sortOrder }]] = await pool.query(
+      'SELECT COALESCE(MAX(sort_order), 0) + 1 AS next FROM job_order_checklist_items WHERE job_order_id = ? AND job_order_process_id IS NULL', [jo.id]);
+    await pool.query(
+      'INSERT INTO job_order_checklist_items (job_order_id, item_text, is_required, sort_order, created_by_user_id) VALUES (?, ?, ?, ?, ?)',
+      [jo.id, text, req.body.is_required === false ? 0 : 1, sortOrder, req.user.id]);
+    await logAudit(pool, { jobOrderId: jo.id, userId: req.user.id, eventType: 'Created', fieldName: 'checklist item', newValue: text });
+    res.status(201).json({ ok: true });
+  } catch (err) { next(err); }
+});
+
+// Tick / untick, the note, or whether the item is required.
+router.put('/:id/checklist/:itemId', requireAuth, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    if (!(await mayWorkChecklist(req.user.id))) return res.status(403).json({ error: 'You do not have permission to change this checklist.' });
+    const jo = await checklistJobOrder(req, res);
+    if (!jo) return;
+    const item = (await getChecklist(conn, jo)).find((i) => String(i.id) === String(req.params.itemId));
+    if (!item) return res.status(404).json({ error: 'That item is not on this checklist.' });
+    item.item_text = item.label;
+    await conn.beginTransaction();
+    if (req.body.is_done !== undefined && !!req.body.is_done !== !!item.is_done) {
+      const done = !!req.body.is_done;
+      await conn.query(
+        'UPDATE job_order_checklist_items SET is_done = ?, done_by_user_id = ?, done_at = ? WHERE id = ?',
+        [done ? 1 : 0, done ? req.user.id : null, done ? new Date() : null, item.id]);
+      await logAudit(conn, { jobOrderId: jo.id, userId: req.user.id, eventType: 'Updated', fieldName: `checklist: ${item.item_text}`.slice(0, 255), oldValue: item.is_done ? 'Done' : 'Open', newValue: done ? 'Done' : 'Open' });
+    }
+    if (req.body.note !== undefined) {
+      const note = String(req.body.note || '').trim().slice(0, 500) || null;
+      if ((note || '') !== (item.note || '')) {
+        await conn.query('UPDATE job_order_checklist_items SET note = ? WHERE id = ?', [note, item.id]);
+        await logAudit(conn, { jobOrderId: jo.id, userId: req.user.id, eventType: 'Updated', fieldName: `checklist note: ${item.item_text}`.slice(0, 255), oldValue: item.note, newValue: note });
+      }
+    }
+    if (req.body.is_required !== undefined && !!req.body.is_required !== !!item.is_required) {
+      await conn.query('UPDATE job_order_checklist_items SET is_required = ? WHERE id = ?', [req.body.is_required ? 1 : 0, item.id]);
+      await logAudit(conn, { jobOrderId: jo.id, userId: req.user.id, eventType: 'Updated', fieldName: `checklist required: ${item.item_text}`.slice(0, 255), oldValue: item.is_required ? 'Yes' : 'No', newValue: req.body.is_required ? 'Yes' : 'No' });
+    }
+    await completeIfChecklistDone(conn, jo, req.user.id);
+    await conn.commit();
+    res.json({ ok: true });
+  } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }
+});
+
+router.delete('/:id/checklist/:itemId', requireAuth, async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    if (!(await mayWorkChecklist(req.user.id))) return res.status(403).json({ error: 'You do not have permission to change this checklist.' });
+    const jo = await checklistJobOrder(req, res);
+    if (!jo) return;
+    const [[item]] = await conn.query('SELECT * FROM job_order_checklist_items WHERE id = ? AND job_order_id = ?', [req.params.itemId, jo.id]);
+    if (!item) return res.status(404).json({ error: 'That item is not on this checklist.' });
+    // A process line stays on the checklist as long as it is on the Job Order; untick Required instead.
+    if (item.job_order_process_id) return res.status(400).json({ error: 'A process line cannot be removed from the checklist -- untick Required if it need not be done.' });
+    await conn.beginTransaction();
+    await conn.query('DELETE FROM job_order_checklist_items WHERE id = ?', [item.id]);
+    await logAudit(conn, { jobOrderId: jo.id, userId: req.user.id, eventType: 'Deleted', fieldName: 'checklist item', oldValue: item.item_text });
+    await completeIfChecklistDone(conn, jo, req.user.id);
     await conn.commit();
     res.json({ ok: true });
   } catch (err) { await conn.rollback(); next(err); } finally { conn.release(); }

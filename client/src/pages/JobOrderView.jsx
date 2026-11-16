@@ -17,6 +17,7 @@ import ButtonMenu from '../components/ButtonMenu';
 import { CustomerLink } from '../components/PartyLink';
 import JoGpComputation from '../components/JoGpComputation';
 import RmaDetailsTab, { isRmaJobOrder } from '../components/RmaDetailsTab';
+import JoChecklist, { isChecklistJobOrder } from '../components/JoChecklist';
 
 // Deliberately minimal Job Order detail -- mirrors the real system's layout (banner +
 // grouped info fields + Processes/RWIP JO/Sub Con/Related Records/System Info tabs +
@@ -86,6 +87,16 @@ export default function JobOrderView() {
   const { can, user } = useAuth();
   const [jo, setJo] = useState(null);
   const [tab, setTab] = useState('processes');
+  // The punchlist's progress for the tab label, e.g. "Checklist 5/8" (asked 2026-11-16).
+  const [checklistProgress, setChecklistProgress] = useState(null);
+  // Loaded with the JO, not with the tab, so the label shows the progress before the tab is opened.
+  const checklistJoId = isChecklistJobOrder(jo) ? jo.id : null;
+  useEffect(() => {
+    if (!checklistJoId) { setChecklistProgress(null); return; }
+    api.get(`/job-orders/${checklistJoId}/checklist`)
+      .then(({ data }) => setChecklistProgress(data?.applicable ? { done: data.items.filter((i) => i.is_done).length, total: data.items.length } : null))
+      .catch(() => setChecklistProgress(null));
+  }, [checklistJoId]);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -576,6 +587,11 @@ export default function JobOrderView() {
         <button className={`status-tab ${tab === 'processes' ? 'active' : ''}`} onClick={() => setTab('processes')}>Processes</button>
         {/* RWIP / RFQC / NSSO RMA only: why it is being redone, and what is being done about it. */}
         {isRmaJobOrder(jo) && <button className={`status-tab ${tab === 'rma' ? 'active' : ''}`} onClick={() => setTab('rma')}>RMA Additional Details</button>}
+        {isChecklistJobOrder(jo) && (
+          <button className={`status-tab ${tab === 'checklist' ? 'active' : ''}`} onClick={() => setTab('checklist')}>
+            Checklist{checklistProgress ? ` ${checklistProgress.done}/${checklistProgress.total}` : ''}
+          </button>
+        )}
         <button className={`status-tab ${tab === 'gp' ? 'active' : ''}`} onClick={() => setTab('gp')}>GP Computation</button>
         <button className={`status-tab ${tab === 'rwip' ? 'active' : ''}`} onClick={() => setTab('rwip')}>RWIP JO</button>
         <button className={`status-tab ${tab === 'subcon' ? 'active' : ''}`} onClick={() => setTab('subcon')}>Sub Con</button>
@@ -589,6 +605,7 @@ export default function JobOrderView() {
       {/* How the footer's Estimated GP Rate / Amount are worked out (asked 2026-10-08). */}
       {tab === 'gp' && <JoGpComputation jo={jo} processes={processes} />}
       {tab === 'rma' && isRmaJobOrder(jo) && <RmaDetailsTab jobOrderId={jo.id} />}
+      {tab === 'checklist' && isChecklistJobOrder(jo) && <JoChecklist jobOrderId={jo.id} onChange={(d) => setChecklistProgress(d?.applicable ? { done: d.items.filter((i) => i.is_done).length, total: d.items.length } : null)} />}
 
       {tab === 'processes' && (
         <div className="card">

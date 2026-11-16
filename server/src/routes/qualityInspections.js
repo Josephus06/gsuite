@@ -4,6 +4,7 @@ const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { computeSalesOrderStatus, invoicedOrTicketedSql } = require('../lib/salesOrderStatus');
 const { createReworkJobOrder, countOpenRework } = require('../lib/reworkJobOrder');
+const { openRequiredItems } = require('../lib/joChecklist');
 const { notifyGmApproval } = require('../lib/generalManagers');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
@@ -233,6 +234,22 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       }
     }
 
+    // The JO punchlist (2026-11-16): an inspection that would complete the JO is refused while a
+    // required checklist item is still open, so nothing on it is missed out. Checked before
+    // anything is written; an inspection that leaves the JO Partially Completed goes through.
+    const passSubmitted = submitted.reduce((s, l) => s + Number(l.pass_qty || 0), 0);
+    const rmaSubmitted = submitted.reduce((s, l) => s + Number(l.rma_qty || 0), 0);
+    if (rmaSubmitted === 0 && Number(jo.quantity_inspected || 0) + passSubmitted >= Number(jo.quantity || 0)
+      && (await countOpenRework(conn, jobOrderId)) === 0) {
+      const open = await openRequiredItems(conn, jo);
+      if (open.length) {
+        return res.status(409).json({
+          error: `This inspection would complete ${jo.job_order_no}, but its checklist still has ${open.length} required item${open.length === 1 ? '' : 's'} open: `
+            + `${open.slice(0, 5).map((i) => i.label).join('; ')}${open.length > 5 ? '; ...' : ''}. Tick them on the Job Order's Checklist tab first.`,
+        });
+      }
+    }
+
     await conn.beginTransaction();
     const [result] = await conn.query(
       `INSERT INTO quality_inspections (qi_no, job_order_id, date_created, memo, created_by_user_id)
@@ -295,11 +312,14 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     // If THIS JO is itself a completed RFQC (its rework passed inspection), credit its reworked qty
     // back onto the mother JO's inspected total and re-evaluate whether the mother is now Completed.
     if (newStage === 'completed' && jo.parent_job_order_id && String(jo.job_order_no || '').startsWith('RFQC-')) {
-      const [[mom]] = await conn.query('SELECT quantity, quantity_inspected FROM job_orders WHERE id = ?', [jo.parent_job_order_id]);
+      const [[mom]] = await conn.query('SELECT * FROM job_orders WHERE id = ?', [jo.parent_job_order_id]);
       if (mom) {
         const momInspected = Number(mom.quantity_inspected || 0) + Number(jo.quantity || 0);
         const momOpen = await countOpenRework(conn, jo.parent_job_order_id);
-        const momStage = (momInspected >= Number(mom.quantity || 0) && momOpen === 0) ? 'completed' : 'partially_completed';
+        // An open required checklist item holds the mother at Partially Completed; ticking the last
+        // one completes it (routes/jobOrders.js, completeIfChecklistDone).
+        const momChecklistOpen = (await openRequiredItems(conn, mom)).length > 0;
+        const momStage = (momInspected >= Number(mom.quantity || 0) && momOpen === 0 && !momChecklistOpen) ? 'completed' : 'partially_completed';
         await conn.query('UPDATE job_orders SET quantity_inspected = ?, production_stage = ?, updated_at = NOW() WHERE id = ?', [momInspected, momStage, jo.parent_job_order_id]);
       }
     }

@@ -131,6 +131,31 @@ export default function JobOrders({ kind = 'jo' }) {
     }
   }
 
+  // Extract Punchlist (asked 2026-11-16): the checklist lines of every JO under the same filters and
+  // tab, one row per line; "Open items only" leaves out what is already ticked.
+  const [punchOpenOnly, setPunchOpenOnly] = useState(false);
+  const [punchExporting, setPunchExporting] = useState(false);
+  async function runPunchlistExport() {
+    setPunchExporting(true); setExportError('');
+    try {
+      const { data } = await api.get('/job-orders/checklist-export', {
+        params: { ...listParams(), ...(punchOpenOnly ? { open_only: '1' } : {}) }, responseType: 'blob',
+      });
+      const url = URL.createObjectURL(data);
+      const a = document.createElement('a');
+      a.href = url; a.download = punchOpenOnly ? 'jo-punchlist-open.xlsx' : 'jo-punchlist.xlsx';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      // A blob response carries the server's JSON error as a blob too.
+      let msg = 'Could not extract the punchlist.';
+      try { msg = JSON.parse(await err.response.data.text()).error || msg; } catch { /* keep the default */ }
+      setExportError(msg);
+    } finally {
+      setPunchExporting(false);
+    }
+  }
+
   async function load() {
     setLoading(true);
     const params = { ...listParams(), page, limit };
@@ -299,6 +324,16 @@ export default function JobOrders({ kind = 'jo' }) {
             <button className="btn" disabled={exporting} onClick={runExport} title={`Download every ${isNsjo ? 'NSJO' : 'job order'} under the filters above`}>
               {exporting ? 'Extracting...' : 'Extract'}
             </button>
+            {!isNsjo && (
+              <>
+                <button className="btn" disabled={punchExporting} onClick={runPunchlistExport} title="Download the checklist lines of every job order under the filters above, one row per line">
+                  {punchExporting ? 'Extracting...' : 'Extract Punchlist'}
+                </button>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
+                  <input type="checkbox" checked={punchOpenOnly} onChange={(e) => setPunchOpenOnly(e.target.checked)} /> Open items only
+                </label>
+              </>
+            )}
             {exportError && <span style={{ color: 'var(--danger)' }}>{exportError}</span>}
           </div>
         </div>
@@ -336,12 +371,13 @@ export default function JobOrders({ kind = 'jo' }) {
                     <th>Artist</th>
                     <th>Status</th>
                     <th>Sub Status</th>
+                    {!isNsjo && <th>Checklist</th>}
                     <th></th>
                   </tr>
                 </thead>
                 <tbody>
                   {rows.length === 0 && (
-                    <tr><td colSpan={18} className="muted" style={{ textAlign: 'center', padding: 20 }}>{isNsjo ? 'No NSJOs found.' : 'No job orders found.'}</td></tr>
+                    <tr><td colSpan={isNsjo ? 18 : 19} className="muted" style={{ textAlign: 'center', padding: 20 }}>{isNsjo ? 'No NSJOs found.' : 'No job orders found.'}</td></tr>
                   )}
                   {rows.map((row) => (
                     <tr key={row.id}>
@@ -376,6 +412,12 @@ export default function JobOrders({ kind = 'jo' }) {
                       <td data-label="Artist">{row.artist_name}</td>
                       <td data-label="Status">{row.status}</td>
                       <td data-label="Sub Status">{subStatusOf(row)}</td>
+                      {/* The JO punchlist (2026-11-16): done / total; red while items are open. */}
+                      {!isNsjo && (
+                        <td data-label="Checklist" style={row.checklist_total && Number(row.checklist_done) < Number(row.checklist_total) ? { color: 'var(--danger, #c0392b)', fontWeight: 600 } : undefined}>
+                          {row.checklist_total ? `${row.checklist_done}/${row.checklist_total}` : ''}
+                        </td>
+                      )}
                       <td><Link className="btn btn-sm btn-primary" to={`/job-orders/${row.id}`}>View</Link></td>
                     </tr>
                   ))}
