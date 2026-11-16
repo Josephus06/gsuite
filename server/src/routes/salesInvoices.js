@@ -208,6 +208,7 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
       { header: 'SO #', key: 'so', width: 14 },
       { header: 'Date Created', key: 'date_created', width: 13 },
       { header: 'Date Due', key: 'date_due', width: 13 },
+      { header: 'No. of days overdue', key: 'overdue', width: 12 },
       { header: 'DT #', key: 'dt_no', width: 14 },
       { header: 'DT Date Created', key: 'dt_date', width: 15 },
       { header: 'Office Location', key: 'location', width: 22 },
@@ -225,17 +226,26 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
       { header: 'Status', key: 'status', width: 10 },
       { header: 'Memo', key: 'memo', width: 40 },
     ];
-    ws.autoFilter = 'A1:T1';
+    ws.autoFilter = 'A1:U1';
     ws.getRow(1).font = { bold: true };
     ws.getRow(1).commit();
 
     // Dates as the plain YYYY-MM-DD the columns hold, so Excel can sort and filter them.
     const day = (v) => (v ? String(v instanceof Date ? v.toISOString() : v).slice(0, 10) : '');
     const STATUS = { saved: 'Open', cancelled: 'Void' };
+    // No. of days overdue, as on the list: days past Date Due (Philippine today) for an invoice
+    // still owing money and not Void; blank otherwise.
+    const today = Date.parse(new Date(Date.now() + 8 * 3600000).toISOString().slice(0, 10));
+    const overdue = (r) => {
+      const due = day(r.date_due);
+      if (!due || r.status === 'cancelled' || !(Number(r.amount_due) > 0)) return '';
+      const days = Math.round((today - Date.parse(due)) / 86400000);
+      return days > 0 ? days : '';
+    };
     for (const r of rows) {
       ws.addRow({
         invoice_no: r.invoice_no, so: r.sales_order_no || r.estimate_no || '',
-        date_created: day(r.date_created), date_due: day(r.date_due),
+        date_created: day(r.date_created), date_due: day(r.date_due), overdue: overdue(r),
         dt_no: r.dt_no || '', dt_date: day(r.dt_date_created),
         location: r.office_location_name || '', customer: r.customer_name || '',
         rep: r.sales_rep_name || '', department: r.department_name || '',

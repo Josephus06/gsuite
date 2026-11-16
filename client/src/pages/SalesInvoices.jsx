@@ -23,6 +23,16 @@ function money(v) {
 }
 function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 
+// No. of days overdue: whole days from Date Due to today, only for an invoice still owing money
+// (not Void, Amount Due above zero) and past its due date -- blank otherwise. Same rule as the extract.
+function daysOverdue(row) {
+  if (!row.date_due || row.status === 'cancelled' || !(Number(row.amount_due) > 0)) return '';
+  const [y, m, d] = String(row.date_due).slice(0, 10).split('-').map(Number);
+  const now = new Date();
+  const days = Math.round((Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()) - Date.UTC(y, m - 1, d)) / 86400000);
+  return days > 0 ? days : '';
+}
+
 // Mirrors the real system's "Saved Invoices" list -- reached from Accounting > Invoice
 // on the real site. Only Sales Invoices exist in this build (no BS/DR/DT transaction
 // types), so Type always reads "SI" and there's no Type filter -- everything else
@@ -230,6 +240,7 @@ export default function SalesInvoices() {
                   <th>SO #</th>
                   <th>Date Created</th>
                   <th>Date Due</th>
+                  <th>No. of days overdue</th>
                   <th>DT #</th>
                   <th>DT Date Created</th>
                   <th>Office Location</th>
@@ -251,7 +262,7 @@ export default function SalesInvoices() {
               </thead>
               <tbody>
                 {rows.length === 0 && (
-                  <tr><td colSpan={21} className="muted" style={{ textAlign: 'center', padding: 20 }}>No invoices found.</td></tr>
+                  <tr><td colSpan={22} className="muted" style={{ textAlign: 'center', padding: 20 }}>No invoices found.</td></tr>
                 )}
                 {pageRows.map((row) => (
                   <tr key={row.id}>
@@ -259,6 +270,7 @@ export default function SalesInvoices() {
                     <td data-label="SO #">{row.sales_order_no}</td>
                     <td data-label="Date Created">{formatDate(row.date_created)}</td>
                     <td data-label="Date Due">{formatDate(row.date_due)}</td>
+                    <td data-label="No. of days overdue" style={{ textAlign: 'right' }}>{daysOverdue(row)}</td>
                     <td data-label="DT #">{row.dt_no}</td>
                     <td data-label="DT Date Created">{formatDate(row.dt_date_created)}</td>
                     <td data-label="Office Location">{row.office_location_name}</td>
