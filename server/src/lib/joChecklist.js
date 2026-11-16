@@ -51,9 +51,15 @@ async function getChecklist(conn, jo) {
   return items;
 }
 
-// The required items still open -- what stops the JO from being Completed. [] when it has no checklist.
+// Whether an open required item holds the JO back from Completed (the QC refusal and the RFQC
+// mother hold). Off for now (2026-11-16): the checklist is kept and ticked, but doesn't block a QC.
+// Set to true to enforce it again.
+const ENFORCE_REQUIRED_ITEMS = false;
+
+// The required items still open -- what stops the JO from being Completed. [] when it has no
+// checklist, or while ENFORCE_REQUIRED_ITEMS is off.
 async function openRequiredItems(conn, jo) {
-  if (!isChecklistJobOrder(jo)) return [];
+  if (!ENFORCE_REQUIRED_ITEMS || !isChecklistJobOrder(jo)) return [];
   await syncChecklist(conn, jo.id);
   const [rows] = await conn.query(
     `SELECT i.id, ${LABEL_SQL} AS label ${ITEMS_FROM}
