@@ -270,7 +270,7 @@ export default function SalesInvoices() {
                     <td data-label="SO #">{row.sales_order_no}</td>
                     <td data-label="Date Created">{formatDate(row.date_created)}</td>
                     <td data-label="Date Due">{formatDate(row.date_due)}</td>
-                    <td data-label="No. of days overdue" style={{ textAlign: 'right' }}>{daysOverdue(row)}</td>
+                    <td data-label="No. of days overdue">{daysOverdue(row)}</td>
                     <td data-label="DT #">{row.dt_no}</td>
                     <td data-label="DT Date Created">{formatDate(row.dt_date_created)}</td>
                     <td data-label="Office Location">{row.office_location_name}</td>
