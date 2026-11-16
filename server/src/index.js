@@ -14,6 +14,8 @@ const employeeRoutes = require('./routes/employees');
 const userRoutes = require('./routes/users');
 const accountTypePermissionRoutes = require('./routes/accountTypePermissions');
 const customerRoutes = require('./routes/customers');
+// Read-only feed for the Rewards website, guarded by LOYALTY_API_KEY. See routes/loyaltyIntegration.js.
+const loyaltyIntegrationRoutes = require('./routes/loyaltyIntegration');
 const supplierRoutes = require('./routes/suppliers');
 const inventoryRoutes = require('./routes/inventories');
 const estimateRoutes = require('./routes/estimates');
@@ -321,6 +323,8 @@ app.use('/api/public', publicQuoteRoutes);
 app.use('/api/driver', driverRunRoutes);
 // Unauthenticated: the signed unsubscribe link in CRM emails. See routes/crmPublic.js.
 app.use('/api/crm-public', crmPublicRoutes);
+// API-key auth (not the login JWT): the Rewards website, server to server.
+app.use('/api/integrations/loyalty', loyaltyIntegrationRoutes);
 app.use('/api/web-products', webProductRoutes);
 app.use('/api/employees', employeeRoutes);
 app.use('/api/users', userRoutes);
