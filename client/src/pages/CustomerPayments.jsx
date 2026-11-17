@@ -176,7 +176,7 @@ export default function CustomerPayments() {
             <SearchInput
               value={form.search} onChange={(e) => setField('search', e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && apply(form)}
-              placeholder="CPAY #, OR #, SI#/BS# or Customer..."
+              placeholder="CPAY #, OR #, SI#/BS#, Customer or Total Amount..."
             />
           </div>
           <div className="field">

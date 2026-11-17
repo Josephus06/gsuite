@@ -524,8 +524,13 @@ function listFilter(query) {
     if (dateFrom) { where.push('cp.date_created >= ?'); params.push(dateFrom); }
     if (dateTo) { where.push('cp.date_created <= ?'); params.push(dateTo); }
     if (search) {
-      where.push('(cp.customer_payment_no LIKE ? OR cp.or_no LIKE ? OR cp.si_bs_no LIKE ? OR c.name LIKE ?)');
+      // A search that reads as an amount ("9350", "135,044.64", "P1,023.75") also finds the payments
+      // whose Total Amount is exactly that (asked 2026-11-17).
+      const asAmount = String(search).replace(/[₱P,\s]/gi, '');
+      const amount = /^\d+(\.\d{1,2})?$/.test(asAmount) ? Number(asAmount) : null;
+      where.push(`(cp.customer_payment_no LIKE ? OR cp.or_no LIKE ? OR cp.si_bs_no LIKE ? OR c.name LIKE ?${amount != null ? ' OR cp.payment_amount = ?' : ''})`);
       params.push(`%${search}%`, `%${search}%`, `%${search}%`, `%${search}%`);
+      if (amount != null) params.push(amount);
     }
   }
   return { search, where, params };
