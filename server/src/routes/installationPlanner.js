@@ -761,8 +761,9 @@ const CREW_SELECT = `
 // The production-floor monitor (asked 2026-11-13: "no login needed") -- client/src/pages/
 // InstallationBoard.jsx at /installation-planner/board. UNAUTHENTICATED, so it carries only what the
 // board draws: today's (Philippine time) bookings of one kind -- who, from when to when, the work and
-// the JO / project number -- and the names of everyone of that kind. No project title, customer, note,
-// amount or anything else; and nothing to change.
+// the JO / project number, the slot's note -- and the names of everyone of that kind. No project title,
+// customer, amount or anything else; and nothing to change. The note was added 2026-11-17 (asked: the
+// crew reads on the board what they are going there to do), so whatever is typed there is public too.
 router.get('/public-board', async (req, res, next) => {
   try {
     const role = SLOT_ROLES.includes(req.query.kind) ? req.query.kind : 'installer';
@@ -781,6 +782,7 @@ router.get('/public-board', async (req, res, next) => {
       start_time: s.start_time, end_time: s.end_time, work_type: s.work_type, work_color: s.work_color,
       first_name: s.first_name, last_name: s.last_name, job_order_no: s.job_order_no, project_no: s.project_no,
       plate_no: s.plate_no, make: s.make, model: s.model, asset_name: s.asset_name, reference_no: s.reference_no,
+      note: s.note || null,
     }));
     let employees = [];
     let vehicles = [];
