@@ -192,6 +192,83 @@ function ItemsTable({ doc, withDate }) {
   );
 }
 
+// The Fuel Request slip (asked 2026-11-17): printed on the Xprinter XP-76IIN, 76 mm paper, a 70 x 76 mm
+// print -- 70 mm wide, centred on the 76 mm roll, 76 mm long. Plain black text and rules only: the
+// XP-76IIN is an impact printer, so no letterhead image, no shading, no drawn signatures.
+function FuelSlip({ doc }) {
+  const d = doc.detail || {};
+  const row = (label, value) => (
+    <div className="fs-row"><span className="fs-label">{label}</span><span className="fs-value">{value || ''}</span></div>
+  );
+  return (
+    <div className="fs-page">
+      <style>{`
+        .fs-page { background: #fff; color: #000; padding: 16px; }
+        .fs-toolbar { margin-bottom: 12px; }
+        .fs-sheet { width: 70mm; height: 76mm; margin: 0 auto; padding: 2mm 1mm; box-sizing: border-box; overflow: hidden;
+                    font-family: Arial, Helvetica, sans-serif; font-size: 8.5pt; line-height: 1.25; color: #000; background: #fff;
+                    outline: 1px dashed #bbb; display: flex; flex-direction: column; }
+        .fs-co { text-align: center; font-weight: 700; font-size: 8pt; letter-spacing: 0.5px; }
+        .fs-title { text-align: center; font-weight: 700; font-size: 11pt; letter-spacing: 1px; margin: 1mm 0 0.5mm; }
+        .fs-no { text-align: center; font-size: 8pt; margin-bottom: 1.5mm; }
+        .fs-rule { border-top: 1px solid #000; margin: 1mm 0; }
+        .fs-row { display: flex; gap: 2mm; margin: 0.6mm 0; }
+        .fs-label { width: 19mm; flex: none; font-size: 7.5pt; }
+        .fs-value { flex: 1; font-weight: 700; overflow-wrap: anywhere; }
+        .fs-purpose { font-weight: 700; overflow-wrap: anywhere; max-height: 9mm; overflow: hidden; }
+        .fs-signs { display: flex; gap: 4mm; margin-top: auto; }
+        .fs-sign { flex: 1; text-align: center; font-size: 7pt; }
+        .fs-sign-name { font-weight: 700; font-size: 7.5pt; min-height: 3.5mm; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+        .fs-sign-rule { border-top: 1px solid #000; margin-top: 0.5mm; }
+        @media print {
+          .fs-no-print { display: none !important; }
+          .fs-page { padding: 0; }
+          .fs-sheet { outline: none; margin: 0 3mm; }
+          @page { size: 76mm 76mm; margin: 0; }
+        }
+      `}</style>
+      <div className="fs-toolbar fs-no-print">
+        <button className="btn btn-sm btn-primary" onClick={() => window.print()}>Print</button>
+        <span className="muted" style={{ marginLeft: 10, fontSize: 12 }}>Xprinter XP-76IIN · 76 mm paper · 70 x 76 mm slip. In the print dialog: Margins None, Scale 100%.</span>
+      </div>
+      <div className="fs-sheet">
+        <div className="fs-co">GRAPHICSTAR IMAGING CORP.</div>
+        <div className="fs-title">FUEL REQUEST</div>
+        <div className="fs-no">No: <strong>{d.form_no || doc.request_no}</strong></div>
+        <div className="fs-rule" />
+        {row('Date', fmtDate(d.fuel_date))}
+        {row('Name', doc.name)}
+        {row('Department', doc.department)}
+        {row('Vehicle', d.vehicle_name)}
+        {row('Litres', d.liters != null ? `${Number(d.liters)} L` : '')}
+        {row('Odometer', d.odometer_km != null ? `${Number(d.odometer_km).toLocaleString('en-US')} km` : '')}
+        {row('Station', d.station)}
+        <div className="fs-row"><span className="fs-label">Purpose</span></div>
+        <div className="fs-purpose">{d.purpose || ''}</div>
+        <div className="fs-signs">
+          <div className="fs-sign">
+            <div className="fs-sign-name">{doc.owner_name || doc.name || ''}</div>
+            <div className="fs-sign-rule" />
+            <div>Requested By</div>
+          </div>
+          {doc.noted_by_name && (
+            <div className="fs-sign">
+              <div className="fs-sign-name">{doc.noted_by_name}</div>
+              <div className="fs-sign-rule" />
+              <div>Noted By</div>
+            </div>
+          )}
+          <div className="fs-sign">
+            <div className="fs-sign-name">{doc.approved_by_name || ''}</div>
+            <div className="fs-sign-rule" />
+            <div>Approved By</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function FormPrint() {
   const { id } = useParams();
   const [doc, setDoc] = useState(null);
@@ -209,6 +286,9 @@ export default function FormPrint() {
 
   const d = doc.detail || {};
   const isFund = doc.type === 'liquidation' || doc.type === 'revolving_fund';
+
+  // A Fuel Request prints as a slip on the XP-76IIN's 76 mm roll (asked 2026-11-17), not on A4.
+  if (doc.type === 'fuel') return <FuelSlip doc={doc} />;
 
   return (
     <div className="rf-page">
