@@ -193,8 +193,8 @@ function ItemsTable({ doc, withDate }) {
 }
 
 // The Fuel Request slip (asked 2026-11-17): printed on the Xprinter XP-76IIN, 76 mm paper, a 70 x 76 mm
-// print -- 70 mm wide, centred on the 76 mm roll, 76 mm long. Plain black text and rules only: the
-// XP-76IIN is an impact printer, so no letterhead image, no shading, no drawn signatures.
+// print -- 70 mm wide, centred on the 76 mm roll, 76 mm long. The letterhead logo and the drawn
+// signatures as on the A4 forms (asked 2026-11-17), each shrunk to fit.
 function FuelSlip({ doc }) {
   const d = doc.detail || {};
   const row = (label, value) => (
@@ -208,14 +208,14 @@ function FuelSlip({ doc }) {
         .fs-sheet { width: 70mm; height: 76mm; margin: 0 auto; padding: 2mm 1mm; box-sizing: border-box; overflow: hidden;
                     font-family: Arial, Helvetica, sans-serif; font-size: 8.5pt; line-height: 1.25; color: #000; background: #fff;
                     outline: 1px dashed #bbb; display: flex; flex-direction: column; }
-        .fs-co { text-align: center; font-weight: 700; font-size: 8pt; letter-spacing: 0.5px; }
-        .fs-title { text-align: center; font-weight: 700; font-size: 11pt; letter-spacing: 1px; margin: 1mm 0 0.5mm; }
-        .fs-no { text-align: center; font-size: 8pt; margin-bottom: 1.5mm; }
+        .fs-logo { width: 34mm; height: auto; display: block; margin: 0 auto; }
+        .fs-title { text-align: center; font-weight: 700; font-size: 10.5pt; letter-spacing: 1px; margin: 0.8mm 0 0.3mm; }
+        .fs-no { text-align: center; font-size: 8pt; margin-bottom: 0.8mm; }
         .fs-rule { border-top: 1px solid #000; margin: 1mm 0; }
-        .fs-row { display: flex; gap: 2mm; margin: 0.6mm 0; }
+        .fs-row { display: flex; gap: 2mm; margin: 0.3mm 0; }
         .fs-label { width: 19mm; flex: none; font-size: 7.5pt; }
         .fs-value { flex: 1; font-weight: 700; overflow-wrap: anywhere; }
-        .fs-purpose { font-weight: 700; overflow-wrap: anywhere; max-height: 9mm; overflow: hidden; }
+        .fs-purpose { font-weight: 700; overflow-wrap: anywhere; max-height: 6.5mm; overflow: hidden; }
         .fs-signs { display: flex; gap: 4mm; margin-top: auto; }
         .fs-sign { flex: 1; text-align: center; font-size: 7pt; }
         .fs-sign-name { font-weight: 700; font-size: 7.5pt; min-height: 3.5mm; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -232,7 +232,7 @@ function FuelSlip({ doc }) {
         <span className="muted" style={{ marginLeft: 10, fontSize: 12 }}>Xprinter XP-76IIN · 76 mm paper · 70 x 76 mm slip. In the print dialog: Margins None, Scale 100%.</span>
       </div>
       <div className="fs-sheet">
-        <div className="fs-co">GRAPHICSTAR IMAGING CORP.</div>
+        <img className="fs-logo" src={letterhead} alt="GraphicStar Imaging Corp." />
         <div className="fs-title">FUEL REQUEST</div>
         <div className="fs-no">No: <strong>{d.form_no || doc.request_no}</strong></div>
         <div className="fs-rule" />
@@ -247,18 +247,21 @@ function FuelSlip({ doc }) {
         <div className="fs-purpose">{d.purpose || ''}</div>
         <div className="fs-signs">
           <div className="fs-sign">
+            <div className="sig-ink" style={{ '--sig-h': '6mm' }}>{doc.owner_signature ? <img src={doc.owner_signature} alt="" /> : null}</div>
             <div className="fs-sign-name">{doc.owner_name || doc.name || ''}</div>
             <div className="fs-sign-rule" />
             <div>Requested By</div>
           </div>
           {doc.noted_by_name && (
             <div className="fs-sign">
+              <div className="sig-ink" style={{ '--sig-h': '6mm' }}>{doc.noted_signature ? <img src={doc.noted_signature} alt="" /> : null}</div>
               <div className="fs-sign-name">{doc.noted_by_name}</div>
               <div className="fs-sign-rule" />
               <div>Noted By</div>
             </div>
           )}
           <div className="fs-sign">
+            <div className="sig-ink" style={{ '--sig-h': '6mm' }}>{doc.approved_signature ? <img src={doc.approved_signature} alt="" /> : null}</div>
             <div className="fs-sign-name">{doc.approved_by_name || ''}</div>
             <div className="fs-sign-rule" />
             <div>Approved By</div>
