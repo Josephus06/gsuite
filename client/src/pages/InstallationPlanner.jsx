@@ -590,6 +590,14 @@ export function DayView({ dayKey, slots, people, kind, onOpen, board = false }) 
                           <strong style={{ display: 'inline-block', fontSize: 11, marginBottom: 2, padding: '0 5px', borderRadius: 3, background: s.work_color, border: '1px solid rgba(0,0,0,0.2)' }}>{s.work_type}</strong>
                         )}
                         <span style={{ display: 'block' }}>{timeText(s.start_time)} – {timeText(s.end_time)}</span>
+                        {/* The slot's Note (asked 2026-11-17): what the crew is going there to do, as
+                            much as the block's height allows; the tooltip has it in full. */}
+                        {s.note && (
+                          <span style={{
+                            display: '-webkit-box', WebkitBoxOrient: 'vertical', WebkitLineClamp: Math.max(1, Math.floor((height - 44) / 14)),
+                            overflow: 'hidden', fontWeight: 600, marginTop: 2, wordBreak: 'break-word',
+                          }}>{s.note}</span>
+                        )}
                       </span>
                       <strong style={{ fontSize: 12 }}>({s.job_order_no || s.project_no})</strong>
                     </button>
@@ -662,7 +670,8 @@ function CrewView({ days, slots, people: everyone, kind, todayKey, onOpen, onDay
                         }}>
                         <strong>{timeText(s.start_time)} – {timeText(s.end_time)}</strong>
                         <div>{s.job_order_no || s.project_no}</div>
-                        {s.work_type && <div style={{ marginTop: 2 }}><span style={{ background: s.work_color, color: '#1f2937', borderRadius: 3, padding: '0 4px', fontWeight: 600 }}>{s.work_type}</span></div>}
+                        {s.note && <div style={{ marginTop: 2, fontWeight: 600, wordBreak: 'break-word' }}>{s.note}</div>}
+                        {s.work_type &&<div style={{ marginTop: 2 }}><span style={{ background: s.work_color, color: '#1f2937', borderRadius: 3, padding: '0 4px', fontWeight: 600 }}>{s.work_type}</span></div>}
                       </button>
                     ))}
                   </td>
