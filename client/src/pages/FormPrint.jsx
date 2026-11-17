@@ -192,79 +192,84 @@ function ItemsTable({ doc, withDate }) {
   );
 }
 
-// The Fuel Request slip (asked 2026-11-17): printed on the Xprinter XP-76IIN, 76 mm paper, a 70 x 76 mm
-// print -- 70 mm wide, centred on the 76 mm roll, 76 mm long. The letterhead logo and the drawn
-// signatures as on the A4 forms (asked 2026-11-17), each shrunk to fit.
+// The Fuel Slip (asked 2026-11-17), laid out like the paper P O Slip the gas station already honours:
+// logo, FUEL SLIP, Control No., Date / Charge to / Plate No / No. of Liters, the bearer notice, then
+// Driver's Signature / Gas Station / Cashier and Noted By. Printed on the Xprinter XP-76IIN's 76 mm
+// roll: 76 mm wide, 70 mm long, like the paper slip (wider than tall). The requester signs as the driver
+// and the approver as Noted By, each with their e-signature when one is on file; the cashier signs by hand.
 function FuelSlip({ doc }) {
   const d = doc.detail || {};
-  const row = (label, value) => (
-    <div className="fs-row"><span className="fs-label">{label}</span><span className="fs-value">{value || ''}</span></div>
+  const ink = (image) => (
+    <div className="sig-ink" style={{ '--sig-h': '4.5mm' }}>{image ? <img src={image} alt="" /> : null}</div>
+  );
+  const blank = (label, value) => (
+    <div className="fs-pair"><span className="fs-label">{label}</span><span className="fs-line">{value || ''}</span></div>
   );
   return (
     <div className="fs-page">
       <style>{`
         .fs-page { background: #fff; color: #000; padding: 16px; }
         .fs-toolbar { margin-bottom: 12px; }
-        .fs-sheet { width: 70mm; height: 76mm; margin: 0 auto; padding: 2mm 1mm; box-sizing: border-box; overflow: hidden;
-                    font-family: Arial, Helvetica, sans-serif; font-size: 8.5pt; line-height: 1.25; color: #000; background: #fff;
+        .fs-sheet { width: 76mm; height: 70mm; margin: 0 auto; padding: 2mm 3mm; box-sizing: border-box; overflow: hidden;
+                    font-family: Arial, Helvetica, sans-serif; font-size: 7.5pt; line-height: 1.2; color: #000; background: #fff;
                     outline: 1px dashed #bbb; display: flex; flex-direction: column; }
-        .fs-logo { width: 34mm; height: auto; display: block; margin: 0 auto; }
-        .fs-title { text-align: center; font-weight: 700; font-size: 10.5pt; letter-spacing: 1px; margin: 0.8mm 0 0.3mm; }
-        .fs-no { text-align: center; font-size: 8pt; margin-bottom: 0.8mm; }
-        .fs-rule { border-top: 1px solid #000; margin: 1mm 0; }
-        .fs-row { display: flex; gap: 2mm; margin: 0.3mm 0; }
-        .fs-label { width: 19mm; flex: none; font-size: 7.5pt; }
-        .fs-value { flex: 1; font-weight: 700; overflow-wrap: anywhere; }
-        .fs-purpose { font-weight: 700; overflow-wrap: anywhere; max-height: 6.5mm; overflow: hidden; }
-        .fs-signs { display: flex; gap: 4mm; margin-top: auto; }
-        .fs-sign { flex: 1; text-align: center; font-size: 7pt; }
-        .fs-sign-name { font-weight: 700; font-size: 7.5pt; min-height: 3.5mm; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-        .fs-sign-rule { border-top: 1px solid #000; margin-top: 0.5mm; }
+        .fs-logo { width: 52mm; height: auto; display: block; margin: 0 auto; }
+        .fs-title { text-align: center; font-size: 14pt; letter-spacing: 2px; margin: 0.8mm 0 0.5mm; }
+        .fs-control { display: flex; justify-content: flex-end; align-items: baseline; gap: 1.5mm; margin-bottom: 1.2mm; }
+        .fs-control .fs-line { width: 24mm; flex: none; text-align: center; font-family: 'Times New Roman', serif; font-size: 9pt; }
+        .fs-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 3mm; row-gap: 1.2mm; }
+        .fs-pair { display: flex; align-items: baseline; gap: 1.2mm; min-width: 0; }
+        .fs-label { white-space: nowrap; flex: none; }
+        .fs-line { flex: 1; min-width: 0; border-bottom: 1px solid #000; font-weight: 700; padding: 0 0.5mm;
+                   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 3mm; }
+        .fs-notice { text-align: justify; margin: 1.8mm 0 0; text-indent: 6mm; font-size: 7pt; }
+        .fs-signs { display: flex; justify-content: space-between; margin-top: auto; }
+        .fs-sign { width: 25mm; text-align: center; font-size: 5.5pt; }
+        .fs-sign-name { font-size: 6.5pt; font-weight: 700; min-height: 2.6mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .fs-sign-rule { border-top: 1px solid #000; margin-top: 0.3mm; padding-top: 0.3mm; }
+        .fs-noted { display: flex; justify-content: center; margin-top: 0.5mm; }
         @media print {
           .fs-no-print { display: none !important; }
           .fs-page { padding: 0; }
-          .fs-sheet { outline: none; margin: 0 3mm; }
-          @page { size: 76mm 76mm; margin: 0; }
+          .fs-sheet { outline: none; margin: 0; }
+          @page { size: 76mm 70mm; margin: 0; }
         }
       `}</style>
       <div className="fs-toolbar fs-no-print">
         <button className="btn btn-sm btn-primary" onClick={() => window.print()}>Print</button>
-        <span className="muted" style={{ marginLeft: 10, fontSize: 12 }}>Xprinter XP-76IIN · 76 mm paper · 70 x 76 mm slip. In the print dialog: Margins None, Scale 100%.</span>
+        <span className="muted" style={{ marginLeft: 10, fontSize: 12 }}>Xprinter XP-76IIN · 76 mm paper · 76 x 70 mm slip. In the print dialog: Margins None, Scale 100%.</span>
       </div>
       <div className="fs-sheet">
         <img className="fs-logo" src={letterhead} alt="GraphicStar Imaging Corp." />
-        <div className="fs-title">FUEL REQUEST</div>
-        <div className="fs-no">No: <strong>{d.form_no || doc.request_no}</strong></div>
-        <div className="fs-rule" />
-        {row('Date', fmtDate(d.fuel_date))}
-        {row('Name', doc.name)}
-        {row('Department', doc.department)}
-        {row('Vehicle', d.vehicle_name)}
-        {row('Litres', d.liters != null ? `${Number(d.liters)} L` : '')}
-        {row('Odometer', d.odometer_km != null ? `${Number(d.odometer_km).toLocaleString('en-US')} km` : '')}
-        {row('Station', d.station)}
-        <div className="fs-row"><span className="fs-label">Purpose</span></div>
-        <div className="fs-purpose">{d.purpose || ''}</div>
+        <div className="fs-title">FUEL SLIP</div>
+        <div className="fs-control"><span className="fs-label">Control No.:</span><span className="fs-line">{d.form_no || doc.request_no}</span></div>
+        <div className="fs-grid">
+          {blank('Date:', fmtDate(d.fuel_date))}
+          {blank('Charge to:', doc.department)}
+          {blank('Plate No:', d.vehicle_name)}
+          {blank('No. of Liters:', d.liters != null ? `${Number(d.liters)}` : '')}
+        </div>
+        <div className="fs-notice">
+          This slip allows the bearer for refuel in any Leciann Ventures Inc. branches. Do not accept if not signed by any
+          of the authorized personnel.
+        </div>
         <div className="fs-signs">
           <div className="fs-sign">
-            <div className="sig-ink" style={{ '--sig-h': '6mm' }}>{doc.owner_signature ? <img src={doc.owner_signature} alt="" /> : null}</div>
+            {ink(doc.owner_signature)}
             <div className="fs-sign-name">{doc.owner_name || doc.name || ''}</div>
-            <div className="fs-sign-rule" />
-            <div>Requested By</div>
+            <div className="fs-sign-rule">Driver&rsquo;s Signature</div>
           </div>
-          {doc.noted_by_name && (
-            <div className="fs-sign">
-              <div className="sig-ink" style={{ '--sig-h': '6mm' }}>{doc.noted_signature ? <img src={doc.noted_signature} alt="" /> : null}</div>
-              <div className="fs-sign-name">{doc.noted_by_name}</div>
-              <div className="fs-sign-rule" />
-              <div>Noted By</div>
-            </div>
-          )}
           <div className="fs-sign">
-            <div className="sig-ink" style={{ '--sig-h': '6mm' }}>{doc.approved_signature ? <img src={doc.approved_signature} alt="" /> : null}</div>
+            {ink(null)}
+            <div className="fs-sign-name" />
+            <div className="fs-sign-rule">Gas Station / Cashier</div>
+          </div>
+        </div>
+        <div className="fs-noted">
+          <div className="fs-sign">
+            {ink(doc.approved_signature)}
             <div className="fs-sign-name">{doc.approved_by_name || ''}</div>
-            <div className="fs-sign-rule" />
-            <div>Approved By</div>
+            <div className="fs-sign-rule">Noted By</div>
           </div>
         </div>
       </div>
