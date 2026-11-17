@@ -217,11 +217,14 @@ function FuelSlip({ doc }) {
         .fs-title { text-align: center; font-size: 14pt; letter-spacing: 2px; margin: 0.8mm 0 0.5mm; }
         .fs-control { display: flex; justify-content: flex-end; align-items: baseline; gap: 1.5mm; margin-bottom: 1.2mm; }
         .fs-control .fs-line { width: 24mm; flex: none; text-align: center; font-family: 'Times New Roman', serif; font-size: 9pt; }
-        .fs-grid { display: grid; grid-template-columns: 1fr 1fr; column-gap: 3mm; row-gap: 1.2mm; }
+        /* The right column is the wider one: Date and Plate No are short, a department name is not. */
+        .fs-grid { display: grid; grid-template-columns: 0.8fr 1.2fr; column-gap: 3mm; row-gap: 1.2mm; }
         .fs-pair { display: flex; align-items: baseline; gap: 1.2mm; min-width: 0; }
         .fs-label { white-space: nowrap; flex: none; }
+        /* Wraps rather than cuts off ("Support-Sys..." on REQ-1744, 2026-11-17): a long value takes a second line. */
         .fs-line { flex: 1; min-width: 0; border-bottom: 1px solid #000; font-weight: 700; padding: 0 0.5mm;
-                   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-height: 3mm; }
+                   white-space: normal; overflow-wrap: anywhere; min-height: 3mm; }
+        .fs-control .fs-line { white-space: nowrap; }
         .fs-notice { text-align: justify; margin: 1.8mm 0 0; text-indent: 6mm; font-size: 7pt; }
         .fs-signs { display: flex; justify-content: space-between; margin-top: auto; }
         .fs-sign { width: 25mm; text-align: center; font-size: 5.5pt; }
