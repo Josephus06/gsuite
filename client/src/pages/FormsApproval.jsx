@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import SearchInput from '../components/SearchInput';
+import Pagination from '../components/Pagination';
 import { NO_ITEM_TYPES, STATUS_BADGE, TYPE_LABELS, fmtDate, money, pretty, statusLabel, releaseLabel, releaseBadge } from '../utils/requestForms';
 
 // The approval queue -- what is waiting on a decision, rather than what you filed.
@@ -53,6 +54,14 @@ export default function FormsApproval() {
       && (!q || [r.request_no, r.owner_name, r.department, TYPE_LABELS[r.type] || pretty(r.type)]
         .some((v) => String(v || '').toLowerCase().includes(q))));
   }, [rows, search, department]);
+
+  // Paged (asked 2026-11-17): Approved and Rejected keep every form ever decided, so the tab had
+  // grown into one endless page. 20 a page, back to page 1 whenever the tab or a filter changes.
+  const PAGE_SIZE = 20;
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [tab, type, search, department]);
+  const totalPages = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
+  const pageRows = shown.slice((Math.min(page, totalPages) - 1) * PAGE_SIZE, Math.min(page, totalPages) * PAGE_SIZE);
 
   return (
     <div>
@@ -117,7 +126,7 @@ export default function FormsApproval() {
                     {rows.length ? 'Nothing matches.' : 'Nothing here.'}
                   </td></tr>
                 )}
-                {shown.map((r) => (
+                {pageRows.map((r) => (
                   <tr key={r.id}>
                     <td data-label="REQ #">{r.request_no}</td>
                     <td data-label="Form">{TYPE_LABELS[r.type] || pretty(r.type)}</td>
@@ -136,6 +145,12 @@ export default function FormsApproval() {
                 ))}
               </tbody>
             </table>
+            {shown.length > 0 && (
+              <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
+                {(Math.min(page, totalPages) - 1) * PAGE_SIZE + 1}–{Math.min(Math.min(page, totalPages) * PAGE_SIZE, shown.length)} of {shown.length.toLocaleString()} forms
+              </div>
+            )}
+            {totalPages > 1 && <Pagination page={Math.min(page, totalPages)} totalPages={totalPages} onChange={setPage} />}
           </div>
         )}
       </div>
