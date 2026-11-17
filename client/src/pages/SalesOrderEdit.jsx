@@ -32,13 +32,17 @@ export default function SalesOrderEdit() {
     (async () => {
       try {
         const { data } = await api.get(`/sales-orders/${id}`);
-        const [cust, reps, locs, taxes, terms, divisions] = await Promise.all([
+        const [cust, reps, locs, taxes, terms, divisions, jobTypes] = await Promise.all([
           data.customer_id ? api.get(`/customers/${data.customer_id}`).catch(() => ({ data: {} })) : Promise.resolve({ data: {} }),
           api.get('/employees').catch(() => ({ data: [] })), api.get('/lookups/locations'), api.get('/lookups/taxes'),
           api.get('/lookups/payment-terms').catch(() => ({ data: [] })),
           api.get('/lookups/sales-divisions').catch(() => ({ data: [] })),
+          api.get('/job-types').catch(() => ({ data: [] })),
         ]);
-        setLk({ contacts: cust.data.contacts || [], reps: reps.data, locations: locs.data, taxes: taxes.data, terms: terms.data || [], divisions: divisions.data || [] });
+        setLk({
+          contacts: cust.data.contacts || [], reps: reps.data, locations: locs.data, taxes: taxes.data, terms: terms.data || [], divisions: divisions.data || [],
+          jobTypes: (Array.isArray(jobTypes.data) ? jobTypes.data : []).slice().sort((a, b) => String(a.display_name).localeCompare(String(b.display_name))),
+        });
         if (!data.customer_locked) api.get('/customers').then((r) => setCustomers(r.data)).catch(() => {});
         setSo(data);
         setHead({ ...data, date_created: day(data.date_created) });
@@ -114,7 +118,7 @@ export default function SalesOrderEdit() {
         'sales_division_id']
         .map((k) => [k, head[k] ?? null])),
       lines: lines.map((l) => ({
-        id: l.id, job_location_id: l.job_location_id || null, description: l.description, quantity: l.quantity, units: l.units, price_per_unit: l.price_per_unit,
+        id: l.id, job_type_id: l.job_type_id || null, job_location_id: l.job_location_id || null, description: l.description, quantity: l.quantity, units: l.units, price_per_unit: l.price_per_unit,
         disc_per_piece: l.disc_per_piece, tax_code_id: l.tax_code_id || null, length: l.length, width: l.width, height: l.height,
         uom: l.uom, shipping: l.shipping, remarks: l.remarks, memo: l.memo, delivery_date: l.delivery_date || null, delivery_time: l.delivery_time || null,
         ...(isAdmin && l.gross_override !== undefined && l.gross_override !== '' ? { gross_override: Number(l.gross_override) } : {}),
@@ -230,7 +234,7 @@ export default function SalesOrderEdit() {
           <table>
             <thead>
               <tr>
-                <th>#</th><th>JO #</th><th>Job Location</th><th>Description</th><th>Qty</th><th>Units</th><th>Price/Unit</th><th>Subtotal</th>
+                <th>#</th><th>JO #</th><th>Job Type</th><th>Job Location</th><th>Description</th><th>Qty</th><th>Units</th><th>Price/Unit</th><th>Subtotal</th>
                 <th title="Per piece">Disc Amt</th><th>Disc Price/Unit</th><th>Net of Tax</th><th>Tax Code <span style={{ color: '#b91c1c' }}>*</span></th><th>Tax Amt</th><th>Gross Amt</th>
                 <th>Length</th><th>Width</th><th>Height</th><th>UOM</th><th>Delivery Date</th><th>Delivery Time</th><th>Remarks</th>
               </tr>
@@ -243,6 +247,18 @@ export default function SalesOrderEdit() {
                   <tr key={l.id}>
                     <td>{l.line_no}</td>
                     <td style={{ whiteSpace: 'nowrap' }}>{l.job_order_no || '—'}</td>
+                    <td>
+                      {/* Job Type (asked 2026-11-17): active job types, plus the line's own if it is no longer active. */}
+                      <select style={{ width: 190 }} value={l.job_type_id || ''} onChange={(e) => setLine(i, 'job_type_id', e.target.value)}>
+                        {!l.job_type_id && <option value="">—</option>}
+                        {(lk.jobTypes || []).filter((x) => x.is_active || String(x.id) === String(l.job_type_id)).map((x) => (
+                          <option key={x.id} value={x.id}>{x.display_name}</option>
+                        ))}
+                        {l.job_type_id && !(lk.jobTypes || []).some((x) => String(x.id) === String(l.job_type_id)) && (
+                          <option value={l.job_type_id}>{l.job_type_name || `Job type #${l.job_type_id}`}</option>
+                        )}
+                      </select>
+                    </td>
                     <td>
                       <select style={{ width: 170 }} value={l.job_location_id || ''} onChange={(e) => setLine(i, 'job_location_id', e.target.value)}>
                         <option value="">—</option>
@@ -290,7 +306,7 @@ export default function SalesOrderEdit() {
           </table>
         </div>
         <p className="muted" style={{ marginTop: 8 }}>
-          Disc Amt is per piece. A line&rsquo;s Job Order takes its new quantity, description and job location on save.
+          Disc Amt is per piece. A line&rsquo;s Job Order takes its new quantity, description, job type and job location on save.
         </p>
       </div>
 

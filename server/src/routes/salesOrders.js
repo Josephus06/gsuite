@@ -250,7 +250,7 @@ const SO_HEADER_EDIT = ['ref_no', 'date_created', 'contact_person_id', 'contact_
   // Sales Division (asked 2026-10-21) -- like every field here, a System Admin's to change (PUT below).
   // Its Job Orders read the division through the SO, so they follow it.
   'sales_division_id'];
-const SO_LINE_EDIT = ['description', 'job_location_id', 'quantity', 'units', 'price_per_unit', 'tax_code_id', 'length', 'width', 'height', 'uom',
+const SO_LINE_EDIT = ['description', 'job_type_id', 'job_location_id', 'quantity', 'units', 'price_per_unit', 'tax_code_id', 'length', 'width', 'height', 'uom',
   'shipping', 'remarks', 'memo', 'delivery_date', 'delivery_time'];
 
 async function soAudit(conn, soId, userId, fieldName, oldValue, newValue) {
@@ -578,6 +578,12 @@ router.put('/:id', requireAuth, requireOpenPeriod('sales_orders', 'non_gl'), asy
       const v = {};
       for (const f of SO_LINE_EDIT) v[f] = l[f] === undefined ? old[f] : blank(l[f]);
       v.delivery_date = day(v.delivery_date);
+      // Job Type (asked 2026-11-17): changeable here, never cleared; a new one must be an active job type.
+      if (!v.job_type_id) v.job_type_id = old.job_type_id;
+      if (String(v.job_type_id ?? '') !== String(old.job_type_id ?? '')) {
+        const [[jt]] = await conn.query('SELECT id FROM job_types WHERE id = ? AND is_active = TRUE', [v.job_type_id]);
+        if (!jt) throw Object.assign(new Error(`Line ${old.line_no}: that Job Type is not an active job type.`), { status: 400 });
+      }
       const qty = Number(v.quantity) || 0;
       if (Math.abs(qty - Number(old.quantity || 0)) > 0.00005) qtyChanged = true;
       if (qty <= 0) throw Object.assign(new Error(`Line ${old.line_no}: quantity must be more than 0.`), { status: 400 });
@@ -633,9 +639,9 @@ router.put('/:id', requireAuth, requireOpenPeriod('sales_orders', 'non_gl'), asy
         // delivery too, not only qty / description / location: SO-196032 line 3 went 150 x 150 MM to
         // 20 x 20 CM and JO-196032-3-5 still read 150 x 150 (2026-11-04).
         await conn.query(
-          `UPDATE job_orders SET quantity = ?, description = ?, job_location_id = ?, units = ?, length = ?, width = ?, height = ?,
+          `UPDATE job_orders SET quantity = ?, description = ?, job_type_id = ?, job_location_id = ?, units = ?, length = ?, width = ?, height = ?,
              delivery_date = ?, delivery_time = ?, updated_at = NOW() WHERE id = ?`,
-          [qty, v.description, v.job_location_id, v.units, v.length, v.width, v.height, v.delivery_date, v.delivery_time, old.job_order_id]);
+          [qty, v.description, v.job_type_id, v.job_location_id, v.units, v.length, v.width, v.height, v.delivery_date, v.delivery_time, old.job_order_id]);
       }
     }
     // header totals from the lines as they now stand -- only when some line's pricing changed
