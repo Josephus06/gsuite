@@ -15,6 +15,7 @@ const { mayAssignArtist } = require('../lib/artistAssignment');
 const { isHeadOfficeUser } = require('../lib/userLocation');
 const { getSalesRepEmployeeScope } = require('../lib/salesVisibility');
 const { getJobLocationScope, isJobLocationVisible } = require('../lib/jobLocationVisibility');
+const ExcelJS = require('exceljs');
 const { sendXlsx, day } = require('../lib/xlsxExport');
 const { shrinkFile } = require('../lib/shrinkFile');
 const { lineLocation, MISSING_LOCATION } = require('../lib/processLocation');
@@ -418,50 +419,36 @@ router.get('/checklist-export', requireAuth, listPermission, async (req, res, ne
       if (!byJo.has(l.job_order_id)) byJo.set(l.job_order_id, []);
       byJo.get(l.job_order_id).push(l);
     }
-    const rows = [];
+    // One block per job order (asked 2026-11-17, from the sheet the user works from): the JO # on an
+    // orange cell, a blank row, the column headings, its lines, and a blank row before the next JO.
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${openOnly ? 'jo-punchlist-open.xlsx' : 'jo-punchlist.xlsx'}"`);
+    const wb = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: res, useStyles: true });
+    const ws = wb.addWorksheet('Punchlist');
+    ws.columns = [{ width: 46 }, { width: 58 }, { width: 20 }, { width: 8 }, { width: 8 }];
+    const orange = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF8CBAD' } };
     for (const jo of jos) {
       const items = (byJo.get(jo.id) || []).sort((a, b) => (a.extra - b.extra)
         || (Number(a.line_no) - Number(b.line_no)) || (Number(a.sort_order) - Number(b.sort_order)) || (Number(a.item_id) - Number(b.item_id)));
+      const title = ws.addRow([jo.job_order_no]);
+      title.getCell(1).font = { bold: true };
+      title.getCell(1).fill = orange;
+      title.commit();
+      ws.addRow([]).commit();
+      const head = ws.addRow(['Process / Item', 'Material', 'Location', 'Qty', 'UOM']);
+      head.font = { bold: true };
+      head.commit();
+      if (!items.length) ws.addRow([openOnly ? 'No open checklist items.' : 'No checklist items.']).commit();
       for (const l of items) {
-        rows.push({
-          jo_no: jo.job_order_no, so_no: jo.sales_order_no || '', customer: jo.customer_name || '', job_type: jo.job_type_name || '',
-          description: jo.description || '', jo_location: jo.job_location_name || '', sales_rep: jo.sales_rep_name || '',
-          status: jo.status || '', sub_status: Number(jo.is_on_hold) ? 'On Hold' : (EXTRACT_STAGE_LABELS[jo.production_stage] || jo.sub_status || ''),
-          line_no: l.line_no == null ? '' : Number(l.line_no), process: l.process_name || '', item: l.item_name || '',
-          location: l.location_name || '', qty: l.qty == null ? '' : Number(l.qty), uom: l.uom || '',
-          required: Number(l.is_required) ? 'Yes' : 'No', done: Number(l.is_done) ? 'Yes' : 'No',
-          done_by: Number(l.is_done) ? (l.done_by || '') : '', done_at: Number(l.is_done) ? (l.done_at || '') : '',
-          note: l.note || '',
-        });
+        ws.addRow([
+          l.process_name || '', Number(l.extra) ? '' : (l.item_name || ''), l.location_name || '',
+          l.qty == null ? '' : Number(l.qty), l.uom || '',
+        ]).commit();
       }
+      ws.addRow([]).commit();
     }
-    await sendXlsx(res, {
-      filename: openOnly ? 'jo-punchlist-open.xlsx' : 'jo-punchlist.xlsx',
-      sheet: 'Punchlist',
-      columns: [
-        { header: 'JO #', key: 'jo_no', width: 16 },
-        { header: 'SO #', key: 'so_no', width: 14 },
-        { header: 'Customer', key: 'customer', width: 34 },
-        { header: 'Job Type', key: 'job_type', width: 22 },
-        { header: 'Job Desc', key: 'description', width: 44 },
-        { header: 'JO Location', key: 'jo_location', width: 20 },
-        { header: 'Sales Rep', key: 'sales_rep', width: 22 },
-        { header: 'Status', key: 'status', width: 22 },
-        { header: 'Sub Status', key: 'sub_status', width: 18 },
-        { header: 'Line #', key: 'line_no', width: 7 },
-        { header: 'Process / Item', key: 'process', width: 34 },
-        { header: 'Material', key: 'item', width: 30 },
-        { header: 'Location', key: 'location', width: 20 },
-        { header: 'Qty', key: 'qty', width: 10 },
-        { header: 'UOM', key: 'uom', width: 8 },
-        { header: 'Required', key: 'required', width: 10 },
-        { header: 'Done', key: 'done', width: 8 },
-        { header: 'Done By', key: 'done_by', width: 22 },
-        { header: 'Done At', key: 'done_at', width: 17 },
-        { header: 'Note', key: 'note', width: 36 },
-      ],
-      rows,
-    });
+    ws.commit();
+    await wb.commit();
   } catch (err) {
     if (res.headersSent) { res.destroy(err); return; }
     next(err);
