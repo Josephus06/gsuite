@@ -1335,6 +1335,17 @@ async function requireInvoiceCreatePermission(req, res, next) {
 router.post('/', requireAuth, requireInvoiceCreatePermission, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
+    // An invoice belongs to its order's office (asked 2026-11-17): billed from a Sales Order (or one of
+    // its Delivery Tickets) it takes the Sales Order's Office Location, from an NSSO the NSSO's --
+    // whatever the form sent. INV-83565 and nine more were raised from Branch - SM orders as Head Office.
+    if (req.body && !req.body.estimate_id) {
+      const [[parent]] = req.body.nsso_id
+        ? await conn.query('SELECT office_location_id FROM non_standard_sales_orders WHERE id = ?', [req.body.nsso_id])
+        : req.body.sales_order_id
+          ? await conn.query('SELECT office_location_id FROM sales_orders WHERE id = ?', [req.body.sales_order_id])
+          : [[null]];
+      if (parent && parent.office_location_id) req.body.office_location_id = parent.office_location_id;
+    }
     const {
       sales_order_id: salesOrderId, date_created: dateCreated, date_due: dateDue, term, bs_si_no: bsSiNo,
       po_no: poNo, sales_rep_id: salesRepId, office_location_id: officeLocationId, department_id: departmentId,
