@@ -131,26 +131,61 @@ export default function JobOrders({ kind = 'jo' }) {
     }
   }
 
-  // Extract Punchlist (asked 2026-11-16): the checklist lines of every JO under the same filters and
-  // tab, one row per line; "Open items only" leaves out what is already ticked.
+  // Extract Punchlist (asked 2026-11-16; picker 2026-11-17): opens a modal where the job orders are
+  // picked -- it starts on the list's own filters and tab, and its search box finds any JO -- and
+  // only the picked ones are extracted, one row per checklist line. "Open items only" leaves out
+  // what is already ticked.
+  const [showPunch, setShowPunch] = useState(false);
+  const [punchSearch, setPunchSearch] = useState('');
+  const [punchRows, setPunchRows] = useState([]);
+  const [punchLoading, setPunchLoading] = useState(false);
+  const [punchPicked, setPunchPicked] = useState(() => new Map()); // id -> row
   const [punchOpenOnly, setPunchOpenOnly] = useState(false);
   const [punchExporting, setPunchExporting] = useState(false);
+  const [punchError, setPunchError] = useState('');
+  async function loadPunchRows(q) {
+    setPunchLoading(true); setPunchError('');
+    try {
+      // Empty search: the JOs under the list's filters. A search looks across every JO.
+      const params = q ? { kind, search: q } : listParams();
+      const { data } = await api.get('/job-orders', { params: { ...params, page: 1, limit: 25 } });
+      setPunchRows(data.rows || []);
+    } catch {
+      setPunchError('Could not load the job orders.');
+    } finally {
+      setPunchLoading(false);
+    }
+  }
+  function openPunchlist() {
+    setShowPunch(true); setPunchSearch(''); setPunchPicked(new Map()); setPunchError('');
+    loadPunchRows('');
+  }
+  function togglePunch(row) {
+    setPunchPicked((prev) => {
+      const next = new Map(prev);
+      if (next.has(row.id)) next.delete(row.id); else next.set(row.id, row);
+      return next;
+    });
+  }
+  const hasChecklist = (row) => !!Number(row.checklist_total);
   async function runPunchlistExport() {
-    setPunchExporting(true); setExportError('');
+    if (!punchPicked.size) return;
+    setPunchExporting(true); setPunchError('');
     try {
       const { data } = await api.get('/job-orders/checklist-export', {
-        params: { ...listParams(), ...(punchOpenOnly ? { open_only: '1' } : {}) }, responseType: 'blob',
+        params: { kind, ids: [...punchPicked.keys()].join(','), ...(punchOpenOnly ? { open_only: '1' } : {}) }, responseType: 'blob',
       });
       const url = URL.createObjectURL(data);
       const a = document.createElement('a');
       a.href = url; a.download = punchOpenOnly ? 'jo-punchlist-open.xlsx' : 'jo-punchlist.xlsx';
       a.click();
       URL.revokeObjectURL(url);
+      setShowPunch(false);
     } catch (err) {
       // A blob response carries the server's JSON error as a blob too.
       let msg = 'Could not extract the punchlist.';
       try { msg = JSON.parse(await err.response.data.text()).error || msg; } catch { /* keep the default */ }
-      setExportError(msg);
+      setPunchError(msg);
     } finally {
       setPunchExporting(false);
     }
@@ -325,14 +360,9 @@ export default function JobOrders({ kind = 'jo' }) {
               {exporting ? 'Extracting...' : 'Extract'}
             </button>
             {!isNsjo && (
-              <>
-                <button className="btn" disabled={punchExporting} onClick={runPunchlistExport} title="Download the checklist lines of every job order under the filters above, one row per line">
-                  {punchExporting ? 'Extracting...' : 'Extract Punchlist'}
-                </button>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 12 }}>
-                  <input type="checkbox" checked={punchOpenOnly} onChange={(e) => setPunchOpenOnly(e.target.checked)} /> Open items only
-                </label>
-              </>
+              <button className="btn" onClick={openPunchlist} title="Pick job orders and download their checklist lines, one row per line">
+                Extract Punchlist
+              </button>
             )}
             {exportError && <span style={{ color: 'var(--danger)' }}>{exportError}</span>}
           </div>
@@ -428,6 +458,62 @@ export default function JobOrders({ kind = 'jo' }) {
           </>
         )}
       </div>
+
+      {showPunch && (
+        <Modal title="Extract Punchlist" onClose={() => setShowPunch(false)} large>
+          {punchError && <div className="error-banner">{punchError}</div>}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+            <input
+              style={{ flex: 1 }} placeholder="Search JO #, SO #, customer or description..." value={punchSearch} autoFocus
+              onChange={(e) => setPunchSearch(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && loadPunchRows(punchSearch.trim())}
+            />
+            <button className="btn" type="button" onClick={() => loadPunchRows(punchSearch.trim())}>Search</button>
+          </div>
+          <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>
+            {punchSearch.trim() ? 'Search results' : 'Job orders under the list\'s filters'} -- tick the ones to extract. Only job orders with a checklist can be picked.
+          </div>
+          <div className="table-wrap" style={{ maxHeight: 340, overflowY: 'auto' }}>
+            <table>
+              <thead><tr><th style={{ width: 32 }}></th><th>JO #</th><th>Customer</th><th>Job Desc</th><th>Sub Status</th><th>Checklist</th></tr></thead>
+              <tbody>
+                {punchLoading && <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 16 }}>Loading...</td></tr>}
+                {!punchLoading && punchRows.length === 0 && <tr><td colSpan={6} className="muted" style={{ textAlign: 'center', padding: 16 }}>No job orders found.</td></tr>}
+                {!punchLoading && punchRows.map((row) => (
+                  <tr key={row.id} style={{ cursor: hasChecklist(row) ? 'pointer' : 'default', opacity: hasChecklist(row) ? 1 : 0.5 }}
+                    onClick={() => hasChecklist(row) && togglePunch(row)}>
+                    <td><input type="checkbox" disabled={!hasChecklist(row)} checked={punchPicked.has(row.id)} onChange={() => togglePunch(row)} onClick={(e) => e.stopPropagation()} /></td>
+                    <td>{row.job_order_no}</td>
+                    <td>{row.customer_name}</td>
+                    <td>{row.description}</td>
+                    <td>{subStatusOf(row)}</td>
+                    <td>{hasChecklist(row) ? `${row.checklist_done}/${row.checklist_total}` : 'None'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div style={{ marginTop: 10, fontSize: 13 }}>
+            <strong>Selected ({punchPicked.size}):</strong>{' '}
+            {punchPicked.size === 0 && <span className="muted">none yet</span>}
+            {[...punchPicked.values()].map((row) => (
+              <span key={row.id} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, margin: '2px 6px 2px 0', padding: '1px 8px', border: '1px solid var(--border, #ddd)', borderRadius: 12 }}>
+                {row.job_order_no}
+                <button type="button" className="btn btn-sm" style={{ padding: '0 4px', lineHeight: 1 }} onClick={() => togglePunch(row)} title="Remove">x</button>
+              </span>
+            ))}
+          </div>
+          <div style={{ marginTop: 12, display: 'flex', gap: 12, alignItems: 'center', justifyContent: 'flex-end' }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, whiteSpace: 'nowrap' }}>
+              <input type="checkbox" checked={punchOpenOnly} onChange={(e) => setPunchOpenOnly(e.target.checked)} style={{ width: 'auto' }} /> Open items only
+            </label>
+            <button className="btn" type="button" onClick={() => setShowPunch(false)}>Cancel</button>
+            <button className="btn btn-primary" type="button" disabled={!punchPicked.size || punchExporting} onClick={runPunchlistExport}>
+              {punchExporting ? 'Extracting...' : `Extract${punchPicked.size ? ` (${punchPicked.size})` : ''}`}
+            </button>
+          </div>
+        </Modal>
+      )}
 
       {showBulkAssign && (
         <Modal title="Select Settings for Artist Schedule" onClose={() => setShowBulkAssign(false)} large>

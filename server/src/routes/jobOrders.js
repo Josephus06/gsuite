@@ -368,13 +368,22 @@ router.get('/checklist-export', requireAuth, listPermission, async (req, res, ne
   try {
     const { listWhereSql, listParams } = await listFilter(req);
     const regular = "jo.nsso_id IS NULL AND jo.job_order_no NOT LIKE 'RWIP-%' AND jo.job_order_no NOT LIKE 'RFQC-%'";
-    const where = listWhereSql ? `${listWhereSql} AND ${regular}` : `WHERE ${regular}`;
+    let where = listWhereSql ? `${listWhereSql} AND ${regular}` : `WHERE ${regular}`;
+    const whereParams = [...listParams];
+    // ids=1,2,3 (2026-11-17): only the job orders picked in the Extract Punchlist modal -- still
+    // inside the person's own list scope, which listFilter has already applied.
+    if (req.query.ids !== undefined) {
+      const picked = [...new Set(String(req.query.ids).split(',').map(Number).filter((n) => Number.isInteger(n) && n > 0))];
+      if (!picked.length) return res.status(400).json({ error: 'Pick at least one job order.' });
+      where += ' AND jo.id IN (?)';
+      whereParams.push(picked.slice(0, PUNCHLIST_MAX_JOS + 1));
+    }
     const [jos] = await pool.query(
       `SELECT jo.id, jo.job_order_no, jo.description, jo.status, jo.sub_status, jo.production_stage, jo.is_on_hold, jo.quantity,
               so.sales_order_no, c.name AS customer_name, jt.display_name AS job_type_name, jloc.location_name AS job_location_name,
               CONCAT(sr.first_name, ' ', sr.last_name) AS sales_rep_name
        ${LIST_FROM} ${where} ORDER BY jo.id DESC LIMIT ${PUNCHLIST_MAX_JOS + 1}`,
-      listParams);
+      whereParams);
     if (jos.length > PUNCHLIST_MAX_JOS) {
       return res.status(400).json({ error: `More than ${PUNCHLIST_MAX_JOS.toLocaleString()} job orders match. Narrow the filters (a status tab, Period From / As of) and extract again.` });
     }
