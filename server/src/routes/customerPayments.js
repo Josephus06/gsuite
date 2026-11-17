@@ -351,7 +351,13 @@ router.get('/meta/issuers', requireAuth, requirePermission(ROUTE, 'can_view'), a
 // is the three fields the picker shows, about 2 MB, under this page's own permission.
 router.get('/meta/customers', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
-    const [rows] = await pool.query('SELECT id, customer_code, name FROM customers ORDER BY name');
+    // list_address: the same address the Customers list shows (default address, else the
+    // customer's own Address / Bill To), so the picker can tell same-named customers apart.
+    const [rows] = await pool.query(
+      `SELECT c.id, c.customer_code, c.name,
+              COALESCE((SELECT ca.address_line FROM customer_addresses ca WHERE ca.customer_id = c.id ORDER BY ca.is_default DESC, ca.id LIMIT 1),
+                       NULLIF(c.address, ''), NULLIF(c.bill_to_address, '')) AS list_address
+         FROM customers c ORDER BY c.name`);
     res.json(rows);
   } catch (err) { next(err); }
 });
