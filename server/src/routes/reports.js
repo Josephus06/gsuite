@@ -15,7 +15,7 @@ const {
   arAgingWorkbook, apAgingWorkbook, arAgingDetailsWorkbook, apAgingDetailsWorkbook, sendWorkbook,
 } = require('../lib/agingWorkbook');
 const { parkedReport } = require('../lib/parkedBankItems');
-const { buildCommissionReport, buildCommissionJoDetail, getTeamEmployeeIds, getSbuDivisionIds } = require('../lib/commissionReport');
+const { buildCommissionReport, buildCommissionJoDetail, getTeamEmployeeIds, getSbuDivisionIds, withholdConfirmedWithoutPayable } = require('../lib/commissionReport');
 const { buildCommissionSummary, commissionSummaryWorkbook } = require('../lib/commissionSummaryWorkbook');
 const {
   buildProfitabilityReport, buildProfitabilityCsv, buildProfitabilityLineDetail,
@@ -627,7 +627,8 @@ router.get('/commission', requireAuth, requirePermission(COMMISSION_ROUTE, 'can_
     const filters = { salesDivisionId: req.query.salesDivisionId ? Number(req.query.salesDivisionId) : null };
     const data = await buildCommissionReport(employeeId, year, filters);
     if (!data) return res.status(404).json({ error: 'Sales Rep not found' });
-    res.json(data);
+    // No CP for the month -> no Confirmed / Unpaid shown (2026-11-18).
+    res.json(withholdConfirmedWithoutPayable(data));
   } catch (err) {
     next(err);
   }

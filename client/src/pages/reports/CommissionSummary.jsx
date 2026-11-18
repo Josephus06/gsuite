@@ -70,7 +70,7 @@ export default function CommissionSummary() {
         </button>
         <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
           One sheet per group, one block per person, the same figures as the Commission report. Extract gives the Excel workbook.
-          CP # is the month&apos;s Commission Payable; <span style={{ color: '#b91c1c', fontWeight: 600 }}>No CP</span> means none has been created, so that month cannot be released on a voucher.
+          CP # is the month&apos;s Commission Payable; <span style={{ color: '#b91c1c', fontWeight: 600 }}>No CP</span> means none has been created: that month cannot be released on a voucher, and its Confirmed and Unpaid Commission are not shown until one is.
         </div>
       </div>
 

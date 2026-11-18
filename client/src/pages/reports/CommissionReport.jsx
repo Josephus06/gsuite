@@ -205,7 +205,7 @@ export default function CommissionReport() {
           <p className="muted" style={{ marginTop: 12, fontSize: 13 }}>
             Released Commission is what the employee&apos;s Commission Vouchers paid against the month, before deductions (as the source system shows it) &mdash; click it to see the vouchers. Unpaid = Confirmed − Released.
             Deducted / Refunded show the vouchers&apos; expense adjustments for information; they do not reduce Released.
-            CP # is the month&apos;s Commission Payable; <span style={{ color: '#b91c1c', fontWeight: 600 }}>No CP</span> means none has been created yet, so the month cannot be released on a Commission Voucher.
+            CP # is the month&apos;s Commission Payable; <span style={{ color: '#b91c1c', fontWeight: 600 }}>No CP</span> means none has been created yet: the month cannot be released on a Commission Voucher, and its Confirmed and Unpaid Commission are not shown until one is.
           </p>
         </div>
       )}

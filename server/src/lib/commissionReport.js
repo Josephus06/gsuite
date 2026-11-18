@@ -454,4 +454,24 @@ async function buildCommissionJoDetail(employeeId, year, month, filters = {}) {
   };
 }
 
-module.exports = { buildCommissionReport, buildCommissionJoDetail, getTeamEmployeeIds, getSbuDivisionIds };
+// For DISPLAY on the Commission report and the Commission Summary only (asked 2026-11-18): a month
+// with no Commission Payable shows no Confirmed Commission, and so no Unpaid (Confirmed − Released)
+// -- it is not payable until a CP is raised, and the CP # column reads "No CP" for it. The figures
+// are kept on the row as confirmed_before_cp / unpaid_before_cp.
+//
+// Never apply this to what the Commission Payable or the vouchers compute from: a new CP takes the
+// month's Confirmed from buildCommissionReport, which would otherwise always read 0 for it.
+function withholdConfirmedWithoutPayable(report) {
+  if (!report?.rows) return report;
+  const rows = report.rows.map((r) => {
+    if ((r.payables || []).length) return r;
+    return {
+      ...r,
+      confirmed_before_cp: r.confirmed_commission, unpaid_before_cp: r.unpaid_commission,
+      confirmed_commission: 0, unpaid_commission: round2(0 - Number(r.released_commission || 0)),
+    };
+  });
+  return { ...report, rows };
+}
+
+module.exports = { buildCommissionReport, buildCommissionJoDetail, getTeamEmployeeIds, getSbuDivisionIds, withholdConfirmedWithoutPayable };

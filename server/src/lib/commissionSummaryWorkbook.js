@@ -7,7 +7,7 @@
 // call per person, so this workbook and that screen can never disagree.
 const ExcelJS = require('exceljs');
 const pool = require('../db');
-const { buildCommissionReport } = require('./commissionReport');
+const { buildCommissionReport, withholdConfirmedWithoutPayable } = require('./commissionReport');
 
 // Where a person goes. Role first (the Sales Manager and the SBU heads have sheets of their own),
 // then their department. Names are compared without spaces, dashes or underscores, since the
@@ -65,7 +65,8 @@ async function buildCommissionSummary(year, scope) {
   const people = await placePeople(scope);
   const bySheet = new Map();
   for (const p of people) {
-    const data = await buildCommissionReport(p.employee_id, year, {});
+    // No CP for the month -> no Confirmed / Unpaid shown, as on the Commission report (2026-11-18).
+    const data = withholdConfirmedWithoutPayable(await buildCommissionReport(p.employee_id, year, {}));
     if (!data) continue;
     const block = {
       label: p.label, name: p.name, employee_id: p.employee_id, order: p.order, rows: data.rows,
