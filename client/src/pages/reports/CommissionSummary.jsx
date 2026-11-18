@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import api from '../../api/client';
 import LoadingSpinner from '../../components/LoadingSpinner';
+import CommissionPayableCell from '../../components/CommissionPayableCell';
 import { downloadFile } from '../../utils/downloadFile';
 
 // Commission Summary (asked 2026-10-14; server lib/commissionSummaryWorkbook.js): every rep's year,
@@ -69,6 +70,7 @@ export default function CommissionSummary() {
         </button>
         <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
           One sheet per group, one block per person, the same figures as the Commission report. Extract gives the Excel workbook.
+          CP # is the month&apos;s Commission Payable; <span style={{ color: '#b91c1c', fontWeight: 600 }}>No CP</span> means none has been created, so that month cannot be released on a voucher.
         </div>
       </div>
 
@@ -93,6 +95,7 @@ export default function CommissionSummary() {
                   <thead>
                     <tr>
                       <th rowSpan={2}>Month</th>
+                      <th rowSpan={2}>CP #</th>
                       {COLS.filter(([k]) => !['expenses_deducted', 'expenses_refunded'].includes(k)).map(([k, label]) => (
                         k === 'unpaid_commission'
                           ? [<th key="exp" colSpan={2} style={{ textAlign: 'center' }}>Expenses</th>, <th key={k} rowSpan={2} style={{ textAlign: 'right' }}>{label}</th>]
@@ -105,6 +108,7 @@ export default function CommissionSummary() {
                     {b.rows.map((r) => (
                       <tr key={r.month}>
                         <td>{r.month_name}</td>
+                        <td><CommissionPayableCell row={r} /></td>
                         {COLS.map(([k]) => (
                           <td key={k} style={{ textAlign: k === 'division_name' ? 'left' : 'right' }}>
                             {k === 'division_name' ? (r[k] || '') : money(r[k])}
@@ -115,7 +119,7 @@ export default function CommissionSummary() {
                   </tbody>
                   <tfoot>
                     <tr style={{ fontWeight: 700 }}>
-                      <td colSpan={COLS.length} style={{ textAlign: 'right' }}>TOTAL</td>
+                      <td colSpan={COLS.length + 1} style={{ textAlign: 'right' }}>TOTAL</td>
                       <td style={{ textAlign: 'right' }}>{money(b.total_unpaid) || '0.00'}</td>
                     </tr>
                   </tfoot>

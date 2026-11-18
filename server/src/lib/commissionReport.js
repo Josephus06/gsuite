@@ -246,6 +246,27 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
   // added, net = the voucher's total). See lib/commissionRelease.js.
   const { grossReleasedByMonth, deductedByMonth, refundedByMonth } = await releaseByMonthForEmployee(employeeId, year);
 
+  // The Commission Payable(s) raised for each month (asked 2026-11-18), so a month with commission
+  // but no payable -- which a Commission Voucher cannot release -- is visible on the report. A
+  // payable covering a range of months is listed on each of them. Void payables are left out.
+  const payablesByMonth = Array.from({ length: 13 }, () => []);
+  const [cps] = await pool.query(
+    `SELECT id, commission_payable_no, status,
+            YEAR(period_from) AS fy, MONTH(period_from) AS fm, YEAR(COALESCE(period_to, period_from)) AS ty, MONTH(COALESCE(period_to, period_from)) AS tm
+       FROM commission_payables
+      WHERE employee_id = ? AND status <> 'void'
+        AND YEAR(period_from) <= ? AND YEAR(COALESCE(period_to, period_from)) >= ?
+      ORDER BY period_from, id`,
+    [employeeId, year, year]
+  );
+  for (const cp of cps) {
+    const from = Number(cp.fy) < Number(year) ? 1 : Number(cp.fm);
+    const to = Number(cp.ty) > Number(year) ? 12 : Number(cp.tm);
+    for (let m = from; m <= to; m += 1) {
+      payablesByMonth[m].push({ id: cp.id, commission_payable_no: cp.commission_payable_no, status: cp.status });
+    }
+  }
+
   const rows = months.map((r) => {
     const weighted = round2(r.weighted_sales);
     const pct = r.quota > 0 ? round2((weighted / r.quota) * 100) : 0;
@@ -276,6 +297,7 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
       expected_commission: expected, paid_passing_total: paid, confirmed_commission: confirmed,
       released_commission: released, expenses_deducted: deducted, expenses_refunded: refunded,
       unpaid_commission: unpaid,
+      payables: payablesByMonth[r.month] || [],
     };
   });
 

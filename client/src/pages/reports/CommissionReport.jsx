@@ -3,6 +3,7 @@ import api from '../../api/client';
 import EntityPicker from '../../components/EntityPicker';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import Modal from '../../components/Modal';
+import CommissionPayableCell from '../../components/CommissionPayableCell';
 import { money } from './CoaTreeRows';
 
 function currentYear() { return new Date().getFullYear(); }
@@ -137,6 +138,7 @@ export default function CommissionReport() {
               <thead>
                 <tr>
                   <th rowSpan={2}>Month</th>
+                  <th rowSpan={2}>CP #</th>
                   <th rowSpan={2} style={{ textAlign: 'right' }}>Quota</th>
                   <th rowSpan={2}>Sales Division</th>
                   <th rowSpan={2} style={{ textAlign: 'right' }}>Weighted Sales</th>
@@ -158,6 +160,7 @@ export default function CommissionReport() {
                 {report.rows.map((r) => (
                   <tr key={r.month}>
                     <td data-label="Month">{r.month_name}</td>
+                    <td data-label="CP #"><CommissionPayableCell row={r} /></td>
                     <td data-label="Quota" style={{ textAlign: 'right' }}>{money(r.quota)}</td>
                     <td data-label="Sales Division">{r.division_name || ''}</td>
                     <td data-label="Weighted Sales" style={{ textAlign: 'right' }}>{money(r.weighted_sales)}</td>
@@ -183,6 +186,7 @@ export default function CommissionReport() {
                     <td>Total</td>
                     <td></td>
                     <td></td>
+                    <td></td>
                     <td style={{ textAlign: 'right' }}>{money(totals.weighted_sales)}</td>
                     <td></td>
                     <td style={{ textAlign: 'right' }}>{money(totals.estimated_commission)}</td>
@@ -201,6 +205,7 @@ export default function CommissionReport() {
           <p className="muted" style={{ marginTop: 12, fontSize: 13 }}>
             Released Commission is what the employee&apos;s Commission Vouchers paid against the month, before deductions (as the source system shows it) &mdash; click it to see the vouchers. Unpaid = Confirmed − Released.
             Deducted / Refunded show the vouchers&apos; expense adjustments for information; they do not reduce Released.
+            CP # is the month&apos;s Commission Payable; <span style={{ color: '#b91c1c', fontWeight: 600 }}>No CP</span> means none has been created yet, so the month cannot be released on a Commission Voucher.
           </p>
         </div>
       )}

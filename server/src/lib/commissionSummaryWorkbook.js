@@ -84,22 +84,33 @@ async function buildCommissionSummary(year, scope) {
 /* ------------------------------------------------------------------ the workbook ------------ */
 
 const MONEY = '#,##0.00';
-// The money columns and their row keys, B..M as on the team's sheet.
+// The columns and their row keys: B is the month's Commission Payable (CP #, 2026-11-18), C..N the
+// team's sheet as before.
 const COLS = [
-  ['B', 'Quota', 'quota'],
-  ['C', 'Sales Division', 'division_name'],
-  ['D', 'Weighted Sales', 'weighted_sales'],
-  ['E', '%', 'performance_pct'],
-  ['F', 'Estimated Commission', 'estimated_commission'],
-  ['G', "Total Amount of JO's with Passing Rate", 'passing_gp_total'],
-  ['H', 'Expected Commission', 'expected_commission'],
-  ['I', 'Confirmed Commission', 'confirmed_commission'],
-  ['J', 'Released Commission', 'released_commission'],
-  ['K', 'Deducted', 'expenses_deducted'],
-  ['L', 'Refunded', 'expenses_refunded'],
-  ['M', 'Unpaid Commission', 'unpaid_commission'],
+  ['B', 'CP #', 'payables'],
+  ['C', 'Quota', 'quota'],
+  ['D', 'Sales Division', 'division_name'],
+  ['E', 'Weighted Sales', 'weighted_sales'],
+  ['F', '%', 'performance_pct'],
+  ['G', 'Estimated Commission', 'estimated_commission'],
+  ['H', "Total Amount of JO's with Passing Rate", 'passing_gp_total'],
+  ['I', 'Expected Commission', 'expected_commission'],
+  ['J', 'Confirmed Commission', 'confirmed_commission'],
+  ['K', 'Released Commission', 'released_commission'],
+  ['L', 'Deducted', 'expenses_deducted'],
+  ['M', 'Refunded', 'expenses_refunded'],
+  ['N', 'Unpaid Commission', 'unpaid_commission'],
 ];
-const WIDTHS = { A: 14, B: 14, C: 11, D: 14, E: 8, F: 12, G: 15, H: 12, I: 12, J: 12, K: 11, L: 10, M: 13 };
+const WIDTHS = { A: 14, B: 11, C: 14, D: 11, E: 14, F: 8, G: 12, H: 15, I: 12, J: 12, K: 12, L: 11, M: 10, N: 13 };
+// "CP-36", several joined; "No CP" (red) for a month with commission but no payable.
+function payableCell(cell, m) {
+  const list = m.payables || [];
+  if (list.length) { cell.value = list.map((p) => p.commission_payable_no).join(', '); return; }
+  if (Number(m.expected_commission) > 0 || Number(m.released_commission) !== 0) {
+    cell.value = 'No CP';
+    cell.font = { bold: true, color: { argb: 'FFB91C1C' } };
+  }
+}
 const thin = { style: 'thin', color: { argb: 'FFBFBFBF' } };
 
 function writeBlock(ws, startRow, block) {
@@ -114,14 +125,14 @@ function writeBlock(ws, startRow, block) {
   ws.getCell(`A${top}`).value = 'Month';
   ws.mergeCells(`A${top}:A${sub}`);
   for (const [col, label] of COLS) {
-    if (col === 'K' || col === 'L') continue;
+    if (col === 'L' || col === 'M') continue;
     ws.getCell(`${col}${top}`).value = label;
     ws.mergeCells(`${col}${top}:${col}${sub}`);
   }
-  ws.getCell(`K${top}`).value = 'Expenses';
-  ws.mergeCells(`K${top}:L${top}`);
-  ws.getCell(`K${sub}`).value = 'Deducted';
-  ws.getCell(`L${sub}`).value = 'Refunded';
+  ws.getCell(`L${top}`).value = 'Expenses';
+  ws.mergeCells(`L${top}:M${top}`);
+  ws.getCell(`L${sub}`).value = 'Deducted';
+  ws.getCell(`M${sub}`).value = 'Refunded';
   for (const row of [top, sub]) {
     for (const c of ['A', ...COLS.map(([col]) => col)]) {
       const cell = ws.getCell(`${c}${row}`);
@@ -137,18 +148,19 @@ function writeBlock(ws, startRow, block) {
     for (const [col, , k] of COLS) {
       const v = m[k];
       const cell = ws.getCell(`${col}${r}`);
+      if (k === 'payables') { payableCell(cell, m); continue; }
       if (k === 'division_name') cell.value = v || null;
       else cell.value = Number(v) ? Number(v) : null;
       if (k !== 'division_name') cell.numFmt = k === 'performance_pct' ? '0.00' : MONEY;
     }
     r += 1;
   }
-  ws.getCell(`L${r}`).value = 'TOTAL';
-  ws.getCell(`M${r}`).value = block.total_unpaid;
-  ws.getCell(`M${r}`).numFmt = MONEY;
-  ws.getCell(`L${r}`).font = { bold: true };
+  ws.getCell(`M${r}`).value = 'TOTAL';
+  ws.getCell(`N${r}`).value = block.total_unpaid;
+  ws.getCell(`N${r}`).numFmt = MONEY;
   ws.getCell(`M${r}`).font = { bold: true };
-  ws.getCell(`M${r}`).border = { top: thin, bottom: { style: 'double' } };
+  ws.getCell(`N${r}`).font = { bold: true };
+  ws.getCell(`N${r}`).border = { top: thin, bottom: { style: 'double' } };
   return r + 2; // a blank row before the next person
 }
 
