@@ -47,6 +47,13 @@ function DateBoxes({ iso }) {
 // A source document's key: "Vendor Bill-123". ?doc= takes one or more (comma-separated) to open
 // the 2307 for just those documents -- the Vendor Bill page links here that way.
 const docKey = (d) => `${d.doc_type}-${d.id}`;
+// The form's remaining blanks -- the tax agent / attorney's roll no. and its issue and expiry dates
+// under each signature, and the payee's conforme -- typed here, empty unless filled.
+const BLANK_EXTRA = {
+  payor_agent: '', payor_issue: '', payor_expiry: '',
+  conforme: '', payee_agent: '', payee_issue: '', payee_expiry: '',
+};
+const newManualLine = () => ({ atc: '', nature: '', months: ['', '', ''], tax: '' });
 const DOCS_PER_PAGE = 10; // the document list is paged (asked 2026-11-05: 48 bills ran far down the page)
 const r2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
 const monthBounds = (iso) => {
@@ -61,19 +68,28 @@ export default function Bir2307Print() {
   const quarter = params.get('quarter');
   const payeeKey = params.get('payee');
   const onlyDocs = params.get('doc');
+  // Create 2307 (asked 2026-11-18): a blank certificate typed by hand -- no documents behind it, so
+  // Part III's lines (ATC, nature, each month's income, tax) are typed here too.
+  const manual = params.get('manual') === '1';
   const [src, setSrc] = useState(null);
-  const [f, setF] = useState(null); // what prints: period, payee, payor
+  const [f, setF] = useState(null); // what prints: period, payee, payor, the agent / conforme blanks
   const [sel, setSel] = useState([]); // keys of the documents on this certificate
   const [over, setOver] = useState({}); // a line's ATC / nature as changed here, by line key
+  const [mlines, setMlines] = useState([newManualLine()]); // manual mode's Part III lines
   const [error, setError] = useState('');
   const [note, setNote] = useState('');
   const [printing, setPrinting] = useState(false);
   const [docPage, setDocPage] = useState(1);
 
   useEffect(() => {
-    api.get('/reports/bir/2307/form', { params: { quarter, payee: payeeKey } })
+    api.get('/reports/bir/2307/form', { params: manual ? { quarter, manual: 1 } : { quarter, payee: payeeKey } })
       .then(({ data }) => {
         setSrc(data);
+        if (manual) {
+          setF({ from: data.from, to: data.to, payee: { ...data.payee, foreign: '' }, payor: { ...data.payor }, extra: { ...BLANK_EXTRA } });
+          document.title = `BIR 2307 ${data.quarter} - New`;
+          return;
+        }
         const wanted = onlyDocs ? onlyDocs.split(',').filter((k) => data.docs.some((d) => docKey(d) === k)) : [];
         const keys = wanted.length ? wanted : data.docs.map(docKey);
         // One document: the period is that document's month. Otherwise the quarter. Either can be changed.
@@ -84,16 +100,27 @@ export default function Bir2307Print() {
           ...(one ? monthBounds(one.date_created) : { from: data.from, to: data.to }),
           payee: { ...data.payee, foreign: '' },
           payor: { ...data.payor },
+          extra: { ...BLANK_EXTRA },
         });
         document.title = `BIR 2307 ${data.quarter} - ${data.payee.name}`;
       })
       .catch((e) => setError(e.response?.data?.error || 'Could not load this 2307.'));
-  }, [quarter, payeeKey, onlyDocs]);
+  }, [quarter, payeeKey, onlyDocs, manual]);
 
   // Part III from the ticked documents: one line per ATC (no ATC even suggested: per rate), each
-  // document's tax base under its month of the quarter.
+  // document's tax base under its month of the quarter. Manual: the typed lines, the tax worked out
+  // at the ATC's rate unless one is typed.
   const lines = useMemo(() => {
     if (!src) return [];
+    if (manual) {
+      return mlines.map((m, i) => {
+        const months = m.months.map((v) => r2(v));
+        const total = r2(months.reduce((s, v) => s + v, 0));
+        const rate = src.atc_options.find((a) => a.atc === m.atc)?.rate;
+        const tax = m.tax !== '' ? r2(m.tax) : (rate != null ? r2(total * Number(rate) / 100) : 0);
+        return { key: `m${i}`, atc: m.atc, nature: m.nature, rate: rate ?? null, suggested: false, months, total, tax };
+      }).filter((l) => l.atc || l.nature || l.total || l.tax);
+    }
     const map = new Map();
     for (const d of src.docs) {
       if (!sel.includes(docKey(d))) continue;
@@ -109,7 +136,7 @@ export default function Bir2307Print() {
     return [...map.values()]
       .map((l) => ({ ...l, ...(over[l.key] || {}), months: l.months.map(r2), total: r2(l.months.reduce((s, v) => s + v, 0)), tax: r2(l.tax) }))
       .sort((a, b) => (a.atc ? 0 : 1) - (b.atc ? 0 : 1) || String(a.atc).localeCompare(String(b.atc)));
-  }, [src, sel, over]);
+  }, [src, sel, over, manual, mlines]);
   const totals = useMemo(() => ({
     months: [0, 1, 2].map((i) => r2(lines.reduce((s, l) => s + l.months[i], 0))),
     total: r2(lines.reduce((s, l) => s + l.total, 0)),
@@ -142,15 +169,31 @@ export default function Bir2307Print() {
   const p = f.payor;
   const signLine = [p.signatory, p.signatory_title, p.signatory_tin ? `TIN ${p.signatory_tin}` : ''].filter(Boolean).join(' / ');
   const badPeriod = !f.from || !f.to || f.from > f.to;
+  const x = f.extra;
+  const setExtra = (k, v) => setF((o) => ({ ...o, extra: { ...o.extra, [k]: v } }));
+  const setM = (i, patch) => setMlines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+  const setMonth = (i, mi, v) => setMlines((ls) => ls.map((l, j) => (j === i ? { ...l, months: l.months.map((m, k) => (k === mi ? v : m)) } : l)));
+  const pickManualAtc = (i, atc) => {
+    const o = src.atc_options.find((a) => a.atc === atc);
+    setM(i, { atc, ...(o ? { nature: o.nature } : {}) });
+  };
+  const canPrint = manual ? (lines.length > 0 && !!f.payee.name.trim()) : chosen.length > 0;
 
   async function print() {
     setPrinting(true); setNote('');
     try {
-      await api.post('/reports/bir/2307/issued', {
-        quarter: src.quarter, payee_key: src.payee_key, supplier_id: src.supplier_id, payee_name: f.payee.name,
-        income_total: totals.total, tax_total: totals.tax, period_from: f.from, period_to: f.to,
-        doc_refs: chosen.length === src.docs.length ? null : chosen.map((d) => d.doc_no).join(', '),
-      });
+      await api.post('/reports/bir/2307/issued', manual
+        ? {
+          // Logged under its own key, apart from the quarter's computed payees, so a hand-made 2307
+          // never shows a listed supplier as issued.
+          quarter: src.quarter, payee_key: `manual:${(f.payee.tin || f.payee.name).trim()}`, supplier_id: null, payee_name: f.payee.name,
+          income_total: totals.total, tax_total: totals.tax, period_from: f.from, period_to: f.to, doc_refs: 'Manual 2307',
+        }
+        : {
+          quarter: src.quarter, payee_key: src.payee_key, supplier_id: src.supplier_id, payee_name: f.payee.name,
+          income_total: totals.total, tax_total: totals.tax, period_from: f.from, period_to: f.to,
+          doc_refs: chosen.length === src.docs.length ? null : chosen.map((d) => d.doc_no).join(', '),
+        });
     } catch (e) {
       setNote(e.response?.data?.error || 'Printed, but it could not be recorded as issued.');
     }
@@ -223,6 +266,7 @@ export default function Bir2307Print() {
         .f-signlbl { text-align: center; background: #d9d9d9; border-top: 0.3mm solid #000; border-bottom: 0.3mm solid #000; padding: 0.5mm; font-size: 7pt; }
         .f-agent { display: grid; grid-template-columns: 36mm 1fr auto auto auto auto; gap: 2mm; align-items: center; padding: 0.5mm 2mm; font-size: 6.5pt; border-bottom: 0.3mm solid #000; }
         .f-agent .blank { border: 0.3mm solid #000; height: 4.2mm; }
+        .f-agentno { display: flex; align-items: center; padding: 0 1mm; font-size: 8pt; font-weight: 700; }
         .f-conf { text-align: center; font-weight: 700; background: #bfbfbf; border-bottom: 0.3mm solid #000; padding: 0.5mm; }
         .f-note { font-size: 6.5pt; margin-top: 1mm; }
         @media print {
@@ -238,15 +282,29 @@ export default function Bir2307Print() {
       <div className="f-panel f-no-print">
         <div className="f-bar">
           <div>
-            <strong>BIR 2307 · {src.label}</strong> — {f.payee.name}
-            <div style={{ fontSize: 12, color: '#64748b' }}>Check the details below. Changes here apply to this printout only.</div>
+            <strong>BIR 2307 · {manual ? 'New (manual)' : src.label}</strong>{f.payee.name ? ` — ${f.payee.name}` : ''}
+            <div style={{ fontSize: 12, color: '#64748b' }}>
+              {manual ? 'Type every detail below; the form underneath fills in as you go.' : 'Check the details below. Changes here apply to this printout only.'}
+            </div>
           </div>
           {mayPrint
-            ? <button className="btn btn-primary" disabled={printing || !chosen.length || badPeriod} onClick={print}>{printing ? 'Recording…' : 'Print 2307'}</button>
+            ? <button className="btn btn-primary" disabled={printing || !canPrint || badPeriod} onClick={print}>{printing ? 'Recording…' : 'Print 2307'}</button>
             : <span className="f-warn">You can view this 2307 but not print it.</span>}
         </div>
         {note && <div className="f-warn" style={{ marginTop: 6 }}>{note}</div>}
 
+        {manual ? (
+          <>
+            <h3 style={{ marginTop: 12 }}>Period</h3>
+            <div className="grid">
+              <div><label>Period from</label><input type="date" value={f.from} onChange={(e) => setF((o) => ({ ...o, from: e.target.value }))} /></div>
+              <div><label>Period to</label><input type="date" value={f.to} onChange={(e) => setF((o) => ({ ...o, to: e.target.value }))} /></div>
+            </div>
+            {badPeriod && <div className="f-warn" style={{ fontSize: 12, marginTop: 4 }}>The period needs a From date on or before its To date.</div>}
+            {!f.payee.name.trim() && <div className="f-warn" style={{ fontSize: 12, marginTop: 4 }}>Type the payee&rsquo;s name (Part I).</div>}
+            {!lines.length && <div className="f-warn" style={{ fontSize: 12, marginTop: 4 }}>Add at least one Part III line.</div>}
+          </>
+        ) : (<>
         <h3 style={{ marginTop: 12 }}>Period &amp; documents</h3>
         <div className="grid">
           <div><label>Period from</label><input type="date" value={f.from} onChange={(e) => setF((x) => ({ ...x, from: e.target.value }))} /></div>
@@ -276,12 +334,13 @@ export default function Bir2307Print() {
         </table>
         <Pagination page={docPage} totalPages={Math.ceil(src.docs.length / DOCS_PER_PAGE)} onChange={setDocPage} />
         {!chosen.length && <div className="f-warn" style={{ fontSize: 12, marginTop: 4 }}>Tick at least one document.</div>}
+        </>)}
 
         {(unconfirmed > 0 || noAtc > 0 || !f.payee.tin || !p.tin || !p.name) && (
           <ul className="f-warn" style={{ margin: '8px 0 0', paddingLeft: 18, fontSize: 12 }}>
             {unconfirmed > 0 && <li>{unconfirmed} line{unconfirmed === 1 ? '' : 's'} with an ATC suggested from the withholding rate. Confirm or change it below.</li>}
             {noAtc > 0 && <li>{noAtc} line{noAtc === 1 ? '' : 's'} with no ATC. Choose one below.</li>}
-            {!f.payee.tin && <li>The supplier has no TIN in Master Lists. Type it below, and add it to the supplier.</li>}
+            {!f.payee.tin && <li>{manual ? 'Type the payee’s TIN below.' : 'The supplier has no TIN in Master Lists. Type it below, and add it to the supplier.'}</li>}
             {(!p.tin || !p.name) && <li>The Payor details are not set. Fill them in on BIR 2307 to Suppliers (Edit), or type them below.</li>}
           </ul>
         )}
@@ -306,6 +365,48 @@ export default function Bir2307Print() {
           <div><label>Signatory TIN</label><input value={p.signatory_tin} onChange={(e) => set('payor', 'signatory_tin', e.target.value)} /></div>
         </div>
 
+        {manual ? (<>
+        <h3 style={{ marginTop: 12 }}>Part III – Income payments and tax withheld</h3>
+        <table>
+          <thead>
+            <tr>
+              <th style={{ width: 150 }}>ATC</th><th>Nature of income payment</th>
+              <th style={{ textAlign: 'right', width: 95 }}>1st month</th><th style={{ textAlign: 'right', width: 95 }}>2nd month</th>
+              <th style={{ textAlign: 'right', width: 95 }}>3rd month</th><th style={{ textAlign: 'right', width: 95 }}>Tax withheld</th><th style={{ width: 28 }} />
+            </tr>
+          </thead>
+          <tbody>
+            {mlines.map((m, i) => {
+              const l = lines.find((y) => y.key === `m${i}`);
+              return (
+                <tr key={i}>
+                  <td>
+                    <select value={m.atc} onChange={(e) => pickManualAtc(i, e.target.value)}>
+                      <option value="">— choose —</option>
+                      {src.atc_options.map((o) => <option key={o.id} value={o.atc}>{o.atc} · {o.rate}%</option>)}
+                    </select>
+                  </td>
+                  <td><input value={m.nature} onChange={(e) => setM(i, { nature: e.target.value })} /></td>
+                  {[0, 1, 2].map((mi) => (
+                    <td key={mi}><input type="number" step="0.01" style={{ textAlign: 'right' }} value={m.months[mi]} onChange={(e) => setMonth(i, mi, e.target.value)} /></td>
+                  ))}
+                  <td>
+                    <input type="number" step="0.01" style={{ textAlign: 'right' }} value={m.tax}
+                      placeholder={l && l.tax ? l.tax.toFixed(2) : ''} title="Left blank, it is the total at the ATC's rate"
+                      onChange={(e) => setM(i, { tax: e.target.value })} />
+                  </td>
+                  <td>
+                    <button type="button" className="btn btn-sm" aria-label="Remove line" disabled={mlines.length === 1}
+                      onClick={() => setMlines((ls) => ls.filter((_, j) => j !== i))}>×</button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <button type="button" className="btn btn-sm" style={{ marginTop: 6 }} onClick={() => setMlines((ls) => [...ls, newManualLine()])}>+ Add line</button>
+        <div style={{ fontSize: 11, color: '#64748b', marginTop: 4 }}>Tax withheld left blank is worked out at the ATC&rsquo;s rate (shown greyed).</div>
+        </>) : (<>
         <h3 style={{ marginTop: 12 }}>Part III – ATC per line</h3>
         <table>
           <thead><tr><th style={{ width: 170 }}>ATC</th><th>Nature of income payment</th><th style={{ textAlign: 'right' }}>Income</th><th style={{ textAlign: 'right' }}>Tax</th></tr></thead>
@@ -329,6 +430,18 @@ export default function Bir2307Print() {
             ))}
           </tbody>
         </table>
+        </>)}
+
+        <h3 style={{ marginTop: 12 }}>Signatures – tax agent &amp; conforme</h3>
+        <div className="grid">
+          <div><label>Payor&rsquo;s tax agent accreditation / attorney&rsquo;s roll no.</label><input value={x.payor_agent} onChange={(e) => setExtra('payor_agent', e.target.value)} /></div>
+          <div><label>Date of issue</label><input type="date" value={x.payor_issue} onChange={(e) => setExtra('payor_issue', e.target.value)} /></div>
+          <div><label>Date of expiry</label><input type="date" value={x.payor_expiry} onChange={(e) => setExtra('payor_expiry', e.target.value)} /></div>
+          <div style={{ gridColumn: '1 / -1' }}><label>Conforme – payee&rsquo;s signatory (name / title / TIN)</label><input value={x.conforme} onChange={(e) => setExtra('conforme', e.target.value)} /></div>
+          <div><label>Payee&rsquo;s tax agent accreditation / attorney&rsquo;s roll no.</label><input value={x.payee_agent} onChange={(e) => setExtra('payee_agent', e.target.value)} /></div>
+          <div><label>Date of issue</label><input type="date" value={x.payee_issue} onChange={(e) => setExtra('payee_issue', e.target.value)} /></div>
+          <div><label>Date of expiry</label><input type="date" value={x.payee_expiry} onChange={(e) => setExtra('payee_expiry', e.target.value)} /></div>
+        </div>
 
       </div>
 
@@ -418,17 +531,17 @@ export default function Bir2307Print() {
           <div className="f-sign">{signLine}</div>
           <div className="f-signlbl">Signature over Printed Name of Payor/Payor&rsquo;s Authorized Representative/Tax Agent<br /><span className="f-hint">(Indicate Title/Designation and TIN)</span></div>
           <div className="f-agent">
-            <span>Tax Agent Accreditation No./ Attorney&rsquo;s Roll No. (if applicable)</span><div className="blank" />
-            <span>Date of Issue<br /><span className="f-hint">(MM/DD/YYYY)</span></span><DateBoxes iso="" />
-            <span>Date of Expiry<br /><span className="f-hint">(MM/DD/YYYY)</span></span><DateBoxes iso="" />
+            <span>Tax Agent Accreditation No./ Attorney&rsquo;s Roll No. (if applicable)</span><div className="blank f-agentno">{x.payor_agent}</div>
+            <span>Date of Issue<br /><span className="f-hint">(MM/DD/YYYY)</span></span><DateBoxes iso={x.payor_issue} />
+            <span>Date of Expiry<br /><span className="f-hint">(MM/DD/YYYY)</span></span><DateBoxes iso={x.payor_expiry} />
           </div>
           <div className="f-conf">CONFORME:</div>
-          <div className="f-sign" />
+          <div className="f-sign">{x.conforme}</div>
           <div className="f-signlbl">Signature over Printed Name of Payee/Payee&rsquo;s Authorized Representative/Tax Agent<br /><span className="f-hint">(Indicate Title/Designation and TIN)</span></div>
           <div className="f-agent" style={{ borderBottom: 0 }}>
-            <span>Tax Agent Accreditation No./ Attorney&rsquo;s Roll No. (if applicable)</span><div className="blank" />
-            <span>Date of Issue<br /><span className="f-hint">(MM/DD/YYYY)</span></span><DateBoxes iso="" />
-            <span>Date of Expiry<br /><span className="f-hint">(MM/DD/YYYY)</span></span><DateBoxes iso="" />
+            <span>Tax Agent Accreditation No./ Attorney&rsquo;s Roll No. (if applicable)</span><div className="blank f-agentno">{x.payee_agent}</div>
+            <span>Date of Issue<br /><span className="f-hint">(MM/DD/YYYY)</span></span><DateBoxes iso={x.payee_issue} />
+            <span>Date of Expiry<br /><span className="f-hint">(MM/DD/YYYY)</span></span><DateBoxes iso={x.payee_expiry} />
           </div>
         </div>
         <div className="f-note">*NOTE: The BIR Data Privacy is in the BIR website (www.bir.gov.ph)</div>

@@ -93,6 +93,9 @@ export default function BirSupplier2307() {
     <div>
       <div className="page-header">
         <h1>BIR 2307 to Suppliers</h1>
+        <button type="button" className="btn btn-primary" onClick={() => window.open(`/reports/bir-2307/form?manual=1&quarter=${quarter}`, '_blank')}>
+          Create 2307
+        </button>
       </div>
       {error && <div className="error-banner">{error}</div>}
 

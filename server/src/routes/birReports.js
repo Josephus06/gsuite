@@ -786,6 +786,16 @@ router.get('/2307', requireAuth, requirePermission(ISSUE_ROUTE, 'can_view'), asy
 router.get('/2307/form', requireAuth, requirePermission(ISSUE_ROUTE, 'can_view'), async (req, res, next) => {
   try {
     const q = quarterOf(req);
+    // A 2307 made by hand (Create 2307, asked 2026-11-18): no documents behind it -- the quarter's
+    // period, the Payor and the ATC list, and everything else typed on the form.
+    if (req.query.manual === '1') {
+      return res.json({
+        ...q, manual: true, payee_key: null, supplier_id: null,
+        payee: { tin: '', name: '', address: '', zip: '' },
+        payor: await loadPayor(), lines: [], atc_options: await atcOptions(),
+        totals: { months: [0, 0, 0], total: 0, tax: 0 }, docs: [],
+      });
+    }
     const key = String(req.query.payee || '');
     const docs = (await withheldDocs(q.from, q.to)).filter((d) => d.payee_key === key)
       .sort((a, b) => a.date_created.localeCompare(b.date_created));
