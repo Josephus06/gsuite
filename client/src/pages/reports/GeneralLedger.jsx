@@ -13,7 +13,7 @@ function formatDate(v) { return v ? displayDate(String(v).slice(0, 10)) : ''; }
 const SOURCE_LABELS = {
   sales_invoice: 'Invoice', assembly_build: 'Assembly Build', item_delivery: 'Item Delivery',
   item_fulfillment: 'Item Fulfillment', item_receipt: 'Item Receipt', vendor_bill: 'Vendor Bill',
-  inventory_adjustment: 'Inventory Adjustment', bill_credit: 'Bill Credit',
+  inventory_adjustment: 'Inventory Adjustment', bill_credit: 'Bill Credit', receiving_report: 'Receiving Report',
 };
 
 // Mirrors the real system's Accounting > Reports > General Ledger: a flat per-account

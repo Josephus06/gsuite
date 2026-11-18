@@ -895,8 +895,7 @@ async function billDebitAccounts(vendorBillId) {
     `SELECT vb.*, coa.account_code, coa.account_name FROM vendor_bills vb
        LEFT JOIN chart_of_accounts coa ON coa.id = vb.account_id WHERE vb.id = ?`, [vendorBillId]);
   if (!vb) return [];
-  const [lines] = await pool.query(
-    'SELECT account_id, net_of_tax FROM vendor_bill_lines WHERE vendor_bill_id = ? AND account_id IS NOT NULL', [vendorBillId]);
+  const lines = (await vendorBillDebitLines([vendorBillId])).get(Number(vendorBillId)) || [];
   const rows = await computeVendorBillGl(vb, lines);
   return rows.filter((r) => Number(r.debit) > 0)
     .map((r) => ({ account_code: r.account_code, account_name: r.account_name, weight: Number(r.debit) }));
@@ -991,6 +990,78 @@ async function chequeCreditsByCheque(ids) {
     if (e.code === 'ER_NO_SUCH_TABLE') return new Map();
     throw e;
   }
+}
+
+// INVENTORY RECEIVED NOT BILLED (20300) -- which purchase lines go through it (2026-11-18).
+//
+// A line for an Inventory or JIT item that has an asset account is "received, not billed": its
+// Receiving Report debits the item's asset account and credits 20300, and the PO bill debits 20300
+// back. Every other PO-bill line debits its item's expense account directly and its RR posts
+// nothing. Read off the source's own ledger for September 2026: its RRs credit 20300 for exactly
+// the Inventory + JIT lines (203 of 206), its PO bills debit 20300 for exactly those (176 of 177),
+// and a Service line debits the item's expense (VB-24451: Dr 30402 / Cr 20100). Before this T1S
+// posted no RR at all and sent every PO-bill line without an account to 20300, so from the
+// 2026-10-01 cut-over 20300 took only debits: -6,059,982.86 at 2026-11-30.
+const IRNB_ITEM_SQL = "(UPPER(COALESCE(i.item_type, '')) IN ('INVENTORY', 'JIT') AND i.asset_account_id IS NOT NULL)";
+
+// Each bill's lines that debit an account of their own, as computeVendorBillGl takes them
+// ({ vendor_bill_id, account_id, department_id, net_of_tax }): a line's own account where it has
+// one (expense bills; Non-Inventory lines on a PO bill), and on a PO bill crediting the payable
+// (header 20100 / 20200), a line whose item does NOT go through 20300 takes the item's expense
+// account. What is left of a PO bill debits 20300. A line whose item has no expense account stays
+// on 20300. -> Map(vendor_bill_id -> lines).
+async function vendorBillDebitLines(billIds, db = pool) {
+  const ids = [...new Set((billIds || []).map(Number).filter(Boolean))];
+  const byBill = new Map();
+  for (let k = 0; k < ids.length; k += 1000) {
+    const [rows] = await db.query(
+      `SELECT l.vendor_bill_id, l.department_id, l.net_of_tax,
+              CASE WHEN l.account_id IS NOT NULL THEN l.account_id
+                   WHEN vb.purchase_order_id IS NOT NULL AND h.account_code IN ('20100', '20200')
+                        AND l.item_id IS NOT NULL AND NOT ${IRNB_ITEM_SQL}
+                   THEN i.expense_account_id END AS account_id
+         FROM vendor_bill_lines l
+         JOIN vendor_bills vb ON vb.id = l.vendor_bill_id
+         LEFT JOIN chart_of_accounts h ON h.id = vb.account_id
+         LEFT JOIN inventories i ON i.id = l.item_id
+        WHERE l.vendor_bill_id IN (?)
+       HAVING account_id IS NOT NULL`, [ids.slice(k, k + 1000)]);
+    for (const r of rows) {
+      if (!byBill.has(r.vendor_bill_id)) byBill.set(r.vendor_bill_id, []);
+      byBill.get(r.vendor_bill_id).push(r);
+    }
+  }
+  return byBill;
+}
+
+// A Receiving Report's entry: Dr each Inventory/JIT line's item asset account, Cr 20300, at the
+// line's net of tax, per location. lines: [{ asset_account_id, location_id, net_of_tax }] already
+// limited to IRNB_ITEM_SQL lines. -> [{ location_id, rows }].
+async function computeReceivingReportGl(lines) {
+  const irnb = await coaByCode('20300');
+  if (!irnb || !lines.length) return [];
+  const acctById = new Map((await coaByIds([...new Set(lines.map((l) => l.asset_account_id))])).map((a) => [Number(a.id), a]));
+  const byLoc = new Map();
+  for (const l of lines) {
+    const amt = Number(l.net_of_tax) || 0;
+    const acct = acctById.get(Number(l.asset_account_id));
+    if (!amt || !acct) continue;
+    const loc = l.location_id || null;
+    if (!byLoc.has(loc)) byLoc.set(loc, new Map());
+    const m = byLoc.get(loc);
+    m.set(acct.account_code, { acct, amt: (m.get(acct.account_code)?.amt || 0) + amt });
+  }
+  const out = [];
+  for (const [location_id, m] of byLoc) {
+    const rows = []; let total = 0;
+    for (const { acct, amt } of m.values()) {
+      const a = Number(amt.toFixed(2)); total += a;
+      rows.push({ account_code: acct.account_code, account_name: acct.account_name, debit: a, credit: 0 });
+    }
+    rows.push({ account_code: irnb.account_code, account_name: irnb.account_name, debit: 0, credit: Number(total.toFixed(2)) });
+    out.push({ location_id, rows: sideNegatives(rows) });
+  }
+  return out;
 }
 
 async function linesByParent(sql, parentCol, ids, chunkSize = 1000) {
@@ -1287,6 +1358,37 @@ async function computePostedGlLines({ toDate, fromDate }) {
         entry_date: r.date_created, source_type: 'item_receipt', source_no: r.receipt_no, source_id: r.id, memo: r.memo || null,
         location_id: r.location_id || null, department_id: null,
       });
+    }
+  }
+
+  // Receiving Reports (RR-, purchase_order_receipts; 2026-11-18): Dr item asset / Cr 20300 Inventory
+  // Received Not Billed for the Inventory/JIT lines (see IRNB_ITEM_SQL). Only from the books start:
+  // up to it the source's own figures already hold its RRs. On-hold receipts post nothing.
+  {
+    const books = await booksStart();
+    const { sql, params } = dateFilter('r.date_created');
+    const startSql = books ? ' AND r.date_created >= ?' : '';
+    const [lines] = await pool.query(
+      `SELECT r.id, r.receipt_no, r.date_created, r.memo, rl.location_id, rl.net_of_tax, i.asset_account_id
+         FROM purchase_order_receipts r
+         JOIN purchase_order_receipt_lines rl ON rl.purchase_order_receipt_id = r.id
+         JOIN inventories i ON i.id = rl.item_id
+        WHERE COALESCE(r.is_on_hold, 0) = 0 AND rl.net_of_tax <> 0 AND ${IRNB_ITEM_SQL}
+          AND ${sql}${startSql}
+        ORDER BY r.id`, books ? [...params, books.start] : params
+    );
+    const byRr = new Map();
+    for (const l of lines) {
+      if (!byRr.has(l.id)) byRr.set(l.id, { head: l, lines: [] });
+      byRr.get(l.id).lines.push(l);
+    }
+    for (const { head, lines: rl } of byRr.values()) {
+      for (const { location_id, rows } of await computeReceivingReportGl(rl)) {
+        push(rows, {
+          entry_date: head.date_created, source_type: 'receiving_report', source_no: head.receipt_no, source_id: head.id,
+          memo: head.memo || null, location_id, department_id: null,
+        });
+      }
     }
   }
 
@@ -1609,10 +1711,10 @@ async function computePostedGlLines({ toDate, fromDate }) {
     );
     // A standalone (no-PO) bill debits its lines' own accounts, so its lines have to come along; so
     // does a PO bill's now, for the Non-Inventory lines that carry an account (computeVendorBillGl).
+    // And a PO bill's lines whose item does not go through 20300 debit the item's expense account
+    // (vendorBillDebitLines, 2026-11-18).
     const billIds = headers.map((h) => h.id);
-    const standaloneLines = billIds.length
-      ? await linesByParent('SELECT vendor_bill_id, account_id, department_id, net_of_tax FROM vendor_bill_lines WHERE vendor_bill_id IN (?) AND account_id IS NOT NULL', 'vendor_bill_id', billIds)
-      : new Map();
+    const standaloneLines = await vendorBillDebitLines(billIds);
     for (const vb of headers) {
       const rows = glFor('vendor_bill', vb.id, await computeVendorBillGl(vb, standaloneLines.get(vb.id) || []));
       push(rows, {
@@ -1842,7 +1944,7 @@ async function preStartVendorBillLines(books, to, from) {
     params,
   );
   if (!headers.length) return [];
-  const billLines = await linesByParent('SELECT vendor_bill_id, account_id, department_id, net_of_tax FROM vendor_bill_lines WHERE vendor_bill_id IN (?) AND account_id IS NOT NULL', 'vendor_bill_id', headers.map((h) => h.id));
+  const billLines = await vendorBillDebitLines(headers.map((h) => h.id));
   const out = [];
   for (const vb of headers) {
     for (const r of await computeVendorBillGl(vb, billLines.get(vb.id) || [])) {
@@ -1892,6 +1994,8 @@ module.exports = {
   computeCommissionPayableGl,
   computeCommissionVoucherGl,
   computeVendorBillGl,
+  vendorBillDebitLines,
+  computeReceivingReportGl,
   computeInventoryAdjustmentGl,
   computeBillCreditGl,
   computeAssetDepreciationRunGl,

@@ -1,6 +1,6 @@
 // A Vendor Bill's reversal (2026-10-14): what the bill posts, and whether it is in the ledger at all.
 // Shared by routes/vendorBills.js (Cancel) and db/backfill-vendor-bill-reversals.js.
-const { computeVendorBillGl } = require('./glImpact');
+const { computeVendorBillGl, vendorBillDebitLines } = require('./glImpact');
 const { booksStart } = require('./openingBalances');
 
 // The entry a bill posts, exactly as the GL has it (lib/glImpact.js getPostedGlLines): the old
@@ -22,7 +22,9 @@ async function postedBillGlRows(db, billId) {
   if (imported.length) {
     glRows = imported.map((r) => ({ account_code: r.account_code, account_name: r.account_name, debit: Number(r.debit) || 0, credit: Number(r.credit) || 0 }));
   } else {
-    const [lines] = vb.purchase_order_id ? [[]] : await db.query('SELECT * FROM vendor_bill_lines WHERE vendor_bill_id = ?', [billId]);
+    // The lines that debit their own account, exactly as the ledger takes them (a PO bill's
+    // Non-Inventory / Service lines included -- lib/glImpact.js vendorBillDebitLines).
+    const lines = (await vendorBillDebitLines([billId], db)).get(Number(billId)) || [];
     glRows = await computeVendorBillGl(vb, lines);
   }
   return { vb, glRows: glRows.filter((r) => Number(r.debit) || Number(r.credit)) };

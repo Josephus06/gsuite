@@ -275,7 +275,7 @@ router.get('/general-ledger', requireAuth, requirePermission('/reports/general-l
 const GL_SOURCE_LABELS = {
   sales_invoice: 'Invoice', assembly_build: 'Assembly Build', item_delivery: 'Item Delivery',
   item_fulfillment: 'Item Fulfillment', item_receipt: 'Item Receipt', vendor_bill: 'Vendor Bill',
-  inventory_adjustment: 'Inventory Adjustment', bill_credit: 'Bill Credit',
+  inventory_adjustment: 'Inventory Adjustment', bill_credit: 'Bill Credit', receiving_report: 'Receiving Report',
 };
 router.get('/general-ledger/export', requireAuth, requirePermission('/reports/general-ledger', 'can_view'), async (req, res, next) => {
   try {

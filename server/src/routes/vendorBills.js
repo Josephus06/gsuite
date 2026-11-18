@@ -4,7 +4,7 @@ const { PO_TERM_SELECT, PO_TERM_JOINS, termDays } = require('../lib/poTerm');
 const { insertNumbered } = require('../lib/docNumber');
 const { requireAuth, requirePermission } = require('../middleware/auth');
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
-const { computeVendorBillGl } = require('../lib/glImpact');
+const { computeVendorBillGl, vendorBillDebitLines } = require('../lib/glImpact');
 const { postReversalJournal, mirror, listReversalJournals } = require('../lib/reversalJournal');
 const { postedBillGlRows, billInLedger } = require('../lib/vendorBillReversal');
 const { liquidationPostError, liquidationBilling } = require('../lib/liquidationPosting');
@@ -360,7 +360,9 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
         GROUP BY account_code ORDER BY MIN(id)`, [vb.id]);
     const glImpact = liveGl.length
       ? liveGl.map((r) => ({ ...r, debit: Number(r.debit), credit: Number(r.credit) })).filter((r) => r.debit || r.credit)
-      : await computeGlImpact(vb, lines);
+      // The lines that debit an account of their own, as the ledger takes them -- a PO bill's
+      // Service line its item's expense account, not 20300 (lib/glImpact.js vendorBillDebitLines).
+      : await computeGlImpact(vb, (await vendorBillDebitLines([vb.id])).get(Number(vb.id)) || []);
     res.json({ ...vb, gl_impact: glImpact, lines });
   } catch (err) {
     next(err);
