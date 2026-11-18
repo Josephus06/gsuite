@@ -179,15 +179,19 @@ export default function Bir2307Print() {
           font-family: Arial, Helvetica, sans-serif; font-size: 7.5pt; line-height: 1.2; box-shadow: 0 1px 6px rgba(0,0,0,.25); }
         .f-top { display: grid; grid-template-columns: 30mm 1fr 30mm; align-items: center; }
         .f-use { font-size: 6.5pt; border: 0.3mm solid #000; padding: 0.5mm 1mm; width: max-content; background: #d9d9d9; }
-        .f-rep { text-align: center; font-weight: 700; font-size: 7.5pt; line-height: 1.25; }
+        .f-rep { display: flex; align-items: center; justify-content: center; gap: 3mm; text-align: center; font-weight: 700; font-size: 7.5pt; line-height: 1.25; }
+        .f-seal { width: 14.4mm; height: 11.5mm; }
         .f-frame { border: 0.4mm solid #000; }
-        .f-head { display: grid; grid-template-columns: 38mm 1fr 44mm; border-bottom: 0.4mm solid #000; }
+        .f-head { display: grid; grid-template-columns: 38mm 1fr 56mm; border-bottom: 0.4mm solid #000; }
         .f-head > div { padding: 1mm 2mm; }
         .f-formno { border-right: 0.4mm solid #000; text-align: center; }
         .f-formno .n { font-size: 22pt; font-weight: 800; line-height: 1; }
         .f-title { text-align: center; font-size: 15pt; font-weight: 700; display: flex; align-items: center; justify-content: center; line-height: 1.15; }
         .f-code { border-left: 0.4mm solid #000; display: flex; flex-direction: column; justify-content: flex-end; align-items: flex-end; font-size: 6.5pt; }
-        .f-bars { width: 100%; height: 6mm; background: repeating-linear-gradient(90deg, #000 0 0.4mm, #fff 0.4mm 0.9mm, #000 0.9mm 1.6mm, #fff 1.6mm 2.1mm); margin-bottom: 1mm; }
+        /* The official form's own PDF417 barcode and BIR seal, taken from BIR's fillable 2307 (Jan 2018
+           ENCS v3) at the size they print there -- 53.0 x 10.5 mm and 14.4 x 11.5 mm (2026-11-18). The
+           barcode is the same on every blank 2307; pixelated keeps its modules sharp for a scanner. */
+        .f-bars { width: 53mm; height: 10.5mm; image-rendering: pixelated; image-rendering: crisp-edges; margin-bottom: 0.6mm; }
         .f-row { display: flex; align-items: center; gap: 2mm; padding: 0.6mm 2mm; border-bottom: 0.3mm solid #000; }
         .f-row.tall { flex-direction: column; align-items: stretch; gap: 0.4mm; }
         .f-num { font-weight: 700; margin-right: 1mm; }
@@ -331,14 +335,14 @@ export default function Bir2307Print() {
       <div className="f-sheet">
         <div className="f-top">
           <div className="f-use">For BIR&nbsp;&nbsp;BCS/<br />Use Only&nbsp;Item:</div>
-          <div className="f-rep">Republic of the Philippines<br />Department of Finance<br />Bureau of Internal Revenue</div>
+          <div className="f-rep"><img className="f-seal" src="/bir/bir-seal.png" alt="" /><div>Republic of the Philippines<br />Department of Finance<br />Bureau of Internal Revenue</div></div>
           <div />
         </div>
         <div className="f-frame" style={{ marginTop: 1.5 + 'mm' }}>
           <div className="f-head">
             <div className="f-formno">BIR Form No.<div className="n">2307</div>January 2018 (ENCS)</div>
             <div className="f-title">Certificate of Creditable Tax<br />Withheld at Source</div>
-            <div className="f-code"><div className="f-bars" />2307 01/18ENCS</div>
+            <div className="f-code"><img className="f-bars" src="/bir/bir-2307-barcode.png" alt="" />2307 01/18ENCS</div>
           </div>
           <div className="f-row" style={{ fontSize: '6.5pt', padding: '0.4mm 2mm' }}>Fill in all applicable spaces. Mark all appropriate boxes with an &ldquo;X&rdquo;.</div>
           <div className="f-row">
