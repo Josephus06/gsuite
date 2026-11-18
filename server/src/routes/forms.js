@@ -357,8 +357,11 @@ function readItems(body, { required }) {
   for (const r of clean) {
     if (!r.particulars) return { error: 'Every line needs particulars.' };
     if (r.amount == null || !Number.isFinite(r.amount)) return { error: `Line "${r.particulars}" needs an amount.` };
-    if (r.amount < 0) return { error: `Line "${r.particulars}" cannot be a negative amount.` };
   }
+  // A line may be negative -- a reversal or a refund taken off the form (asked 2026-11-18:
+  // "MEMBERSHIP FEE- Reversal  -1000"). The form as a whole still cannot come to less than zero.
+  const total = clean.reduce((s, r) => s + r.amount, 0);
+  if (clean.length && total < 0) return { error: 'The lines total less than zero. A negative line can only reduce the total, not go below it.' };
   return { items: clean };
 }
 
