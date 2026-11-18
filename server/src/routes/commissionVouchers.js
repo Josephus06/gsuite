@@ -5,6 +5,7 @@ const { requireAuth, requirePermission, isSystemAdmin, userCan } = require('../m
 const { assertPeriodOpen } = require('../lib/accountingPeriod');
 const { computeCommissionVoucherGl } = require('../lib/glImpact');
 const { buildCommissionReport } = require('../lib/commissionReport');
+const { payableStatus, liveExpectedByPayable } = require('../lib/commissionPayableStatus');
 
 const router = express.Router();
 // Commission Voucher (COMVCH-####): the release/payment side of Commission Payable. Pays (full or
@@ -97,18 +98,10 @@ async function unpaidByPayable(employeeId, payables) {
   return out;
 }
 
-// Recompute a payable's status from how much has actually been released against it.
-//
-// PAID means the whole Expected Commission has been released -- nothing is still owed. This used
-// to compare against commissionable_amount instead, which is Confirmed minus what has already
-// gone out and therefore shrinks as releases are made; a partial release could satisfy it and
-// mark the payable settled while the rep was still owed the rest.
-function payableStatus(expected, released) {
-  const e = round2(expected); const r = round2(released);
-  if (r <= 0) return 'unpaid';
-  if (r + 0.005 >= e) return 'paid';
-  return 'partial';
-}
+// A payable's status is recomputed from how much has been released against it: PAID means the
+// month's whole Expected Commission has gone out. "Expected" is the report's LIVE figure, not the
+// one stored on the payable when it was raised -- see lib/commissionPayableStatus.js. Computed
+// before each transaction opens (it runs the Commission report) and passed in as liveExpected.
 
 // Employees who still have a releasable (unpaid/partial) commission payable.
 router.get('/employees', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
@@ -344,6 +337,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     const expSum = round2(preparedExpenses.reduce((s, e) => s + e.amount, 0));
     const totalPayments = round2(totalReleased + expSum);
     await assertPeriodOpen(dateCreated, 'other_gl', conn);
+    const liveExpected = await liveExpectedByPayable(prepared.map((p) => p.cp.id));
 
     await conn.beginTransaction();
     const [result] = await conn.query(
@@ -362,7 +356,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
       // Settle the payable: advance amount_paid, flip status.
       const newPaid = round2(Number(cp.amount_paid) + released);
       await conn.query('UPDATE commission_payables SET amount_paid = ?, status = ?, updated_at = NOW() WHERE id = ?',
-        [newPaid, payableStatus(cp.expected_commission, newPaid), cp.id]);
+        [newPaid, payableStatus(liveExpected.get(Number(cp.id)) ?? cp.expected_commission, newPaid), cp.id]);
     }
     for (const e of preparedExpenses) {
       await conn.query(
@@ -453,6 +447,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     const totalPayments = round2(totalReleased + expSum);
     await assertPeriodOpen(existing.date_created, 'other_gl', conn);
     await assertPeriodOpen(dateCreated || existing.date_created, 'other_gl', conn);
+    const liveExpected = await liveExpectedByPayable([...oldLines.map((l) => l.pid), ...prepared.map((p) => p.cp.id)]);
 
     await conn.beginTransaction();
     // Reverse the old settlement, then drop the old lines/expenses.
@@ -461,7 +456,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       if (!cp) continue;
       const back = round2(Number(cp.amount_paid) - Number(l.released_amount));
       await conn.query('UPDATE commission_payables SET amount_paid = ?, status = ?, updated_at = NOW() WHERE id = ?',
-        [back, payableStatus(cp.expected_commission, back), l.pid]);
+        [back, payableStatus(liveExpected.get(Number(l.pid)) ?? cp.expected_commission, back), l.pid]);
     }
     await conn.query('DELETE FROM commission_voucher_lines WHERE commission_voucher_id = ?', [cvId]);
     await conn.query('DELETE FROM commission_voucher_expenses WHERE commission_voucher_id = ?', [cvId]);
@@ -480,7 +475,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
       const [[cur]] = await conn.query('SELECT expected_commission, commissionable_amount, amount_paid FROM commission_payables WHERE id = ?', [cp.id]);
       const newPaid = round2(Number(cur.amount_paid) + released);
       await conn.query('UPDATE commission_payables SET amount_paid = ?, status = ?, updated_at = NOW() WHERE id = ?',
-        [newPaid, payableStatus(cur.expected_commission, newPaid), cp.id]);
+        [newPaid, payableStatus(liveExpected.get(Number(cp.id)) ?? cur.expected_commission, newPaid), cp.id]);
     }
     for (const e of preparedExpenses) {
       await conn.query(
@@ -509,15 +504,17 @@ router.put('/:id/void', requireAuth, requirePermission(ROUTE, 'can_void'), async
     if (!cv) return res.status(404).json({ error: 'Not found' });
     if (cv.status === 'void') return res.status(409).json({ error: 'This Commission Voucher is already void.' });
 
-    await conn.beginTransaction();
     // Reverse the settlement: pull each released amount back off its payable.
     const [lines] = await conn.query('SELECT * FROM commission_voucher_lines WHERE commission_voucher_id = ?', [req.params.id]);
+    const liveExpected = await liveExpectedByPayable(lines.map((l) => l.commission_payable_id));
+
+    await conn.beginTransaction();
     for (const l of lines) {
       const [[cp]] = await conn.query('SELECT expected_commission, commissionable_amount, amount_paid FROM commission_payables WHERE id = ?', [l.commission_payable_id]);
       if (!cp) continue;
       const newPaid = round2(Number(cp.amount_paid) - Number(l.released_amount));
       await conn.query('UPDATE commission_payables SET amount_paid = ?, status = ?, updated_at = NOW() WHERE id = ?',
-        [newPaid, payableStatus(cp.expected_commission, newPaid), l.commission_payable_id]);
+        [newPaid, payableStatus(liveExpected.get(Number(l.commission_payable_id)) ?? cp.expected_commission, newPaid), l.commission_payable_id]);
     }
     await conn.query("UPDATE commission_vouchers SET status = 'void', voided_by_user_id = ?, voided_at = NOW() WHERE id = ?", [req.user.id, req.params.id]);
     await logAudit(conn, { cvId: req.params.id, userId: req.user.id, eventType: 'Cancelled', fieldName: 'status', oldValue: cv.status, newValue: 'void' });

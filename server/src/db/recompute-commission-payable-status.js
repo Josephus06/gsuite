@@ -12,34 +12,33 @@
 //   released >= expected          -> paid      (half a centavo of rounding tolerance)
 //   anything between              -> partial
 //
-// Released is the net figure from the Commission Vouchers raised against the payable, after the
-// deduction/refund waterfall -- the same releaseForPayable() the detail screen shows, so a
-// corrected status always matches what the document displays.
+// Both figures come from the Commission report for the payable's month (2026-11-18), so the status
+// agrees with what the report shows:
+//   - Expected is the LIVE Expected Commission, not the figure stored on the payable when it was
+//     raised. The stored figure goes stale as more job orders reach the passing rate, and releases
+//     past it flipped payables to PAID while the report still showed commission unpaid -- CP-36:
+//     9,680.00 stored, 14,960.00 live, 10,611.78 released. The stored expected_commission itself is
+//     not touched (it is the payable's GL accrual).
+//   - Released is the report's Released Commission: what the vouchers paid against the month before
+//     their expense deductions, less paybacks (the 2026-10-03 rule). An earlier version of this
+//     script used the net figure after deductions, which disagreed with the report and the vouchers.
 //
 // Void payables are left alone: void is not a payment state.
 //
-// amount_paid is realigned to the released figure at the same time. It is meant to track what has
-// gone out, but /pay used to slam it to commissionable_amount regardless, which is what let the
-// two notions drift apart in the first place.
+// amount_paid is realigned to the gross total of the non-void voucher lines against the payable --
+// what the voucher create / edit / void paths maintain it as.
 //
 // IDEMPOTENT: recomputes from source data, so re-running changes nothing further.
 //
 //   node src/db/recompute-commission-payable-status.js --dry-run
 //   node src/db/recompute-commission-payable-status.js
 const pool = require('../db');
-const { releaseForPayable } = require('../lib/commissionRelease');
+const { payableStatus: statusFor, liveFiguresByPayable } = require('../lib/commissionPayableStatus');
 require('dotenv').config();
 
 const DRY_RUN = process.argv.includes('--dry-run');
 const round2 = (n) => Number((Number(n) || 0).toFixed(2));
 const money = (n) => round2(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-function statusFor(expected, released) {
-  const e = round2(expected); const r = round2(released);
-  if (r <= 0) return 'unpaid';
-  if (r + 0.005 >= e) return 'paid';
-  return 'partial';
-}
 
 async function main() {
   console.log(`Local DB: ${process.env.DB_NAME} on ${process.env.DB_HOST}`);
@@ -53,15 +52,32 @@ async function main() {
   );
   console.log(`commission payables (excluding void): ${payables.length}`);
 
+  const reportCache = new Map();
   const changes = [];
+  const [grossRows] = await pool.query(
+    `SELECT cvl.commission_payable_id AS pid, SUM(cvl.released_amount) AS gross
+       FROM commission_voucher_lines cvl
+       JOIN commission_vouchers cv ON cv.id = cvl.commission_voucher_id
+      WHERE cv.status <> 'void'
+      GROUP BY cvl.commission_payable_id`
+  );
+  const grossByPayable = new Map(grossRows.map((r) => [Number(r.pid), round2(r.gross)]));
+
+  let skipped = 0;
   for (const cp of payables) {
-    const { released } = await releaseForPayable(cp.id);
+    const live = (await liveFiguresByPayable([cp.id], { reportCache })).get(Number(cp.id));
+    if (!live) { skipped += 1; continue; } // no report for this employee -- leave it as it is
+    cp.stored_expected = cp.expected_commission;
+    cp.expected_commission = live.expected;
+    const released = live.released;
+    const gross = grossByPayable.get(Number(cp.id)) || 0;
     const want = statusFor(cp.expected_commission, released);
-    const paidDrift = round2(cp.amount_paid) !== round2(released);
+    const paidDrift = round2(cp.amount_paid) !== gross;
     if (want !== cp.status || paidDrift) {
-      changes.push({ ...cp, released: round2(released), want });
+      changes.push({ ...cp, released, gross, want });
     }
   }
+  if (skipped) console.log(`skipped (no Commission report for the employee): ${skipped}`);
 
   const moves = {};
   for (const c of changes) {
@@ -75,19 +91,28 @@ async function main() {
   if (overstated.length) {
     console.log(`\n${overstated.length} payable(s) were marked PAID while still owing the rep:`);
     for (const c of overstated.slice(0, 15)) {
-      console.log(`  ${String(c.commission_payable_no).padEnd(10)} expected ${money(c.expected_commission).padStart(12)}`
+      console.log(`  ${String(c.commission_payable_no).padEnd(10)} expected ${money(c.expected_commission).padStart(12)} (stored ${money(c.stored_expected)})`
         + ` | released ${money(c.released).padStart(12)} | still owed ${money(Number(c.expected_commission) - c.released).padStart(12)} -> ${c.want}`);
     }
     if (overstated.length > 15) console.log(`  ... and ${overstated.length - 15} more`);
     const owed = overstated.reduce((s, c) => s + (Number(c.expected_commission) - c.released), 0);
     console.log(`  total still owed across them: ${money(owed)}`);
   }
+  const otherMoves = changes.filter((c) => c.want !== c.status && !(c.status === 'paid' && c.want !== 'paid'));
+  if (otherMoves.length) {
+    console.log(`\nother status changes (${otherMoves.length}):`);
+    for (const c of otherMoves) {
+      console.log(`  ${String(c.commission_payable_no).padEnd(10)} ${c.status} -> ${c.want} | expected ${money(c.expected_commission)} (stored ${money(c.stored_expected)}) | released ${money(c.released)}`);
+    }
+  }
+  const driftOnly = changes.filter((c) => c.want === c.status);
+  if (driftOnly.length) console.log(`\namount_paid realigned only (status unchanged): ${driftOnly.length}`);
 
   if (!DRY_RUN) {
     for (const c of changes) {
       await pool.query(
         'UPDATE commission_payables SET status = ?, amount_paid = ?, updated_at = NOW() WHERE id = ?',
-        [c.want, c.released, c.id]
+        [c.want, c.gross, c.id]
       );
     }
   }

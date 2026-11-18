@@ -8,6 +8,7 @@ const { computeCommissionPayableGl, commissionPostingDate } = require('../lib/gl
 const postingDateOfMonth = (month) => (/^\d{4}-\d{2}$/.test(String(month || '')) ? commissionPostingDate({ period_to: `${month}-01` }) : null);
 const { buildCommissionReport } = require('../lib/commissionReport');
 const { releaseForPayable } = require('../lib/commissionRelease');
+const { liveFiguresByPayable } = require('../lib/commissionPayableStatus');
 const { headerDepartmentError } = require('../lib/requireDepartment');
 
 const router = express.Router();
@@ -260,7 +261,11 @@ router.get('/:id', requireAuth, requirePermission(ROUTE, 'can_view'), async (req
     // commission is fully released, so it can offer or withhold the buttons rather than letting
     // the server refuse after the click.
     const mayOverride = await userCan(req.user.id, ROUTE, 'can_approve');
-    const fullyReleased = round2(released) + 0.005 >= round2(cp.expected_commission);
+    // Judged on the report's figures, as the status is (lib/commissionPayableStatus.js).
+    const live = (await liveFiguresByPayable([cp.id])).get(Number(cp.id));
+    const fullyReleased = live
+      ? round2(live.released) + 0.005 >= round2(live.expected)
+      : round2(released) + 0.005 >= round2(cp.expected_commission);
     res.json({
       ...cp, lines, gl_impact: glImpact, vouchers,
       can_override_edit_lock: mayOverride, fully_released: fullyReleased,
@@ -452,8 +457,12 @@ router.put('/:id/pay', requireAuth, requirePermission(ROUTE, 'can_edit'), async 
     const makePaid = req.body?.paid !== false;
 
     if (makePaid) {
-      const { released } = await releaseForPayable(req.params.id);
-      const expected = round2(cp.expected_commission);
+      // The month's Expected and Released as the Commission report shows them (live Expected, not
+      // the snapshot stored at creation; Released gross of voucher deductions) -- the same test the
+      // vouchers use to flip status. Falls back to stored/net when the report can't be built.
+      const live = (await liveFiguresByPayable([req.params.id])).get(Number(req.params.id));
+      const released = live ? live.released : (await releaseForPayable(req.params.id)).released;
+      const expected = round2(live ? live.expected : cp.expected_commission);
       // Half a centavo of tolerance, so a released amount that ties out to the last displayed
       // digit is not rejected over floating-point dust.
       if (round2(released) + 0.005 < expected) {
