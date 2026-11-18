@@ -153,7 +153,7 @@ export default function MaterialCosting() {
                 <tr>
                   <th>Item Code</th>
                   <th>Display Name</th>
-                  <th>Unit</th>
+                  <th>Unit Title</th>
                   <th>Last Purchase Price</th>
                   <th>Last Purchase Price (Base Cost)</th>
                   <th>Average Cost</th>
@@ -179,7 +179,7 @@ export default function MaterialCosting() {
                     <tr key={row.id}>
                       <td>{row.item_code}</td>
                       <td>{row.display_name}</td>
-                      <td>{row.base_unit_title}</td>
+                      <td title={row.base_unit_title ? `Base unit: ${row.base_unit_title}` : undefined}>{row.unit_title || row.base_unit_title}</td>
                       <td>{money(row.last_purchase_price)}</td>
                       <td>{money(baseCost(row.last_purchase_price, row.conversion_factor))}</td>
                       <td>{money(row.average_cost)}</td>
