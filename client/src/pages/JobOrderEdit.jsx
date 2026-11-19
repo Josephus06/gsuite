@@ -10,6 +10,7 @@ import { useAuth } from '../context/useAuth';
 import { displayAuditTime } from '../utils/dates';
 import { convertAreaToBaseUnit, convertLengthToBaseUnit } from '../utils/costing';
 import ItemUomSelect, { defaultItemUom } from '../components/ItemUomSelect';
+import { showFullValueOnHover } from '../utils/hoverTitle';
 
 // Mirrors the real system's full-page Job Order Edit form (not a modal): a 3-column
 // header form + a Materials tab with an inline-editable process/material table + a
@@ -334,7 +335,7 @@ export default function JobOrderEdit() {
   const forecastLabel = days ? `${days} day${days === 1 ? '' : 's'}` : '';
 
   return (
-    <div>
+    <div onMouseOver={showFullValueOnHover}>
       <div className="page-header">
         <h1>Job Order — {jo.job_order_no}</h1>
         <div style={{ display: 'flex', gap: 8 }}>

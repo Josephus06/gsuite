@@ -18,6 +18,7 @@ import { CustomerLink } from '../components/PartyLink';
 import JoGpComputation from '../components/JoGpComputation';
 import RmaDetailsTab, { isRmaJobOrder } from '../components/RmaDetailsTab';
 import JoChecklist, { isChecklistJobOrder } from '../components/JoChecklist';
+import { showFullValueOnHover } from '../utils/hoverTitle';
 
 // Deliberately minimal Job Order detail -- mirrors the real system's layout (banner +
 // grouped info fields + Processes/RWIP JO/Sub Con/Related Records/System Info tabs +
@@ -401,7 +402,7 @@ export default function JobOrderView() {
   const gpRate = revenue ? (gpAmount / revenue) * 100 : 0;
 
   return (
-    <div>
+    <div onMouseOver={showFullValueOnHover}>
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>

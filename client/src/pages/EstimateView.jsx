@@ -14,6 +14,7 @@ import { CustomerLink } from '../components/PartyLink';
 import ButtonMenu from '../components/ButtonMenu';
 import { isPrintSelected } from '../utils/estimatePrintSelected';
 import { downloadFile } from '../utils/downloadFile';
+import { showFullValueOnHover } from '../utils/hoverTitle';
 
 // Read-only counterpart to EstimateWizard (which stays the create/edit form): mirrors
 // the real system's estimate detail screen -- a summary banner with status-driven
@@ -342,7 +343,7 @@ ${estimate.estimate_no} will be CANCELLED. The new estimate will have you as its
   const approveLabel = estimate.status === 'pending_customer_approval' ? 'Approved by Customer' : 'Approve';
 
   return (
-    <div>
+    <div onMouseOver={showFullValueOnHover}>
       <div className="page-header">
         <div />
         <div style={{ display: 'flex', gap: 8 }}>

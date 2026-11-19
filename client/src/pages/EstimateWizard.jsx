@@ -13,6 +13,7 @@ import Modal from '../components/Modal';
 import { displayAuditTime } from '../utils/dates';
 import { headerDepartmentError } from '../utils/requireDepartment';
 import ItemUomSelect from '../components/ItemUomSelect';
+import { showFullValueOnHover } from '../utils/hoverTitle';
 
 const STEPS = ['Customer and Estimate', 'Job Orders', 'Billing', 'Completed'];
 
@@ -1334,7 +1335,7 @@ export default function EstimateWizard() {
   }
 
   return (
-    <div>
+    <div onMouseOver={showFullValueOnHover}>
       <div className="page-header">
         <h1>ESTIMATE — {isNew && !estimateId ? 'Create' : estimateNo}</h1>
         <Link className="btn" to={'/estimates'}>Back to Lists</Link>
