@@ -194,13 +194,20 @@ function ItemsTable({ doc, withDate }) {
 
 // The Fuel Slip (asked 2026-11-17), laid out like the paper P O Slip the gas station already honours:
 // logo, FUEL SLIP, Control No., Date / Charge to / Plate No / No. of Liters, the bearer notice, then
-// Driver's Signature / Gas Station / Cashier and Noted By. Printed on the Xprinter XP-76IIN's 76 mm
-// roll: 76 mm wide, 70 mm long, like the paper slip (wider than tall). The requester signs as the driver
-// and the approver as Noted By, each with their e-signature when one is on file; the cashier signs by hand.
+// Driver's Signature / Gas Station / Cashier and Noted By. The requester signs as the driver and the
+// approver as Noted By, each with their e-signature when one is on file; the cashier signs by hand.
+//
+// Printed on the Xprinter XP-76IIN -- a DOT-MATRIX (impact) printer: 76 mm roll, 63.5 mm printable,
+// driver "Xprinter XP-76" (2026-11-19). So the slip is laid out at exactly 63.5 mm (never scaled down),
+// with text no smaller than 8pt and one field per line: the first 76 mm design at 5.5-7.5pt, shrunk to
+// fit, came out unreadable from the pins. The printer has no cutter, only a tear bar ~25-30 mm above the
+// print head, so the slip ends with a blank feed and a "tear here" mark: the mark is what makes the
+// printer actually feed that far (a driver may skip trailing blank lines), and it takes the signatures
+// past the tear bar.
 function FuelSlip({ doc }) {
   const d = doc.detail || {};
   const ink = (image) => (
-    <div className="sig-ink" style={{ '--sig-h': '4.5mm' }}>{image ? <img src={image} alt="" /> : null}</div>
+    <div className="sig-ink" style={{ '--sig-h': '6mm' }}>{image ? <img src={image} alt="" /> : null}</div>
   );
   const blank = (label, value) => (
     <div className="fs-pair"><span className="fs-label">{label}</span><span className="fs-line">{value || ''}</span></div>
@@ -210,53 +217,45 @@ function FuelSlip({ doc }) {
       <style>{`
         .fs-page { background: #fff; color: #000; padding: 16px; }
         .fs-toolbar { margin-bottom: 12px; }
-        .fs-sheet { width: 76mm; height: 70mm; margin: 0 auto; padding: 2mm 3mm; box-sizing: border-box; overflow: hidden;
-                    font-family: Arial, Helvetica, sans-serif; font-size: 7.5pt; line-height: 1.2; color: #000; background: #fff;
-                    outline: 1px dashed #bbb; display: flex; flex-direction: column; }
-        .fs-logo { width: 52mm; height: auto; display: block; margin: 0 auto; }
-        .fs-title { text-align: center; font-size: 14pt; letter-spacing: 2px; margin: 0.8mm 0 0.5mm; }
-        .fs-control { display: flex; justify-content: flex-end; align-items: baseline; gap: 1.5mm; margin-bottom: 1.2mm; }
-        .fs-control .fs-line { width: 24mm; flex: none; text-align: center; font-family: 'Times New Roman', serif; font-size: 9pt; }
-        /* The right column is the wider one: Date and Plate No are short, a department name is not. */
-        .fs-grid { display: grid; grid-template-columns: 0.8fr 1.2fr; column-gap: 3mm; row-gap: 1.2mm; }
-        .fs-pair { display: flex; align-items: baseline; gap: 1.2mm; min-width: 0; }
+        .fs-sheet { width: 63.5mm; margin: 0 auto; padding: 1mm 1mm 0; box-sizing: border-box;
+                    font-family: Arial, Helvetica, sans-serif; font-size: 10pt; line-height: 1.35; color: #000; background: #fff;
+                    outline: 1px dashed #bbb; }
+        .fs-logo { width: 50mm; height: auto; display: block; margin: 0 auto; }
+        .fs-title { text-align: center; font-size: 16pt; font-weight: 700; letter-spacing: 2px; margin: 1.5mm 0; }
+        .fs-pair { display: flex; align-items: baseline; gap: 1.5mm; margin-bottom: 1.8mm; }
         .fs-label { white-space: nowrap; flex: none; }
-        /* Wraps rather than cuts off ("Support-Sys..." on REQ-1744, 2026-11-17): a long value takes a second line. */
-        .fs-line { flex: 1; min-width: 0; border-bottom: 1px solid #000; font-weight: 700; padding: 0 0.5mm;
-                   white-space: normal; overflow-wrap: anywhere; min-height: 3mm; }
-        .fs-control .fs-line { white-space: nowrap; }
-        .fs-notice { text-align: justify; margin: 1.8mm 0 0; text-indent: 6mm; font-size: 7pt; }
-        .fs-signs { display: flex; justify-content: space-between; margin-top: auto; }
-        .fs-sign { width: 25mm; text-align: center; font-size: 5.5pt; }
-        .fs-sign-name { font-size: 6.5pt; font-weight: 700; min-height: 2.6mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        /* Wraps rather than cuts off: a long department name takes a second line. */
+        .fs-line { flex: 1; min-width: 0; border-bottom: 1px solid #000; padding: 0 0.5mm; font-size: 11pt;
+                   white-space: normal; overflow-wrap: anywhere; min-height: 4.5mm; }
+        .fs-notice { font-size: 9pt; line-height: 1.3; margin: 2.5mm 0 0; }
+        .fs-signs { display: flex; justify-content: space-between; margin-top: 4mm; }
+        .fs-sign { width: 29mm; text-align: center; font-size: 8pt; }
+        .fs-sign-name { font-size: 9pt; min-height: 3.8mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .fs-sign-rule { border-top: 1px solid #000; margin-top: 0.3mm; padding-top: 0.3mm; }
-        .fs-noted { display: flex; justify-content: center; margin-top: 0.5mm; }
+        .fs-noted { display: flex; justify-content: center; margin-top: 3mm; }
+        /* The feed past the tear bar (see above). */
+        .fs-tear { height: 30mm; display: flex; align-items: flex-end; justify-content: center; font-size: 8pt; }
         @media print {
           .fs-no-print { display: none !important; }
           .fs-page { padding: 0; }
           .fs-sheet { outline: none; margin: 0; }
-          /* Taller than wide ON PURPOSE. A 76 x 70 page is landscape, and Chrome then turns the
-             printer's 76 mm roll sideways -- on the XP-76 driver (76 mm paper, 63.5 mm printable)
-             that left a 63.5 mm tall page, so Noted By spilled onto a second sheet (REQ-1744,
-             2026-11-19). 76 x 80 stays portrait: the 70 mm slip prints on one sheet, scaled to the
-             printable width, with a little blank feed under it. */
-          @page { size: 76mm 80mm; margin: 0; }
+          /* 63.5 mm wide = the XP-76's printable width, so nothing is scaled; long enough for the
+             slip and its feed on one page (portrait -- a landscape page turns the roll sideways). */
+          @page { size: 63.5mm 160mm; margin: 0; }
         }
       `}</style>
       <div className="fs-toolbar fs-no-print">
         <button className="btn btn-sm btn-primary" onClick={() => window.print()}>Print</button>
-        <span className="muted" style={{ marginLeft: 10, fontSize: 12 }}>Xprinter XP-76IIN · 76 mm paper · 76 x 70 mm slip. In the print dialog: Margins None, Scale 100%.</span>
+        <span className="muted" style={{ marginLeft: 10, fontSize: 12 }}>Xprinter XP-76 (dot matrix) · 76 mm roll. In the print dialog: Margins None, Scale Default. Tear off at the - - - mark.</span>
       </div>
       <div className="fs-sheet">
         <img className="fs-logo" src={letterhead} alt="GraphicStar Imaging Corp." />
         <div className="fs-title">FUEL SLIP</div>
-        <div className="fs-control"><span className="fs-label">Control No.:</span><span className="fs-line">{d.form_no || doc.request_no}</span></div>
-        <div className="fs-grid">
-          {blank('Date:', fmtDate(d.fuel_date))}
-          {blank('Charge to:', doc.department)}
-          {blank('Plate No:', d.vehicle_name)}
-          {blank('No. of Liters:', d.liters != null ? `${Number(d.liters)}` : '')}
-        </div>
+        {blank('Control No.:', d.form_no || doc.request_no)}
+        {blank('Date:', fmtDate(d.fuel_date))}
+        {blank('Charge to:', doc.department)}
+        {blank('Plate No:', d.vehicle_name)}
+        {blank('No. of Liters:', d.liters != null ? `${Number(d.liters)}` : '')}
         <div className="fs-notice">
           This slip allows the bearer for refuel in any Leciann Ventures Inc. branches. Do not accept if not signed by any
           of the authorized personnel.
@@ -280,6 +279,7 @@ function FuelSlip({ doc }) {
             <div className="fs-sign-rule">Noted By</div>
           </div>
         </div>
+        <div className="fs-tear">- - - - - - - tear here - - - - - - -</div>
       </div>
     </div>
   );
