@@ -38,17 +38,9 @@ const RULE = '#dddddd';
 const BRAND_BLUE = '#0b109f';
 const BRAND_ORANGE = '#ec7601';
 
-// The company's actual mark, as it appears on graphicstar.ph: a 256px square PNG on a
-// transparent ground, the blue upper sweep over the orange lower one with the wedge through the
-// middle. It replaces a hand-drawn approximation in path data, which had a thinner band and a
-// much smaller wedge than the real thing.
-//
-// A bitmap is fine HERE where it would not be for the full logo: this artwork is two flat colours
-// with no bevel and no drop shadow, so it scales down cleanly, and 256px into a 38pt slot is
-// around 480 DPI -- far past what any printer resolves. The wordmark beside it is still set in
-// type for exactly the reason the full logo file is not used: that one carries a bevel and a
-// shadow, and shrunk to letterhead size it prints muddy.
-const MARK_FILE = path.join(__dirname, '..', 'assets', 'brand', 'graphicstar-mark.png');
+// The letterhead logo -- the same file the printed forms use (client/src/assets/
+// graphicstar-letterhead.png; this is the server's copy). Update both together.
+const LOGO_FILE = path.join(__dirname, '..', 'assets', 'brand', 'graphicstar-letterhead.png');
 
 // The branch payment QR codes printed at the foot of the quotation. Real GCash/Maya merchant
 // codes, so they are shipped as files and drawn as-is -- nothing here re-encodes or redraws them,
@@ -175,37 +167,13 @@ function drawRow(doc, values, {
   doc.y += 1;
 }
 
-// The brand mark, drawn at `size` points square with its top-left at (x, y). Width AND height
-// are given because the artwork is square and must stay square -- letting pdfkit fit one axis
-// would distort it.
-function drawMark(doc, x, y, size) {
-  doc.image(MARK_FILE, x, y, { width: size, height: size });
-}
-
-// The logo, as the customer knows it: the mark, then GRAPHIC in blue and STAR in orange, with the
-// tagline under them. Set in type rather than placed as an image -- the real logo is a bitmap
-// with a bevel and a drop shadow on it, and a 2200px JPEG scaled into a 40pt header prints muddy.
-// This is the same two-tone wordmark at print resolution.
-function wordmark(doc, x, y, company) {
-  const markSize = 38;
-  drawMark(doc, x, y, markSize);
-
-  const textX = x + markSize + 8;
-  doc.font('Helvetica-Bold').fontSize(19).fillColor(BRAND_BLUE)
-    .text(company.wordmark[0], textX, y + 5, { continued: true, lineBreak: false, characterSpacing: -0.2 });
-  doc.fillColor(BRAND_ORANGE).text(company.wordmark[1], { lineBreak: false, characterSpacing: -0.2 });
-
-  const wordWidth = doc.widthOfString(company.wordmark.join(''), { characterSpacing: -0.2 });
-  const tagY = y + 27;
-  // The hairline the tagline sits on in the logo: blue almost the whole way, tipped in orange.
-  doc.save().lineWidth(0.6).strokeColor('#9aa3bd')
-    .moveTo(textX, tagY).lineTo(textX + wordWidth - 12, tagY).stroke()
-    .strokeColor(BRAND_ORANGE)
-    .moveTo(textX + wordWidth - 12, tagY).lineTo(textX + wordWidth, tagY).stroke().restore();
-  doc.font('Helvetica').fontSize(7).fillColor('#7a7a7a')
-    .text(company.tagline, textX, tagY + 3, { width: wordWidth, align: 'right', lineBreak: false });
-
-  return markSize;
+// The logo image the printed forms use (FormPrint's letterhead), 900 x 148 px. Drawn 150pt
+// (~53mm) wide -- the forms print it at 52mm -- with its height from the file's own ratio.
+const LOGO_WIDTH = 150;
+const LOGO_HEIGHT = Math.round((LOGO_WIDTH * 148) / 900);
+function drawLogo(doc, x, y) {
+  doc.image(LOGO_FILE, x, y, { width: LOGO_WIDTH, height: LOGO_HEIGHT });
+  return LOGO_HEIGHT;
 }
 
 function letterhead(doc, company) {
@@ -213,7 +181,7 @@ function letterhead(doc, company) {
   const left = doc.page.margins.left;
   const top = doc.y;
 
-  const markSize = wordmark(doc, left, top, company);
+  const markSize = drawLogo(doc, left, top);
 
   doc.font('Helvetica-Bold').fontSize(9).fillColor(BRAND_BLUE)
     .text(company.name, left, top, { width: right - left, align: 'right' });
@@ -459,9 +427,6 @@ function pageNumbers(doc) {
 }
 
 const COMPANY = {
-  // Split where the logo splits colour: GRAPHIC in blue, STAR in orange.
-  wordmark: ['GRAPHIC', 'STAR'],
-  tagline: 'Creations Made Easy',
   name: 'GraphicStar Building',
   legal: 'CEBU GRAPHICSTAR IMAGING CORP.',
   address: [
