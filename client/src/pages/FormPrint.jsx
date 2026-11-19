@@ -235,7 +235,12 @@ function FuelSlip({ doc }) {
           .fs-no-print { display: none !important; }
           .fs-page { padding: 0; }
           .fs-sheet { outline: none; margin: 0; }
-          @page { size: 76mm 70mm; margin: 0; }
+          /* Taller than wide ON PURPOSE. A 76 x 70 page is landscape, and Chrome then turns the
+             printer's 76 mm roll sideways -- on the XP-76 driver (76 mm paper, 63.5 mm printable)
+             that left a 63.5 mm tall page, so Noted By spilled onto a second sheet (REQ-1744,
+             2026-11-19). 76 x 80 stays portrait: the 70 mm slip prints on one sheet, scaled to the
+             printable width, with a little blank feed under it. */
+          @page { size: 76mm 80mm; margin: 0; }
         }
       `}</style>
       <div className="fs-toolbar fs-no-print">
