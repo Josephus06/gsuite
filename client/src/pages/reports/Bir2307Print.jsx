@@ -18,12 +18,13 @@ import { useAuth } from '../../context/useAuth';
 const money = (v) => (Number(v) ? Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '');
 const mdy = (iso) => (iso ? `${iso.slice(5, 7)}${iso.slice(8, 10)}${iso.slice(0, 4)}` : '');
 
-// "407-996-782-00001" -> ['407', '996', '782', '00001']: nine digits and a five-digit branch code.
+// "407-996-782-00001" -> ['407', '996', '782', '00001']: nine digits and up to a five-digit branch
+// code. The branch is printed exactly as typed -- "004-754-387-000" fills three of the five boxes
+// and leaves the last two blank; none typed leaves all five blank. Never padded with zeros.
 function tinParts(tin) {
   const d = String(tin || '').replace(/\D/g, '');
   if (!d) return ['', '', '', ''];
-  const branch = d.slice(9, 14);
-  return [d.slice(0, 3), d.slice(3, 6), d.slice(6, 9), d.length > 9 ? branch.padStart(5, '0') : '00000'];
+  return [d.slice(0, 3), d.slice(3, 6), d.slice(6, 9), d.slice(9, 14)];
 }
 
 function Boxes({ value, n }) {
