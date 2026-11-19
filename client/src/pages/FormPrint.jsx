@@ -215,7 +215,8 @@ function FuelSlip({ doc }) {
       <style>{`
         .fs-page { background: #fff; color: #000; padding: 16px; }
         .fs-toolbar { margin-bottom: 12px; }
-        .fs-sheet { width: 72mm; height: 70mm; margin: 0 auto; padding: 1.5mm 2mm; box-sizing: border-box; overflow: hidden;
+        /* Grows with its content (a long department name wraps): a fixed 70 mm cut Noted By off (REQ-1744). */
+        .fs-sheet { width: 72mm; min-height: 70mm; margin: 0 auto; padding: 1.5mm 2mm 2mm; box-sizing: border-box;
                     font-family: Arial, Helvetica, sans-serif; font-size: 8.5pt; line-height: 1.25; color: #000; background: #fff;
                     outline: 1px dashed #bbb; display: flex; flex-direction: column; }
         .fs-logo { width: 54mm; height: auto; display: block; margin: 0 auto; }
@@ -223,26 +224,27 @@ function FuelSlip({ doc }) {
         .fs-control { display: flex; justify-content: flex-end; align-items: baseline; gap: 1.5mm; margin-bottom: 1.4mm; }
         .fs-control .fs-line { width: 27mm; flex: none; text-align: center; font-family: 'Times New Roman', serif; font-size: 10.5pt; white-space: nowrap; }
         /* The right column is the wider one: Date and Plate No are short, a department name is not. */
-        .fs-grid { display: grid; grid-template-columns: 0.85fr 1.15fr; column-gap: 2.5mm; row-gap: 1.4mm; }
+        .fs-grid { display: grid; grid-template-columns: 0.8fr 1.2fr; column-gap: 2mm; row-gap: 1.4mm; }
         .fs-pair { display: flex; align-items: baseline; gap: 1.2mm; min-width: 0; }
         .fs-label { white-space: nowrap; flex: none; }
         /* Wraps rather than cuts off ("Support-Sys..." on REQ-1744, 2026-11-17): a long value takes a second line. */
         .fs-line { flex: 1; min-width: 0; border-bottom: 1px solid #000; font-weight: 700; padding: 0 0.5mm;
-                   white-space: normal; overflow-wrap: anywhere; min-height: 3.5mm; }
+                   white-space: normal; overflow-wrap: break-word; min-height: 3.5mm; }
         .fs-notice { text-align: justify; margin: 2mm 0 0; text-indent: 7mm; font-size: 8pt; line-height: 1.3; }
-        .fs-signs { display: flex; justify-content: space-between; margin-top: auto; }
+        /* Room above for the e-signature, which is drawn rising above its line. */
+        .fs-signs { display: flex; justify-content: space-between; margin-top: auto; padding-top: 5mm; }
         .fs-sign { width: 28mm; text-align: center; font-size: 6.5pt; }
         .fs-sign-name { font-size: 7.5pt; font-weight: 700; min-height: 3mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .fs-sign-rule { border-top: 1px solid #000; margin-top: 0.3mm; padding-top: 0.3mm; }
-        .fs-noted { display: flex; justify-content: center; margin-top: 0.8mm; }
+        .fs-noted { display: flex; justify-content: center; margin-top: 3mm; }
         @media print {
           .fs-no-print { display: none !important; }
           .fs-page { padding: 0; }
           .fs-sheet { outline: none; margin: 0; }
           /* 72 mm wide = the 80 mm printer's printable width, so nothing is scaled. Taller than wide ON
              PURPOSE: a landscape page makes Chrome turn the roll sideways and split the slip across two
-             sheets (REQ-1744, 2026-11-19); the extra 10 mm is feed under the 70 mm slip. */
-          @page { size: 72mm 80mm; margin: 0; }
+             sheets (REQ-1744, 2026-11-19). 100 mm leaves room for the slip to grow; the rest is feed. */
+          @page { size: 72mm 100mm; margin: 0; }
         }
       `}</style>
       <div className="fs-toolbar fs-no-print">
