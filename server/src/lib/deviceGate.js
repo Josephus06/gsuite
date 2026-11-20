@@ -256,7 +256,7 @@ const REGISTER_HTML = `<!doctype html>
     .then(function (s) {
       if (s.ip) $('ip').textContent = 'Network address: ' + s.ip;
       if (s.state === 'approved') show(true, s.device_name);
-      else if (s.state === 'revoked') $('e').textContent = 'This device\'s access was removed. Register it again to restore it.';
+      else if (s.state === 'revoked') $('e').textContent = 'This device’s access was removed. Register it again to restore it.';
     })
     .catch(function () {});
   $('f').addEventListener('submit', function (ev) {
