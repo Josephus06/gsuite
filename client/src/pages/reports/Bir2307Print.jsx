@@ -81,8 +81,10 @@ export default function Bir2307Print() {
   const [note, setNote] = useState('');
   const [printing, setPrinting] = useState(false);
   const [docPage, setDocPage] = useState(1);
-  // Which months of the quarter go on the certificate (asked 2026-11-20): an unticked month's documents
-  // are left off, so its column prints blank and the Total / Tax Withheld cover only the ticked months.
+  // Which month column(s) of Part III the amounts print under (asked 2026-11-20). Every ticked document
+  // still counts; the ticks only choose its column: one month ticked puts every amount there (a
+  // September bill under "2nd Month" when only 2nd is ticked); with several ticked, a document stays in
+  // its own month when that month is ticked, else moves to the nearest ticked one (a tie: the later).
   const [mon, setMon] = useState([true, true, true]);
 
   useEffect(() => {
@@ -132,14 +134,15 @@ export default function Bir2307Print() {
     const map = new Map();
     for (const d of src.docs) {
       if (!sel.includes(docKey(d))) continue;
-      const dm = src.months.indexOf(d.date_created.slice(0, 7));
-      if (dm >= 0 && !mon[dm]) continue;
       const k = d.atc || `?${d.eff_rate}`;
       if (!map.has(k)) map.set(k, { key: k, atc: d.atc, nature: d.nature || '', rate: d.rate != null ? d.rate : d.eff_rate, suggested: false, months: [0, 0, 0], tax: 0 });
       const l = map.get(k);
       if (!l.nature && d.nature) l.nature = d.nature;
       if (d.atc_suggested) l.suggested = true;
-      const mi = src.months.indexOf(d.date_created.slice(0, 7));
+      const own = src.months.indexOf(d.date_created.slice(0, 7));
+      const ticked = [0, 1, 2].filter((k2) => mon[k2]);
+      const mi = own >= 0 && mon[own] ? own
+        : ticked.reduce((best, k2) => (best < 0 || Math.abs(k2 - own) <= Math.abs(best - own) ? k2 : best), -1);
       if (mi >= 0) l.months[mi] += d.tax_base;
       l.tax += d.wtax_amount;
     }
@@ -171,7 +174,6 @@ export default function Bir2307Print() {
   };
   const toggle = (k) => setSel((s) => (s.includes(k) ? s.filter((x) => x !== k) : [...s, k]));
   const monthOf = (d) => src.months.indexOf(d.date_created.slice(0, 7));
-  const inMonths = (d) => { const mi = monthOf(d); return mi < 0 || mon[mi]; };
   const onlyThis = (d) => {
     setSel([docKey(d)]); setF((x) => ({ ...x, ...monthBounds(d.date_created) }));
     const mi = monthOf(d); if (mi >= 0) setMon([0, 1, 2].map((k) => k === mi));
@@ -187,7 +189,7 @@ export default function Bir2307Print() {
       setF((x) => ({ ...x, from: monthBounds(`${src.months[first]}-01`).from, to: monthBounds(`${src.months[last]}-01`).to }));
     }
   };
-  const chosen = src.docs.filter((d) => sel.includes(docKey(d)) && inMonths(d));
+  const chosen = src.docs.filter((d) => sel.includes(docKey(d)));
   const unconfirmed = lines.filter((l) => l.suggested).length;
   const noAtc = lines.filter((l) => !l.atc).length;
   const rows = Math.max(10, lines.length);
@@ -347,7 +349,7 @@ export default function Bir2307Print() {
           </div>
         </div>
         <div className="f-months">
-          <span className="f-months-t">Months of the quarter on this 2307:</span>
+          <span className="f-months-t">Show the amounts under:</span>
           {['1st', '2nd', '3rd'].map((lbl, i) => {
             const ym = src.months[i];
             const name = ym ? new Date(`${ym}-01T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' }) : '';
@@ -364,8 +366,7 @@ export default function Bir2307Print() {
           <thead><tr><th style={{ width: 28 }} /><th>Document</th><th>Date</th><th>ATC</th><th style={{ textAlign: 'right' }}>Tax base</th><th style={{ textAlign: 'right' }}>Withheld</th><th /></tr></thead>
           <tbody>
             {src.docs.slice((docPage - 1) * DOCS_PER_PAGE, docPage * DOCS_PER_PAGE).map((d) => (
-              <tr key={docKey(d)} style={{ opacity: sel.includes(docKey(d)) && inMonths(d) ? 1 : 0.5 }}
-                title={inMonths(d) ? undefined : 'Its month is unticked above, so it is not on this 2307'}>
+              <tr key={docKey(d)} style={{ opacity: sel.includes(docKey(d)) ? 1 : 0.5 }}>
                 <td><input type="checkbox" style={{ width: 'auto' }} checked={sel.includes(docKey(d))} onChange={() => toggle(docKey(d))} aria-label={`Include ${d.doc_no}`} /></td>
                 <td>{d.doc_type} {d.doc_no}{d.reference_no ? ` · ${d.reference_no}` : ''}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>{d.date_created}</td>
