@@ -155,6 +155,14 @@ const { msUntilBusinessTime } = require('./lib/crmCadence');
 const { startSampling } = require('./lib/systemHealth');
 
 const app = express();
+// Who the visitor really is, for the device gate's office-network check (lib/deviceGate.js). The cloud
+// sits behind nginx on the same box, which appends the visitor's address to X-Forwarded-For -- trusting
+// only the loopback proxy takes that address and ignores anything a visitor forges further left.
+// TRUST_PROXY overrides it, e.g. TRUST_PROXY=1 behind one hosted proxy (Railway).
+{
+  const tp = process.env.TRUST_PROXY;
+  app.set('trust proxy', tp === undefined || tp === '' ? 'loopback' : (/^\d+$/.test(tp) ? Number(tp) : tp));
+}
 // Compress every response the browser can take compressed. Until 2026-10-03 nothing but the HTML
 // was: the 2.8 MB app bundle went out raw (nginx's gzip_types is commented out), which over the
 // office's ~220 KB/s line was 12+ seconds every time the app loaded. Excel/PDF downloads are
@@ -282,6 +290,16 @@ app.use((req, res, next) => {
     : next();
 });
 app.use(express.json({ limit: '2mb' })); // room for the base64 profile-picture payload
+
+// Device gate (2026-11-20): off the office network, only registered devices reach anything below --
+// pages, the app's code and every API. Off until switched on from System > Registered Devices.
+{
+  const deviceGate = require('./lib/deviceGate');
+  const { publicRouter, adminRouter } = require('./routes/deviceGate');
+  app.use(deviceGate.middleware());
+  app.use('/api/device-gate', publicRouter);
+  app.use('/api/registered-devices', adminRouter);
+}
 
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 

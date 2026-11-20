@@ -19,6 +19,13 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (res) => res,
   (err) => {
+    // The device gate (server lib/deviceGate.js) switched on, or this device's access was removed,
+    // while the app was open: reload, and T1S becomes unreachable on this device as it should.
+    // (Not from the APK's bundled files: there the page is not the site, so a reload cannot help.)
+    if (!bundledApp && err.response?.status === 404 && err.response?.data?.code === 'DEVICE_NOT_REGISTERED') {
+      window.location.reload();
+      return new Promise(() => {});
+    }
     if (err.response?.status === 401) {
       localStorage.removeItem('token');
       localStorage.removeItem('user');

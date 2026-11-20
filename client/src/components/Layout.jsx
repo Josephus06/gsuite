@@ -114,6 +114,7 @@ const NAV_STRUCTURE = [
     children: [
       { route: '/employees', label: 'Employees' },
       { route: '/users', label: 'Users & Permissions' },
+      { route: '/registered-devices', label: 'Registered Devices' },
       { route: '/customers', label: 'Customers' },
       { route: '/suppliers', label: 'Suppliers' },
       { route: '/job-types', label: 'Job Types' },

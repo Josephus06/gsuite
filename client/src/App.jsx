@@ -52,6 +52,7 @@ import NonInventoryEdit from './pages/NonInventoryEdit';
 import ServiceItemEdit from './pages/ServiceItemEdit';
 import WebProducts from './pages/WebProducts';
 import SystemHealth from './pages/SystemHealth';
+import RegisteredDevices from './pages/RegisteredDevices';
 import Estimates from './pages/Estimates';
 import EstimateView from './pages/EstimateView';
 import EstimateWizard from './pages/EstimateWizard';
@@ -362,6 +363,7 @@ function App() {
         <Route path="/non-inventories/:id/edit" element={<NonInventoryEdit />} />
         <Route path="/web-products" element={<WebProducts />} />
         <Route path="/system-health" element={<SystemHealth />} />
+        <Route path="/registered-devices" element={<RegisteredDevices />} />
         <Route path="/estimates" element={<Estimates />} />
         <Route path="/estimates/new" element={<EstimateWizard />} />
         <Route path="/estimates/:id/edit" element={<EstimateWizard />} />
