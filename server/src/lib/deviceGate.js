@@ -251,6 +251,27 @@ const REGISTER_HTML = `<!doctype html>
     $('done-view').classList.toggle('hidden', !done);
     if (done && name) $('done-text').textContent = '"' + name + '" can open T1S on any network, including mobile data.';
   }
+  // The Android app (a WebView) keeps a new cookie in memory and writes it to storage only about every
+  // 30 s: closed sooner, it forgets the registration (REQ 2026-11-20, the GM's phone). An app built with
+  // T1SAndroid.flushCookies() saves it at once; an older one is kept open 35 s by this countdown.
+  var inApp = /; wv\\)/.test(ua) || !!window.T1SAndroid;
+  function finish(name) {
+    if (window.T1SAndroid && window.T1SAndroid.flushCookies) {
+      try { window.T1SAndroid.flushCookies(); } catch (e) { /* older app: fall through to the wait */ }
+      show(true, name); return;
+    }
+    if (!inApp) { show(true, name); return; }
+    $('b').disabled = true;
+    var left = 35;
+    $('e').style.color = '#b45309';
+    (function tick() {
+      $('e').textContent = 'Saving the registration on this phone... keep the app OPEN (' + left + ' s). Do not close or swipe it away.';
+      if (left-- > 0) { setTimeout(tick, 1000); return; }
+      $('e').textContent = ''; $('e').style.color = '';
+      $('b').disabled = false;
+      show(true, name);
+    })();
+  }
   fetch('/api/device-gate/status', { credentials: 'same-origin', cache: 'no-store' })
     .then(function (r) { return r.json(); })
     .then(function (s) {
@@ -271,7 +292,7 @@ const REGISTER_HTML = `<!doctype html>
       .then(function (x) {
         $('b').disabled = false; $('pw').value = '';
         if (!x.ok) { $('e').textContent = x.j.error || 'Could not register this device.'; return; }
-        show(true, name);
+        finish(name);
       })
       .catch(function () { $('b').disabled = false; $('e').textContent = 'Could not reach T1S.'; });
   });

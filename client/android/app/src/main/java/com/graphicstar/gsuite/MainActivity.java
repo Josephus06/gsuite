@@ -97,6 +97,15 @@ public class MainActivity extends BridgeActivity {
         });
     }
 
+    // The WebView writes new cookies to storage only every ~30 s, so an app closed right after the
+    // device gate's registration (server lib/deviceGate.js) forgot its device key and T1S stayed
+    // unreachable off the office network (2026-11-20). Save them whenever the app leaves the screen.
+    @Override
+    public void onPause() {
+        super.onPause();
+        CookieManager.getInstance().flush();
+    }
+
     private void toast(String msg) {
         runOnUiThread(() -> Toast.makeText(this, msg, Toast.LENGTH_LONG).show());
     }
@@ -138,6 +147,12 @@ public class MainActivity extends BridgeActivity {
                 PrintDocumentAdapter adapter = bridge.getWebView().createPrintDocumentAdapter(title);
                 pm.print(title, adapter, new PrintAttributes.Builder().build());
             });
+        }
+
+        // Called by /register-device right after a registration: save the device key now.
+        @JavascriptInterface
+        public void flushCookies() {
+            CookieManager.getInstance().flush();
         }
 
         @JavascriptInterface
