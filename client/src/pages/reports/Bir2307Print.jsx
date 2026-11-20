@@ -81,6 +81,9 @@ export default function Bir2307Print() {
   const [note, setNote] = useState('');
   const [printing, setPrinting] = useState(false);
   const [docPage, setDocPage] = useState(1);
+  // Which months of the quarter go on the certificate (asked 2026-11-20): an unticked month's documents
+  // are left off, so its column prints blank and the Total / Tax Withheld cover only the ticked months.
+  const [mon, setMon] = useState([true, true, true]);
 
   useEffect(() => {
     api.get('/reports/bir/2307/form', { params: manual ? { quarter, manual: 1 } : { quarter, payee: payeeKey } })
@@ -95,7 +98,11 @@ export default function Bir2307Print() {
         const keys = wanted.length ? wanted : data.docs.map(docKey);
         // One document: the period is that document's month. Otherwise the quarter. Either can be changed.
         const one = wanted.length === 1 ? data.docs.find((d) => docKey(d) === wanted[0]) : null;
-        if (one) setDocPage(Math.floor(data.docs.indexOf(one) / DOCS_PER_PAGE) + 1);
+        if (one) {
+          setDocPage(Math.floor(data.docs.indexOf(one) / DOCS_PER_PAGE) + 1);
+          const mi = data.months.indexOf(one.date_created.slice(0, 7));
+          if (mi >= 0) setMon([0, 1, 2].map((k) => k === mi));
+        }
         setSel(keys);
         setF({
           ...(one ? monthBounds(one.date_created) : { from: data.from, to: data.to }),
@@ -125,6 +132,8 @@ export default function Bir2307Print() {
     const map = new Map();
     for (const d of src.docs) {
       if (!sel.includes(docKey(d))) continue;
+      const dm = src.months.indexOf(d.date_created.slice(0, 7));
+      if (dm >= 0 && !mon[dm]) continue;
       const k = d.atc || `?${d.eff_rate}`;
       if (!map.has(k)) map.set(k, { key: k, atc: d.atc, nature: d.nature || '', rate: d.rate != null ? d.rate : d.eff_rate, suggested: false, months: [0, 0, 0], tax: 0 });
       const l = map.get(k);
@@ -137,7 +146,7 @@ export default function Bir2307Print() {
     return [...map.values()]
       .map((l) => ({ ...l, ...(over[l.key] || {}), months: l.months.map(r2), total: r2(l.months.reduce((s, v) => s + v, 0)), tax: r2(l.tax) }))
       .sort((a, b) => (a.atc ? 0 : 1) - (b.atc ? 0 : 1) || String(a.atc).localeCompare(String(b.atc)));
-  }, [src, sel, over, manual, mlines]);
+  }, [src, sel, over, manual, mlines, mon]);
   const totals = useMemo(() => ({
     months: [0, 1, 2].map((i) => r2(lines.reduce((s, l) => s + l.months[i], 0))),
     total: r2(lines.reduce((s, l) => s + l.total, 0)),
@@ -161,9 +170,24 @@ export default function Bir2307Print() {
     setLine(l.key, { atc, nature: o ? o.nature : l.nature, suggested: false });
   };
   const toggle = (k) => setSel((s) => (s.includes(k) ? s.filter((x) => x !== k) : [...s, k]));
-  const onlyThis = (d) => { setSel([docKey(d)]); setF((x) => ({ ...x, ...monthBounds(d.date_created) })); };
-  const allDocs = () => { setSel(src.docs.map(docKey)); setF((x) => ({ ...x, from: src.from, to: src.to })); };
-  const chosen = src.docs.filter((d) => sel.includes(docKey(d)));
+  const monthOf = (d) => src.months.indexOf(d.date_created.slice(0, 7));
+  const inMonths = (d) => { const mi = monthOf(d); return mi < 0 || mon[mi]; };
+  const onlyThis = (d) => {
+    setSel([docKey(d)]); setF((x) => ({ ...x, ...monthBounds(d.date_created) }));
+    const mi = monthOf(d); if (mi >= 0) setMon([0, 1, 2].map((k) => k === mi));
+  };
+  const allDocs = () => { setSel(src.docs.map(docKey)); setMon([true, true, true]); setF((x) => ({ ...x, from: src.from, to: src.to })); };
+  // Ticking a month moves the period to span the first to the last ticked month. At least one stays ticked.
+  const toggleMonth = (i) => {
+    const next = mon.map((v, k) => (k === i ? !v : v));
+    if (!next.some(Boolean)) return;
+    setMon(next);
+    const first = next.indexOf(true); const last = next.lastIndexOf(true);
+    if (src.months[first] && src.months[last]) {
+      setF((x) => ({ ...x, from: monthBounds(`${src.months[first]}-01`).from, to: monthBounds(`${src.months[last]}-01`).to }));
+    }
+  };
+  const chosen = src.docs.filter((d) => sel.includes(docKey(d)) && inMonths(d));
   const unconfirmed = lines.filter((l) => l.suggested).length;
   const noAtc = lines.filter((l) => !l.atc).length;
   const rows = Math.max(10, lines.length);
@@ -217,6 +241,12 @@ export default function Bir2307Print() {
         /* the app's global th/td nowrap ran long document references past the panel's edge */
         .f-panel td { white-space: normal; overflow-wrap: anywhere; }
         .f-warn { color: #b45309; }
+        .f-months { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; margin-top: 10px; }
+        .f-months-t { font-size: 12px; color: #64748b; }
+        .f-panel .f-month { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: #1f2937; cursor: pointer;
+          padding: 4px 12px; border: 1px solid #cbd5e1; border-radius: 16px; user-select: none; }
+        .f-panel .f-month.on { border-color: #6d5bd0; background: #f1effc; }
+        .f-panel .f-month input { width: auto; margin: 0; }
         .f-bar { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 
         .f-sheet { width: 210mm; min-height: 297mm; margin: 0 auto; padding: 4mm 8mm 3mm; box-sizing: border-box; background: #fff; color: #000;
@@ -316,12 +346,26 @@ export default function Bir2307Print() {
               : <>{chosen.length} of {src.docs.length} documents. <a href="#all" onClick={(e) => { e.preventDefault(); allDocs(); }}>Use all</a></>}
           </div>
         </div>
+        <div className="f-months">
+          <span className="f-months-t">Months of the quarter on this 2307:</span>
+          {['1st', '2nd', '3rd'].map((lbl, i) => {
+            const ym = src.months[i];
+            const name = ym ? new Date(`${ym}-01T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' }) : '';
+            return (
+              <label key={lbl} className={`f-month${mon[i] ? ' on' : ''}`}>
+                <input type="checkbox" checked={mon[i]} onChange={() => toggleMonth(i)} />
+                {lbl}{name ? ` (${name})` : ''}
+              </label>
+            );
+          })}
+        </div>
         {badPeriod && <div className="f-warn" style={{ fontSize: 12, marginTop: 4 }}>The period needs a From date on or before its To date.</div>}
         <table>
           <thead><tr><th style={{ width: 28 }} /><th>Document</th><th>Date</th><th>ATC</th><th style={{ textAlign: 'right' }}>Tax base</th><th style={{ textAlign: 'right' }}>Withheld</th><th /></tr></thead>
           <tbody>
             {src.docs.slice((docPage - 1) * DOCS_PER_PAGE, docPage * DOCS_PER_PAGE).map((d) => (
-              <tr key={docKey(d)} style={{ opacity: sel.includes(docKey(d)) ? 1 : 0.5 }}>
+              <tr key={docKey(d)} style={{ opacity: sel.includes(docKey(d)) && inMonths(d) ? 1 : 0.5 }}
+                title={inMonths(d) ? undefined : 'Its month is unticked above, so it is not on this 2307'}>
                 <td><input type="checkbox" style={{ width: 'auto' }} checked={sel.includes(docKey(d))} onChange={() => toggle(docKey(d))} aria-label={`Include ${d.doc_no}`} /></td>
                 <td>{d.doc_type} {d.doc_no}{d.reference_no ? ` · ${d.reference_no}` : ''}</td>
                 <td style={{ whiteSpace: 'nowrap' }}>{d.date_created}</td>
