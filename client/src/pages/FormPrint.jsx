@@ -216,40 +216,49 @@ function FuelSlip({ doc }) {
         .fs-page { background: #fff; color: #000; padding: 16px; }
         .fs-toolbar { margin-bottom: 12px; }
         /* Grows with its content (a long department name wraps): a fixed 70 mm cut Noted By off (REQ-1744). */
-        .fs-sheet { width: 72mm; min-height: 70mm; margin: 0 auto; padding: 1.5mm 2mm 2mm; box-sizing: border-box;
-                    font-family: Arial, Helvetica, sans-serif; font-size: 8.5pt; line-height: 1.25; color: #000; background: #fff;
+        /* Bigger, letter-spaced, Clearview-like type (asked 2026-11-20): Clearview itself is licensed and on
+           no PC here, so Verdana -- installed on every Windows PC, wide open letters -- with Tahoma behind it. */
+        /* Fills the paper's width (asked 2026-11-20): only 1 mm side padding, since the printer already
+           leaves its own ~4 mm unprinted strip on each side of the 80 mm roll. */
+        .fs-sheet { width: 72mm; min-height: 70mm; margin: 0 auto; padding: 1.5mm 1mm 2mm; box-sizing: border-box;
+                    font-family: Verdana, Tahoma, 'DejaVu Sans', sans-serif; font-size: 9.5pt; letter-spacing: 0.3pt;
+                    line-height: 1.3; color: #000; background: #fff;
                     outline: 1px dashed #bbb; display: flex; flex-direction: column; }
-        .fs-logo { width: 54mm; height: auto; display: block; margin: 0 auto; }
-        .fs-title { text-align: center; font-size: 15pt; letter-spacing: 1px; margin: 1mm 0 0.6mm; }
-        .fs-control { display: flex; justify-content: flex-end; align-items: baseline; gap: 1.5mm; margin-bottom: 1.4mm; }
-        .fs-control .fs-line { width: 27mm; flex: none; text-align: center; font-family: 'Times New Roman', serif; font-size: 10.5pt; white-space: nowrap; }
-        /* The right column is the wider one: Date and Plate No are short, a department name is not. */
-        .fs-grid { display: grid; grid-template-columns: 0.8fr 1.2fr; column-gap: 2mm; row-gap: 1.4mm; }
-        .fs-pair { display: flex; align-items: baseline; gap: 1.2mm; min-width: 0; }
+        .fs-logo { width: 60mm; height: auto; display: block; margin: 0 auto; }
+        .fs-title { text-align: center; font-size: 17pt; font-weight: 700; letter-spacing: 2px; margin: 1mm 0 1mm; }
+        .fs-control { display: flex; justify-content: flex-end; align-items: baseline; gap: 1.5mm; margin-bottom: 2mm; }
+        .fs-control .fs-line { width: 34mm; flex: none; text-align: center; font-size: 11pt; white-space: nowrap; }
+        /* Two columns as on the paper slip; at this size a label and its value no longer fit on one line in
+           a 34 mm column, so the label sits above the value. */
+        /* Left column just fits "20 Nov 2026"; the right gets the rest, so "Support - System Admin" takes
+           two lines instead of three (2026-11-20). */
+        .fs-grid { display: grid; grid-template-columns: 31mm 1fr; column-gap: 3mm; row-gap: 2mm; }
+        .fs-pair { display: flex; flex-direction: column; min-width: 0; }
+        .fs-pair .fs-label { font-size: 8.5pt; }
         .fs-label { white-space: nowrap; flex: none; }
         /* Wraps rather than cuts off ("Support-Sys..." on REQ-1744, 2026-11-17): a long value takes a second line. */
-        .fs-line { flex: 1; min-width: 0; border-bottom: 1px solid #000; font-weight: 700; padding: 0 0.5mm;
-                   white-space: normal; overflow-wrap: break-word; min-height: 3.5mm; }
-        .fs-notice { text-align: justify; margin: 2mm 0 0; text-indent: 7mm; font-size: 8pt; line-height: 1.3; }
+        .fs-line { flex: 1; min-width: 0; border-bottom: 1px solid #000; font-weight: 700; font-size: 10.5pt; padding: 0 0.5mm;
+                   white-space: normal; overflow-wrap: break-word; min-height: 4.5mm; }
+        .fs-notice { text-align: left; margin: 3mm 0 0; text-indent: 5mm; font-size: 9pt; line-height: 1.35; }
         /* Room above for the e-signature, which is drawn rising above its line. */
-        .fs-signs { display: flex; justify-content: space-between; margin-top: auto; padding-top: 5mm; }
-        .fs-sign { width: 28mm; text-align: center; font-size: 6.5pt; }
-        .fs-sign-name { font-size: 7.5pt; font-weight: 700; min-height: 3mm; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .fs-signs { display: flex; justify-content: space-between; margin-top: auto; padding-top: 6mm; }
+        .fs-sign { width: 33mm; text-align: center; font-size: 8pt; letter-spacing: 0.2pt; }
+        .fs-sign-name { font-size: 9pt; font-weight: 700; min-height: 3.5mm; overflow-wrap: break-word; }
         .fs-sign-rule { border-top: 1px solid #000; margin-top: 0.3mm; padding-top: 0.3mm; }
-        .fs-noted { display: flex; justify-content: center; margin-top: 3mm; }
+        .fs-noted { display: flex; justify-content: center; margin-top: 4mm; }
         @media print {
           .fs-no-print { display: none !important; }
           .fs-page { padding: 0; }
           .fs-sheet { outline: none; margin: 0; }
           /* 72 mm wide = the 80 mm printer's printable width, so nothing is scaled. Taller than wide ON
              PURPOSE: a landscape page makes Chrome turn the roll sideways and split the slip across two
-             sheets (REQ-1744, 2026-11-19). 100 mm leaves room for the slip to grow; the rest is feed. */
-          @page { size: 72mm 100mm; margin: 0; }
+             sheets (REQ-1744, 2026-11-19). 125 mm leaves room for the larger type (2026-11-20); the rest is feed. */
+          @page { size: 72mm 125mm; margin: 0; }
         }
       `}</style>
       <div className="fs-toolbar fs-no-print">
         <button className="btn btn-sm btn-primary" onClick={() => window.print()}>Print</button>
-        <span className="muted" style={{ marginLeft: 10, fontSize: 12 }}>80 mm thermal printer (e.g. Xprinter XP-80) · 72 x 70 mm slip. In the print dialog: Margins None, Scale Default.</span>
+        <span className="muted" style={{ marginLeft: 10, fontSize: 12 }}>80 mm thermal printer (e.g. Xprinter XP-80) · 72 mm wide slip. In the print dialog: Margins None, Scale Default.</span>
       </div>
       <div className="fs-sheet">
         <img className="fs-logo" src={letterhead} alt="GraphicStar Imaging Corp." />

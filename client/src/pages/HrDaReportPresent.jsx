@@ -87,7 +87,47 @@ function Header({ eyebrow, title, right }) {
   );
 }
 
-function Slide({ s, rep, rows }) {
+// A case card opened in full (asked 2026-11-20): the card clamps the violation to two lines and the
+// section and position to one, so clicking a card shows everything over the slide. Esc, a click outside
+// or the close button dismisses it; changing slide closes it too.
+const longDate = (v) => (v ? utc(v).toLocaleDateString('en-US', { timeZone: 'UTC', weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' }) : '');
+function CaseDetail({ r, onClose }) {
+  const initials = personName(r.employee_name).split(' ').map((w) => w[0]).slice(0, 2).join('');
+  const field = (label, value, cls = '') => (value ? (
+    <div className="dap-detail-field">
+      <div className="dap-detail-label">{label}</div>
+      <div className={`dap-detail-value ${cls}`}>{value}</div>
+    </div>
+  ) : null);
+  return (
+    <div className="dap-detail-backdrop" onClick={(e) => { e.stopPropagation(); onClose(); }}>
+      <div className="dap-detail" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        <button className="dap-detail-x" onClick={onClose} title="Close (Esc)">×</button>
+        <div className="dap-card-top">
+          <div className="dap-avatar dap-avatar-lg">{initials}</div>
+          <div className="dap-card-who">
+            <div className="dap-detail-name">{personName(r.employee_name)}</div>
+            <div className="dap-detail-sub">{[r.position, r.department_name].filter(Boolean).join(' · ')}</div>
+          </div>
+        </div>
+        <div className="dap-detail-body">
+          {field('Violation', r.violation, 'is-main')}
+          {field('Section violated', r.section_violated)}
+          <div className="dap-detail-row">
+            {field('Date', longDate(r.entry_date))}
+            {field('Stage', titleCase(r.stage))}
+            <div className="dap-detail-field">
+              <div className="dap-detail-label">Final sanction</div>
+              <span className={`dap-chip ${sevClass(r.final_sanction)}`}>{titleCase(r.final_sanction || 'Pending')}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Slide({ s, rep, rows, onOpen }) {
   const weekly = rep.report_type === 'weekly';
   const period = periodTitle(rep.report_type, rep.period_from, rep.period_to);
   const periodWord = weekly ? 'week' : 'month';
@@ -191,7 +231,8 @@ function Slide({ s, rep, rows }) {
         />
         <div className={`dap-cards n-${s.rows.length}`}>
           {s.rows.map((r, i) => (
-            <div className="dap-card dap-rise" key={r.id || i} style={{ animationDelay: `${0.08 + i * 0.07}s` }}>
+            <div className="dap-card dap-rise is-clickable" key={r.id || i} style={{ animationDelay: `${0.08 + i * 0.07}s` }}
+              title="Click to see the full case" onClick={(e) => { e.stopPropagation(); onOpen({ ...r, stage: s.stage }); }}>
               <div className="dap-card-top">
                 <div className="dap-avatar">{personName(r.employee_name).split(' ').map((w) => w[0]).slice(0, 2).join('')}</div>
                 <div className="dap-card-who">
@@ -270,6 +311,8 @@ export default function HrDaReportPresent() {
   const [i, setI] = useState(0);
   const [scale, setScale] = useState(1);
   const [idle, setIdle] = useState(false);
+  const [openCase, setOpenCase] = useState(null);
+  useEffect(() => { setOpenCase(null); }, [i]);
 
   useEffect(() => {
     api.get(`/hr-da-reports/${id}`).then(({ data }) => setRep(data)).catch((e) => setError(e.response?.data?.error || 'Could not load the report.'));
@@ -290,6 +333,8 @@ export default function HrDaReportPresent() {
 
   useEffect(() => {
     const onKey = (e) => {
+      // With a case open, Esc / Enter / space / Backspace close it instead of moving slides.
+      if (openCase && ['Escape', 'Enter', ' ', 'Backspace'].includes(e.key)) { e.preventDefault(); setOpenCase(null); return; }
       if (['ArrowRight', 'PageDown', ' ', 'Enter'].includes(e.key)) { e.preventDefault(); go((c) => c + 1); }
       else if (['ArrowLeft', 'PageUp', 'Backspace'].includes(e.key)) { e.preventDefault(); go((c) => c - 1); }
       else if (e.key === 'Home') go(0);
@@ -298,7 +343,7 @@ export default function HrDaReportPresent() {
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [go, slides.length]);
+  }, [go, slides.length, openCase]);
 
   // The controls fade after a few still seconds; any movement brings them back.
   useEffect(() => {
@@ -324,8 +369,9 @@ export default function HrDaReportPresent() {
           <div className="dap-stage" style={{ width: W, height: H, transform: `translate(-50%, -50%) scale(${scale})` }}
             onClick={(e) => { const x = e.clientX / window.innerWidth; go((c) => c + (x < 0.3 ? -1 : 1)); }}>
             <div className="dap-frame" key={i}>
-              <Slide s={slides[i]} rep={rep} rows={rows} />
+              <Slide s={slides[i]} rep={rep} rows={rows} onOpen={setOpenCase} />
             </div>
+            {openCase && <CaseDetail r={openCase} onClose={() => setOpenCase(null)} />}
             {i > 0 && i < slides.length - 1 && (
               <div className="dap-footer">
                 <span>Discipline Management Report · {periodTitle(rep.report_type, rep.period_from, rep.period_to)}</span>
@@ -422,7 +468,28 @@ const CSS = `
 .dap-card { position:relative; display:flex; flex-direction:column; padding:20px 22px; border-radius:14px; min-height:0; overflow:hidden;
   background:linear-gradient(165deg, rgba(255,255,255,.08), rgba(255,255,255,.025)); border:1px solid rgba(255,255,255,.09); }
 .dap-card::before { content:''; position:absolute; left:0; top:18px; bottom:18px; width:3px; border-radius:2px; background:var(--gold); }
+.dap-card.is-clickable { cursor:zoom-in; transition:border-color .2s, background .2s, transform .2s; }
+.dap-card.is-clickable:hover { border-color:rgba(201,162,74,.55); background:linear-gradient(165deg, rgba(255,255,255,.11), rgba(255,255,255,.04)); transform:translateY(-2px); }
 .dap-card-top { display:flex; align-items:center; gap:12px; }
+
+.dap-detail-backdrop { position:absolute; inset:0; z-index:5; display:grid; place-items:center; cursor:default;
+  background:rgba(4,9,22,.72); backdrop-filter:blur(4px); animation:dapFade .25s both; }
+@keyframes dapFade { from { opacity:0; } to { opacity:1; } }
+.dap-detail { position:relative; width:820px; max-height:600px; overflow:auto; padding:40px 48px 36px; border-radius:18px;
+  background:linear-gradient(165deg, #1b2c58, #0e1a38); border:1px solid rgba(201,162,74,.4); box-shadow:0 30px 80px rgba(0,0,0,.6);
+  animation:dapRise .35s cubic-bezier(.2,.7,.2,1) both; user-select:text; }
+.dap-detail::before { content:''; position:absolute; left:0; top:28px; bottom:28px; width:4px; border-radius:2px; background:var(--gold); }
+.dap-detail-x { position:absolute; top:14px; right:16px; width:38px; height:38px; border-radius:50%; border:1px solid rgba(255,255,255,.2);
+  background:none; color:var(--ivory); font-size:24px; line-height:1; cursor:pointer; }
+.dap-detail-x:hover { border-color:var(--gold); color:var(--gold2); }
+.dap-avatar-lg { width:60px; height:60px; font-size:20px; }
+.dap-detail-name { font-family:'Playfair Display',serif; font-size:30px; line-height:1.2; color:#fff; }
+.dap-detail-sub { font-size:15px; color:var(--mist); margin-top:2px; }
+.dap-detail-body { margin-top:26px; padding-top:22px; border-top:1px solid rgba(201,162,74,.25); display:flex; flex-direction:column; gap:20px; }
+.dap-detail-label { font-size:12px; letter-spacing:.24em; text-transform:uppercase; color:var(--gold); margin-bottom:6px; }
+.dap-detail-value { font-size:17px; line-height:1.55; color:var(--ivory); white-space:pre-line; overflow-wrap:break-word; }
+.dap-detail-value.is-main { font-size:22px; line-height:1.5; color:#fff; }
+.dap-detail-row { display:flex; flex-wrap:wrap; gap:20px 48px; }
 .dap-avatar { width:44px; height:44px; flex:none; border-radius:50%; display:grid; place-items:center; font-weight:600; font-size:15px;
   color:var(--ink); background:linear-gradient(140deg, var(--gold2), var(--gold)); }
 .dap-card-who { min-width:0; flex:1; }
