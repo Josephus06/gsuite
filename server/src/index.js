@@ -120,6 +120,8 @@ const collectionForecastRoutes = require('./routes/collectionForecast');
 const managerDashboardRoutes = require('./routes/managerDashboard');
 const collectionAgingReportRoutes = require('./routes/collectionAgingReport');
 const collectionIncentiveRoutes = require('./routes/collectionIncentive');
+// STP -- Sales Territory Planning (territories, account assignments, RFVC scores). See routes/stp.js.
+const stpRoutes = require('./routes/stp');
 const unitOfMeasuresRoutes = require('./routes/unitOfMeasures');
 const chatRoutes = require('./routes/chat');
 const itineraryRoutes = require('./routes/itineraries');
@@ -438,6 +440,7 @@ app.use('/api/collection-forecast', collectionForecastRoutes);
 app.use('/api/manager', managerDashboardRoutes);
 app.use('/api/reports/collection-aging', collectionAgingReportRoutes);
 app.use('/api/treasury/collection-incentive', collectionIncentiveRoutes);
+app.use('/api/stp', stpRoutes);
 app.use('/api/unit-of-measures', unitOfMeasuresRoutes);
 app.use('/api/chat', chatRoutes);
 app.use('/api/itineraries', itineraryRoutes);
@@ -647,6 +650,23 @@ if (process.env.EXAM_REMINDER_JOB === '1') {
     }, delayMs);
   };
   scheduleNextExamRun();
+}
+// STP account scores (lib/stpScoringData.js recalculateScores): RFVC for every STP account, appended to
+// stp_account_scores, nightly at 2:30 business time. OFF unless STP_SCORE_JOB=1 -- ONE box of the
+// replicated pair (and Railway): two boxes would each append a full set of rows every night.
+if (require('./lib/stpScoringData').stpScoreJobEnabled()) {
+  const { recalculateScores } = require('./lib/stpScoringData');
+  const hour = Number(process.env.STP_SCORE_HOUR || 2);
+  const minute = Number(process.env.STP_SCORE_MINUTE || 30);
+  const scheduleNextStpRun = () => {
+    const delayMs = msUntilBusinessTime(hour, minute);
+    console.log(`STP scoring scheduled for ${new Date(Date.now() + delayMs).toISOString()}`);
+    setTimeout(async () => {
+      try { console.log('STP scoring:', await recalculateScores()); } catch (err) { console.error('STP scoring failed:', err); }
+      scheduleNextStpRun();
+    }, delayMs);
+  };
+  scheduleNextStpRun();
 }
 // Unfinished feed video uploads, cleared after a day -- only those whose file is on this server.
 require('./lib/feedVideos').scheduleFeedVideoSweep();

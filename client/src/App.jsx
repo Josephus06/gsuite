@@ -206,6 +206,12 @@ import Bir2307Print from './pages/reports/Bir2307Print';
 import CollectionForecast from './pages/treasury/CollectionForecast';
 import CollectionAgingReport from './pages/treasury/CollectionAgingReport';
 import CollectionIncentive from './pages/treasury/CollectionIncentive';
+import StpOverview from './pages/stp/StpOverview';
+import StpAccounts from './pages/stp/StpAccounts';
+import StpAccountView from './pages/stp/StpAccountView';
+import StpTerritoryView from './pages/stp/StpTerritoryView';
+import StpReps from './pages/stp/StpReps';
+import StpSettings from './pages/stp/StpSettings';
 import CommissionSchemes from './pages/CommissionSchemes';
 import CommissionSchemeView from './pages/CommissionSchemeView';
 import EmployeeQuotas from './pages/EmployeeQuotas';
@@ -585,6 +591,13 @@ function App() {
         <Route path="/treasury/collection-forecast" element={<CollectionForecast />} />
         <Route path="/treasury/collection-aging" element={<CollectionAgingReport />} />
         <Route path="/treasury/collection-incentive" element={<CollectionIncentive />} />
+        {/* STP -- Sales Territory Planning. */}
+        <Route path="/stp" element={<StpOverview />} />
+        <Route path="/stp/accounts" element={<StpAccounts />} />
+        <Route path="/stp/accounts/:id" element={<StpAccountView />} />
+        <Route path="/stp/territories/:id" element={<StpTerritoryView />} />
+        <Route path="/stp/reps" element={<StpReps />} />
+        <Route path="/stp/settings" element={<StpSettings />} />
         <Route path="/commission-schemes" element={<CommissionSchemes />} />
         <Route path="/commission-schemes/:id" element={<CommissionSchemeView />} />
         <Route path="/employee-quotas" element={<EmployeeQuotas />} />

@@ -1,0 +1,99 @@
+/* STP -- Sales Territory Planning. Built only from the theme tokens (styles/tokens.css) and the
+   shared .card / .table-wrap / .badge styles, so day, night and glass all apply unchanged. */
+
+.stp-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
+.stp-head h1 { margin: 0; }
+.stp-sub { margin: 4px 0 0; color: var(--color-text-secondary); font-size: 13px; }
+.stp-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.stp-period { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--color-text-secondary); }
+.stp-period select { width: auto; }
+
+.stp-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+.stp-kpi { margin: 0; }
+.stp-kpi .label { font-size: 12px; color: var(--color-text-secondary); }
+.stp-kpi .value { font-size: 26px; font-weight: 700; color: var(--color-text-primary); margin: 4px 0 2px; line-height: 1.2; }
+.stp-kpi .hint { font-size: 12px; color: var(--color-text-muted); }
+
+.stp-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start; }
+.stp-layout > * { min-width: 0; }
+@media (max-width: 960px) { .stp-layout { grid-template-columns: minmax(0, 1fr); } }
+.stp-side { display: grid; gap: 16px; }
+.stp-two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; align-items: start; }
+
+.stp-card-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 12px; }
+.stp-card-head h2, .stp-card-head h3 { margin: 0; font-size: 16px; }
+
+.stp-num { text-align: right; white-space: nowrap; }
+.stp-table td, .stp-table th { vertical-align: middle; }
+.stp-table th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+.stp-table tr.stp-click { cursor: pointer; }
+.stp-table tr.stp-click:hover td { background: var(--color-surface-sunken); }
+.stp-table tr.stp-over td { background: var(--color-warning-bg); }
+
+/* Score chips: 4-5 blue, 3 gray, 1-2 orange. */
+.stp-chip { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; height: 22px; padding: 0 6px;
+  border-radius: 6px; font-size: 12px; font-weight: 600; }
+/* A hairline in the chip's own colour keeps blue / gray / orange apart on dark and glass, where the
+   tinted backgrounds alone sit too close together. */
+.stp-chip.good { background: var(--color-primary-bg); color: var(--color-primary-text); box-shadow: inset 0 0 0 1px var(--color-primary); }
+.stp-chip.mid { background: var(--color-neutral-bg); color: var(--color-neutral-text); }
+.stp-chip.low { background: var(--color-warning-bg); color: var(--color-warning-text); box-shadow: inset 0 0 0 1px var(--color-warning); }
+.stp-chip.none { background: transparent; color: var(--color-text-muted); border: 1px dashed var(--color-border); }
+
+/* Tier and status pills. */
+.stp-pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+.stp-pill.tier-A, .stp-pill.st-Active { background: var(--color-primary-bg); color: var(--color-primary-text); }
+.stp-pill.tier-B, .stp-pill.st-Planned { background: var(--color-neutral-bg); color: var(--color-neutral-text); }
+.stp-pill.tier-C, .stp-pill.st-Under { background: var(--color-warning-bg); color: var(--color-warning-text); }
+.stp-pill.st-Unassigned { background: var(--color-danger-bg); color: var(--color-danger-text); }
+.stp-pill.tier-Prospect, .stp-pill.tier-none { background: transparent; color: var(--color-text-secondary); border: 1px solid var(--color-border-strong); }
+
+.stp-bar { display: flex; align-items: center; gap: 8px; min-width: 110px; }
+.stp-bar .track { flex: 1; height: 6px; border-radius: 3px; background: var(--color-neutral-bg); overflow: hidden; }
+.stp-bar .fill { height: 100%; background: var(--color-primary); }
+.stp-bar.over .fill { background: var(--color-warning); }
+.stp-bar .pct { font-size: 12px; min-width: 38px; text-align: right; }
+
+.stp-flag { font-size: 12px; font-weight: 600; color: var(--color-warning-text); white-space: nowrap; }
+.stp-attention { display: grid; gap: 10px; }
+.stp-attention a, .stp-attention .item { display: block; padding: 10px 12px; border-radius: 8px; background: var(--color-warning-bg);
+  color: var(--color-text-primary); text-decoration: none; font-size: 13px; }
+.stp-attention .item.info { background: var(--color-surface-sunken); }
+.stp-attention .kind { font-size: 11px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--color-warning-text); }
+.stp-attention .item.info .kind { color: var(--color-text-secondary); }
+
+.stp-tiers { display: grid; gap: 8px; }
+.stp-tiers .row { display: flex; align-items: center; justify-content: space-between; }
+
+.stp-banner { display: flex; gap: 10px; padding: 12px 14px; border-radius: 8px; margin-bottom: 16px; font-size: 13px;
+  background: var(--color-warning-bg); color: var(--color-warning-text); border: 1px solid var(--color-warning); }
+.stp-banner strong { display: block; }
+
+.stp-factors { display: grid; grid-template-columns: minmax(200px, 1.1fr) repeat(4, minmax(170px, 1fr)); gap: 12px; margin-bottom: 16px; }
+@media (max-width: 1100px) { .stp-factors { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); } }
+.stp-factors .card { margin: 0; }
+.stp-total { text-align: center; }
+.stp-total .big { font-size: 40px; font-weight: 700; line-height: 1.1; color: var(--color-text-primary); }
+.stp-factor-head { display: flex; justify-content: space-between; align-items: center; font-size: 13px; font-weight: 600; }
+.stp-dots { display: flex; gap: 4px; margin: 8px 0; }
+.stp-dots span { width: 9px; height: 9px; border-radius: 50%; background: var(--color-neutral-bg); }
+.stp-dots.good span.on { background: var(--color-primary); }
+.stp-dots.mid span.on { background: var(--color-neutral); }
+.stp-dots.low span.on { background: var(--color-warning); }
+.stp-fact { font-size: 13px; color: var(--color-text-primary); }
+.stp-fact-sub { font-size: 12px; color: var(--color-text-secondary); margin-top: 4px; }
+
+.stp-plan { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 16px; }
+.stp-plan .k { font-size: 12px; color: var(--color-text-secondary); }
+.stp-plan .v { font-weight: 600; }
+
+.stp-legend { font-size: 12px; color: var(--color-text-secondary); margin-top: 10px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; }
+
+.stp-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0 16px; }
+.stp-form-grid .wide { grid-column: 1 / -1; }
+.stp-seg { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+
+.stp-thresholds input { min-width: 90px; }
+.stp-thresholds td { vertical-align: middle; }
+.stp-cut { display: flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 13px; }
+.stp-cut input { width: 110px; }

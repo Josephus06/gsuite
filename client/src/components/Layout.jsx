@@ -217,6 +217,18 @@ const NAV_STRUCTURE = [
     ],
   },
   {
+    // STP -- Sales Territory Planning (2026-11-21): territories per fiscal year, the accounts
+    // assigned to them with their RFVC scores, and rep workload. One permission page (/stp):
+    // view, add/edit, and delete = STP Admin, which alone sees Scoring settings.
+    label: 'Sales Territory Planning',
+    children: [
+      { route: '/stp', label: 'Overview' },
+      { route: '/stp/accounts', permRoute: '/stp', label: 'Accounts' },
+      { route: '/stp/reps', permRoute: '/stp', label: 'Rep workload' },
+      { route: '/stp/settings', permRoute: '/stp', permAction: 'can_delete', label: 'Scoring settings' },
+    ],
+  },
+  {
     label: 'Costing',
     children: [
       { route: '/process-costing', label: 'Process Costing' },
@@ -622,7 +634,8 @@ export default function Layout() {
     navigate('/login');
   }
 
-  const canSee = (c) => can(c.permRoute || c.route, 'can_view');
+  // permAction: an entry that needs more than view on its permission page (STP Scoring settings).
+  const canSee = (c) => can(c.permRoute || c.route, c.permAction || 'can_view');
   const visibleStructure = NAV_STRUCTURE
     .map((item) => {
       if (item.sections) {
