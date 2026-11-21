@@ -4,8 +4,8 @@ import api from '../../api/client';
 import { useAuth } from '../../context/useAuth';
 import LoadingSpinner from '../../components/LoadingSpinner';
 import { displayAuditTime } from '../../utils/dates';
-import { ROUTE, peso, pct, date, scoreText, SHORT_FLAG, FLAG_LABELS, useStpMeta, apiError } from './stpUtils';
-import { Kpi, StatusPill, ScoreChip, TierPill } from './StpBits';
+import { ROUTE, peso, pct, scoreText, SHORT_FLAG, FLAG_LABELS, useStpMeta, apiError } from './stpUtils';
+import { Icon, Avatar, Kpi, StatusPill, ScoreChip, TierPill, VisitStatus, Empty } from './StpBits';
 import { TerritoryModal, AccountModal } from './StpForms';
 
 // STP > Territory detail: one territory's figures and the accounts assigned to it.
@@ -36,15 +36,22 @@ export default function StpTerritoryView() {
   if (!t) return <LoadingSpinner />;
 
   return (
-    <div>
-      <Link to={`/stp?fy=${t.fiscal_year}`} className="muted" style={{ fontSize: 13 }}>← Back to overview</Link>
-      <div className="stp-head" style={{ marginTop: 8 }}>
-        <div>
-          <h1 style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>{t.name} <StatusPill status={t.status} /></h1>
-          <p className="stp-sub">FY {t.fiscal_year} · Rep: {t.rep_name || 'Unassigned'}{t.coverage_area ? ` · ${t.coverage_area}` : ''}</p>
+    <div className="stp-page">
+      <Link to={`/stp?fy=${t.fiscal_year}`} className="stp-back">← Back to overview</Link>
+      <div className="stp-head">
+        <div className="stp-title">
+          <span className="stp-kpi-icon" style={{ width: 52, height: 52, borderRadius: 14 }}><Icon name="map" size={26} /></span>
+          <div style={{ minWidth: 0 }}>
+            <h1>{t.name} <StatusPill status={t.status} /></h1>
+            <div className="stp-meta">
+              <span className="stp-meta-chip"><Icon name="user" size={13} />{t.rep_name || 'Unassigned'}</span>
+              {t.coverage_area && <span className="stp-meta-chip"><Icon name="visit" size={13} />{t.coverage_area}</span>}
+              <span className="stp-meta-chip"><Icon name="calendar" size={13} />FY {t.fiscal_year}</span>
+            </div>
+          </div>
         </div>
         <div className="stp-actions">
-          {can(ROUTE, 'can_add') && <button className="btn" onClick={() => setModal('assign')}>+ Assign account</button>}
+          {can(ROUTE, 'can_add') && <button className="btn" onClick={() => setModal('assign')}><Icon name="plus" size={16} />Assign account</button>}
           {can(ROUTE, 'can_edit') && <button className="btn btn-primary" onClick={() => setModal('edit')}>Edit territory</button>}
           {can(ROUTE, 'can_delete') && (
             <button className="btn btn-danger" onClick={remove} disabled={t.accounts.length > 0}
@@ -55,27 +62,34 @@ export default function StpTerritoryView() {
       {error && <div className="error-banner">{error}</div>}
 
       <div className="stp-kpis">
-        <Kpi label="Target" value={peso(t.target_amount)} hint={`${pct(t.target_vs_potential)} of potential`} />
-        <Kpi label="Annual potential" value={peso(t.total_potential)} hint={`${t.account_count} accounts`} />
-        <Kpi label="Current revenue" value={peso(t.current_revenue)} hint={`Invoiced in FY ${t.fiscal_year}`} />
-        <Kpi label="Penetration" value={pct(t.penetration)} hint="Revenue ÷ potential" />
-        <Kpi label="Average score" value={scoreText(t.average_score)}
+        <Kpi icon="target" label="Target" value={peso(t.target_amount)} hint={`${pct(t.target_vs_potential)} of potential`} />
+        <Kpi icon="potential" label="Annual potential" value={peso(t.total_potential)} hint={`${t.account_count} accounts`} />
+        <Kpi icon="revenue" tone="success" label="Current revenue" value={peso(t.current_revenue)} hint={`Invoiced in FY ${t.fiscal_year}`} />
+        <Kpi icon="penetration" tone="neutral" label="Penetration" value={pct(t.penetration)} hint="Revenue ÷ potential" />
+        <Kpi icon="volume" label="Average score" value={scoreText(t.average_score)}
           hint={`A ${t.tier_counts.A} · B ${t.tier_counts.B} · C ${t.tier_counts.C} · Prospect ${t.tier_counts.Prospect}`} />
       </div>
 
       <div className="card">
-        <div className="stp-card-head"><h2>Accounts</h2></div>
+        <div className="stp-card-head"><h2><Icon name="user" />Accounts <span className="stp-count">{t.accounts.length}</span></h2></div>
         <div className="table-wrap">
-          <table className="stp-table">
+          <table className="stp-table wide">
             <thead>
               <tr><th>Account</th><th>Owner</th><th>Segment</th><th className="stp-num">Potential</th><th>R</th><th>F</th><th>V</th><th>C</th>
                 <th className="stp-num">Score</th><th>Tier</th><th>Next visit</th><th>Flag</th></tr>
             </thead>
             <tbody>
-              {t.accounts.length === 0 && <tr><td colSpan={12} className="muted" style={{ textAlign: 'center', padding: 20 }}>No accounts assigned yet.</td></tr>}
+              {t.accounts.length === 0 && (
+                <tr><td colSpan={12}>
+                  <Empty icon="user" title="No accounts in this territory yet"
+                    action={can(ROUTE, 'can_add') && <button className="btn btn-primary" onClick={() => setModal('assign')}><Icon name="plus" size={16} />Assign the first account</button>}>
+                    Assign the customers, leads or prospects this territory's rep looks after.
+                  </Empty>
+                </td></tr>
+              )}
               {t.accounts.map((a) => (
                 <tr key={a.id} className="stp-click" onClick={() => navigate(`/stp/accounts/${a.id}?fy=${t.fiscal_year}`)}>
-                  <td><strong>{a.account_name}</strong></td>
+                  <td><span className="stp-who"><Avatar name={a.account_name} size={28} tone={a.tier === 'C' ? 'warning' : a.tier ? 'primary' : 'neutral'} /><span className="name">{a.account_name}</span></span></td>
                   <td>{a.owner_name || '—'}</td>
                   <td>{a.segment}</td>
                   <td className="stp-num">{peso(a.annual_potential)}</td>
@@ -83,8 +97,8 @@ export default function StpTerritoryView() {
                   <td><ScoreChip value={a.volume_score} /></td><td><ScoreChip value={a.character_score} /></td>
                   <td className="stp-num"><strong>{scoreText(a.total_score)}</strong></td>
                   <td><TierPill tier={a.tier} prospect={a.is_prospect} short /></td>
-                  <td style={{ whiteSpace: 'nowrap' }} className={a.visit_overdue ? 'stp-flag' : ''}>{a.next_visit_due ? date(a.next_visit_due) : <span className="muted">Not scheduled</span>}</td>
-                  <td>{a.flags.map((f) => <div key={f} className="stp-flag" title={FLAG_LABELS[f]}>{SHORT_FLAG[f]}</div>)}</td>
+                  <td><VisitStatus next={a.next_visit_due} overdue={a.visit_overdue} today={meta?.today || new Date().toISOString().slice(0, 10)} /></td>
+                  <td>{a.flags.map((f) => <div key={f} className="stp-flag" title={FLAG_LABELS[f]}><Icon name="alert" size={13} />{SHORT_FLAG[f]}</div>)}</td>
                 </tr>
               ))}
             </tbody>
@@ -94,7 +108,7 @@ export default function StpTerritoryView() {
       </div>
 
       {t.notes && <div className="card" style={{ marginTop: 16, whiteSpace: 'pre-wrap' }}>{t.notes}</div>}
-      <div className="card" style={{ marginTop: 16 }}>
+      <div className="card stp-section">
         <h3>System Information</h3>
         <div className="field-row">
           <div className="field"><label>Created By</label><div>{t.created_by || '—'}</div></div>

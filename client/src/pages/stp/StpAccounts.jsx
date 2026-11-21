@@ -6,8 +6,8 @@ import LoadingSpinner from '../../components/LoadingSpinner';
 import SearchInput from '../../components/SearchInput';
 import Pagination from '../../components/Pagination';
 import { downloadFile } from '../../utils/downloadFile';
-import { ROUTE, date, scoreText, SHORT_FLAG, FLAG_LABELS, usePeriod, useStpMeta, useSort, apiError } from './stpUtils';
-import { ScoreChip, TierPill, PeriodSelect } from './StpBits';
+import { ROUTE, scoreText, SHORT_FLAG, FLAG_LABELS, usePeriod, useStpMeta, useSort, apiError } from './stpUtils';
+import { Icon, Avatar, ScoreChip, TierPill, VisitStatus, Empty, PeriodSelect } from './StpBits';
 import { AccountModal } from './StpForms';
 
 // STP > Accounts: every customer / lead / prospect assigned to a territory in the period, with its
@@ -81,7 +81,7 @@ export default function StpAccounts() {
   );
 
   return (
-    <div>
+    <div className="stp-page">
       <div className="stp-head">
         <div>
           <h1>Accounts</h1>
@@ -89,15 +89,15 @@ export default function StpAccounts() {
         </div>
         <div className="stp-actions">
           <PeriodSelect fy={fy} setFy={setFy} years={meta?.fiscal_years} />
-          <button className="btn" onClick={exportXlsx} disabled={exporting || !rows}>{exporting ? 'Exporting…' : 'Export'}</button>
+          <button className="btn" onClick={exportXlsx} disabled={exporting || !rows}><Icon name="terms" size={16} />{exporting ? 'Exporting…' : 'Export'}</button>
           {can(ROUTE, 'can_add') && <button className="btn btn-primary" onClick={() => setAssigning(true)} disabled={!territories.length}
-            title={territories.length ? undefined : `Create a territory for FY ${fy} first`}>+ Assign account</button>}
+            title={territories.length ? undefined : `Create a territory for FY ${fy} first`}><Icon name="plus" size={16} />Assign account</button>}
         </div>
       </div>
       {error && <div className="error-banner">{error}</div>}
 
       <div className="card" style={{ marginBottom: 16 }}>
-        <div className="filter-grid">
+        <div className="filter-grid stp-filters">
           <div className="field">
             <label>Search</label>
             <SearchInput value={f.search} onChange={(e) => setFilter('search', e.target.value)} placeholder="Account name" />
@@ -141,7 +141,7 @@ export default function StpAccounts() {
       <div className="card">
         {!rows ? <LoadingSpinner /> : (
           <div className="table-wrap">
-            <table className="stp-table">
+            <table className="stp-table wide">
               <thead>
                 <tr>
                   {th('account_name', 'Account')}{th('territory_name', 'Territory')}{th('owner_name', 'Owner')}{th('segment', 'Segment')}
@@ -151,13 +151,25 @@ export default function StpAccounts() {
               </thead>
               <tbody>
                 {pageRows.length === 0 && (
-                  <tr><td colSpan={12} className="muted" style={{ textAlign: 'center', padding: 20 }}>
-                    {rows.length ? 'No account matches these filters.' : `No accounts assigned for FY ${fy} yet.`}
+                  <tr><td colSpan={12}>
+                    {rows.length ? <Empty icon="user" title="No account matches these filters">Clear a filter to see more.</Empty> : (
+                      <Empty icon="user" title={`No accounts assigned for FY ${fy} yet`}>
+                        Use <strong>Assign account</strong> to place a customer, CRM lead or prospect in a territory.
+                      </Empty>
+                    )}
                   </td></tr>
                 )}
                 {pageRows.map((a) => (
                   <tr key={a.id} className="stp-click" onClick={() => navigate(`/stp/accounts/${a.id}?fy=${fy}`)}>
-                    <td><Link to={`/stp/accounts/${a.id}?fy=${fy}`} onClick={(e) => e.stopPropagation()}><strong>{a.account_name}</strong></Link></td>
+                    <td>
+                      <div className="stp-who">
+                        <Avatar name={a.account_name} size={30} tone={a.tier === 'C' ? 'warning' : a.tier ? 'primary' : 'neutral'} />
+                        <div style={{ minWidth: 0 }}>
+                          <Link to={`/stp/accounts/${a.id}?fy=${fy}`} onClick={(e) => e.stopPropagation()} className="name">{a.account_name}</Link>
+                          <div className="sub">{a.customer_id ? 'Customer' : a.lead_id ? 'Lead' : 'Prospect'}</div>
+                        </div>
+                      </div>
+                    </td>
                     <td>{a.territory_name}</td>
                     <td>{a.owner_name || <span className="muted">—</span>}</td>
                     <td>{a.segment}</td>
@@ -167,10 +179,8 @@ export default function StpAccounts() {
                     <td><ScoreChip value={a.character_score} /></td>
                     <td className="stp-num"><strong>{scoreText(a.total_score)}</strong></td>
                     <td><TierPill tier={a.tier} prospect={a.is_prospect} short /></td>
-                    <td style={{ whiteSpace: 'nowrap' }} className={a.visit_overdue ? 'stp-flag' : ''}>
-                      {a.next_visit_due ? date(a.next_visit_due) : <span className="muted">Not scheduled</span>}
-                    </td>
-                    <td>{a.flags.map((fl) => <div key={fl} className="stp-flag" title={FLAG_LABELS[fl]}>{SHORT_FLAG[fl]}</div>)}</td>
+                    <td><VisitStatus next={a.next_visit_due} overdue={a.visit_overdue} today={meta?.today || new Date().toISOString().slice(0, 10)} /></td>
+                    <td>{a.flags.map((fl) => <div key={fl} className="stp-flag" title={FLAG_LABELS[fl]}><Icon name="alert" size={13} />{SHORT_FLAG[fl]}</div>)}</td>
                   </tr>
                 ))}
               </tbody>

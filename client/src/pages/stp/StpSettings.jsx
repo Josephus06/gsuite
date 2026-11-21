@@ -79,7 +79,7 @@ export default function StpSettings() {
   }
 
   return (
-    <div>
+    <div className="stp-page">
       <div className="stp-head">
         <div>
           <h1>Scoring settings</h1>
