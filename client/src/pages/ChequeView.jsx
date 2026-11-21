@@ -65,6 +65,26 @@ export default function ChequeView() {
     setShowReversal(true);
   }
 
+  // The tab is opened on the click itself (a tab opened after the lookup would be blocked as a popup),
+  // then pointed at the 2307 -- or closed, with the reason, when nothing was withheld.
+  async function open2307() {
+    setError('');
+    const tabWin = window.open('about:blank', '_blank');
+    try {
+      const { data } = await api.get(`/reports/bir/2307/cheque/${id}`);
+      if (data.none) {
+        if (tabWin) tabWin.close();
+        setError(`No BIR 2307 for this cheque. ${data.none}`);
+        return;
+      }
+      const url = `/reports/bir-2307/form?quarter=${data.quarter}&payee=${encodeURIComponent(data.payee)}&doc=${encodeURIComponent(data.docs.join(','))}`;
+      if (tabWin) tabWin.location.href = url; else window.open(url, '_blank');
+    } catch (err) {
+      if (tabWin) tabWin.close();
+      setError(err.response?.data?.error || 'Could not open the BIR 2307.');
+    }
+  }
+
   // Closed accounting period: no Edit / Void / Cancel (utils/periodLock.js; the server refuses them too).
   const periodLocked = usePeriodLocked(c?.date_created, 'other_gl');
 
@@ -92,6 +112,12 @@ export default function ChequeView() {
           {/* As on a Vendor Bill: a new Bill Credit for this cheque's vendor, made from the cheque. */}
           {can('/bill-credits', 'can_add') && c.status !== 'void' && ['VENDOR', 'supplier'].includes(c.payee_type) && c.payee_id && (
             <button className="btn btn-sm btn-primary" onClick={() => setShowBillCredit(true)}>Bill Credit</button>
+          )}
+          {/* BIR 2307 (asked 2026-11-21): the supplier's certificate for what this cheque covers -- the
+              cheque itself when it records withholding or is an unbilled advance, else the bills its
+              bill credits paid (server: GET /reports/bir/2307/cheque/:id). */}
+          {can('/reports/bir-2307') && c.status !== 'void' && (
+            <button className="btn btn-sm" title="Generate the supplier's BIR 2307 for this cheque" onClick={open2307}>BIR 2307</button>
           )}
           {(can('/cheques', 'can_void') && !periodLocked) && c.status !== 'void' && <button className="btn btn-sm btn-warning" disabled={busy} onClick={handleVoid}>Void</button>}
         </div>

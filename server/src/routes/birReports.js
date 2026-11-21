@@ -781,6 +781,50 @@ router.get('/2307', requireAuth, requirePermission(ISSUE_ROUTE, 'can_view'), asy
   } catch (err) { return fail(res, next, err); }
 });
 
+// Which 2307 a cheque's "BIR 2307" button opens (asked 2026-11-21): { quarter, payee, docs } for
+// /reports/bir-2307/form, or { none: reason }.
+//   1. the cheque itself, when it is a 2307 document of its quarter -- it records withholding
+//      ('Cheque') or is an advance not billed yet ('Advance Cheque', tax at the supplier's usual rate);
+//   2. otherwise the Vendor Bills its applied bill credits went to (the advance was billed, and the
+//      bill carries the withholding) -- in the quarter of the latest of them.
+const quarterKey = (ymd) => `${ymd.slice(0, 4)}-Q${Math.floor((Number(ymd.slice(5, 7)) - 1) / 3) + 1}`;
+router.get('/2307/cheque/:id', requireAuth, requirePermission(ISSUE_ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const [[ch]] = await pool.query(
+      `SELECT id, cheque_no, status, DATE_FORMAT(date_created, '%Y-%m-%d') AS ymd FROM cheques WHERE id = ?`, [req.params.id]);
+    if (!ch) return res.status(404).json({ error: 'Cheque not found.' });
+    if (ch.status === 'void') return res.json({ none: 'This cheque is void.' });
+
+    const pick = async (quarter, wanted) => {
+      const q = quarterOf({ query: { quarter } });
+      const docs = (await withheldDocs(q.from, q.to)).filter(wanted);
+      if (!docs.length) return null;
+      const payee = docs[0].payee_key;
+      const keys = docs.filter((d) => d.payee_key === payee).map((d) => `${d.doc_type}-${d.id}`);
+      return { quarter: q.quarter, payee, docs: keys };
+    };
+
+    const own = await pick(quarterKey(ch.ymd), (d) => (d.doc_type === 'Cheque' || d.doc_type === 'Advance Cheque') && Number(d.id) === Number(ch.id));
+    if (own) return res.json(own);
+
+    const [bills] = await pool.query(
+      `SELECT DISTINCT vb.id, DATE_FORMAT(vb.date_created, '%Y-%m-%d') AS ymd
+         FROM cheque_bill_credits cbc
+         JOIN bill_credits bc ON bc.id = cbc.bill_credit_id AND bc.status <> 'void'
+         LEFT JOIN bill_credit_applications bca ON bca.bill_credit_id = bc.id
+         JOIN vendor_bills vb ON vb.id = COALESCE(bca.vendor_bill_id, bc.vendor_bill_id)
+        WHERE cbc.cheque_id = ? AND vb.status <> 'cancelled' AND vb.wtax_amount > 0
+        ORDER BY ymd DESC`, [ch.id]);
+    if (bills.length) {
+      const quarter = quarterKey(bills[0].ymd);
+      const ids = new Set(bills.filter((b) => quarterKey(b.ymd) === quarter).map((b) => Number(b.id)));
+      const viaBills = await pick(quarter, (d) => d.doc_type === 'Vendor Bill' && ids.has(Number(d.id)));
+      if (viaBills) return res.json(viaBills);
+    }
+    return res.json({ none: `Nothing was withheld on ${ch.cheque_no}: it records no withholding tax, is not an unbilled advance to a supplier we withhold from, and pays no bill with withholding.` });
+  } catch (err) { return fail(res, next, err); }
+});
+
 // One payee's form: Part I from the supplier, Part II from the Payor settings, Part III by ATC
 // with the income payments of each month of the quarter and the tax withheld.
 router.get('/2307/form', requireAuth, requirePermission(ISSUE_ROUTE, 'can_view'), async (req, res, next) => {
