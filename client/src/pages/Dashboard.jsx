@@ -153,24 +153,87 @@ function last6MonthLabels() {
 // month for Head Office -- each aging bucket's target % against its actual share, and the monthly
 // target. Same numbers as that page, which the server takes from the report itself.
 const pct1 = (v) => `${(Number(v || 0) * 100).toFixed(1)}%`;
-function CollectionIncentiveBreakdown({ inc }) {
+// The General Manager's top cards (2026-11-21), laid out as the GM's mock-up -- Actual Collection
+// against the monthly target with its aging buckets, Weighted Sales and Pending Billing stacked, and
+// tickets per department -- in the dashboard's own colours and font (theme-aware, day and night).
+function GmTopCards({ cards, navigate }) {
+  const inc = cards.headOfficeCollection.incentive;
+  const collected = inc ? inc.collected : cards.headOfficeCollection.amount;
+  const pct = inc ? (Number(inc.pct_of_target) || 0) * 100 : null; // the server sends a fraction (0.2332)
+  const R = 54; const C = 2 * Math.PI * R;
+  const arc = pct == null ? 0 : Math.min(100, Math.max(0, pct)) / 100 * C;
+  const lines = inc ? inc.lines : [];
+  // Fractions (0.49 = 49%); the tallest bar fills the chart.
+  const maxPct = Math.max(0.01, ...lines.flatMap((l) => [Number(l.target_pct) || 0, Number(l.actual_pct) || 0]));
+  const depts = cards.ticketsByDepartment || [];
+  const go = (path) => () => navigate(path);
   return (
-    <div className="holo-stat-breakdown">
-      <table>
-        <thead><tr><th>Aging</th><th>Target %</th><th>Actual %</th></tr></thead>
-        <tbody>
-          {inc.lines.map((l) => (
-            <tr key={l.key}>
-              <td>{l.label}</td>
-              <td>{pct1(l.target_pct)}</td>
-              <td className={l.actual_pct < l.target_pct ? 'under' : undefined}>{pct1(l.actual_pct)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-      <div className="holo-stat-breakdown-foot">
-        Monthly target <strong>₱{money(inc.monthly_target)}</strong> · {pct1(inc.pct_of_target)} reached
-        {inc.qualified ? ' · qualified' : ` · qualifies at ₱${money(inc.qualify_at)}`}
+    <div className="gm-top">
+      <div className="gm-card gm-collect" role="link" tabIndex={0} onClick={go('/treasury/collection-incentive')}
+        title="Open Treasury > Collection Incentive">
+        <div className="gm-collect-ring">
+          <svg viewBox="0 0 140 140" aria-hidden="true">
+            <circle cx="70" cy="70" r={R} className="gm-ring-track" />
+            <circle cx="70" cy="70" r={R} className="gm-ring-fill" strokeDasharray={`${arc} ${C}`} transform="rotate(-90 70 70)" />
+          </svg>
+          <div className="gm-ring-text">
+            <div className="gm-ring-pct">{pct == null ? '—' : `${pct.toFixed(2)}%`}</div>
+            <div className="gm-ring-sub">of the target</div>
+          </div>
+        </div>
+        <div className="gm-collect-body">
+          <div className="gm-label">Actual Collection · Head Office</div>
+          <div className="gm-collect-figs">
+            <div><span>Monthly target</span><strong>₱{inc ? money(inc.monthly_target) : '—'}</strong></div>
+            <div><span>Actual</span><strong className="gm-actual">₱{money(collected)}</strong></div>
+          </div>
+          {lines.length > 0 ? (<>
+            <div className="gm-legend"><span className="gm-key gm-key-actual" />Actual <span className="gm-key gm-key-target" />Target</div>
+            <div className="gm-bars">
+              {lines.map((l) => {
+                const a = Number(l.actual_pct) || 0; const t = Number(l.target_pct) || 0;
+                return (
+                  <div className="gm-bar-group" key={l.key} title={`${l.label}: actual ${pct1(a)} · target ${pct1(t)}`}>
+                    <div className="gm-bar-pair">
+                      <div className="gm-bar gm-bar-actual" style={{ height: `${(a / maxPct) * 100}%` }}><span>{pct1(a)}</span></div>
+                      <div className="gm-bar gm-bar-target" style={{ height: `${(t / maxPct) * 100}%` }}><span>{pct1(t)}</span></div>
+                    </div>
+                    <div className={`gm-bar-label${a < t ? ' under' : ''}`}>{l.label}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </>) : <div className="gm-muted">{cards.headOfficeCollection.count.toLocaleString('en-US')} payments this month</div>}
+        </div>
+      </div>
+
+      <div className="gm-stack">
+        <div className="gm-card gm-figure gm-tone-sales" role="link" tabIndex={0} onClick={go('/reports/weighted-sales')}>
+          <div className="gm-label">Weighted Sales</div>
+          <div className="gm-big">₱{money(cards.weightedSales.amount)}</div>
+          <div className="gm-muted">{cards.weightedSales.count.toLocaleString('en-US')} sales orders this month, net of tax</div>
+        </div>
+        <div className="gm-card gm-figure gm-tone-billing" role="link" tabIndex={0} onClick={go('/reports/pending-billing')}>
+          <div className="gm-label">Pending Billing</div>
+          <div className="gm-big">₱{money(cards.pendingBilling.amount)}</div>
+          <div className="gm-muted">{cards.pendingBilling.count.toLocaleString('en-US')} delivered job orders not yet billed</div>
+        </div>
+      </div>
+
+      <div className="gm-card gm-tickets" role="link" tabIndex={0} onClick={go('/tickets')}>
+        <div className="gm-label">Tickets · this month</div>
+        <table className="gm-ticket-table">
+          <thead><tr><th /><th>Approved</th><th>Resolved</th></tr></thead>
+          <tbody>
+            {depts.length === 0 && <tr><td colSpan={3} className="gm-muted">No tickets yet.</td></tr>}
+            {depts.map((d) => (
+              <tr key={d.department}><td>{d.department}</td><td>{d.approved}</td><td>{d.resolved}</td></tr>
+            ))}
+          </tbody>
+        </table>
+        {cards.pendingTicketApproval > 0 && (
+          <div className="gm-ticket-wait">{cards.pendingTicketApproval} waiting for your approval</div>
+        )}
       </div>
     </div>
   );
@@ -367,25 +430,9 @@ function AdminDashboard({ data, user, navigate, showInstallCalendar = false }) {
   return (
     <>
       {data.gmCards ? (
-        // The General Manager's own four (server/src/routes/dashboard.js generalManagerCards --
+        // The General Manager's own cards (server/src/routes/dashboard.js generalManagerCards --
         // the notes there say why each figure is filtered the way it is).
-        <StatRow cards={[
-          {
-            label: 'Pending Billing', value: `₱${money(data.gmCards.pendingBilling.amount)}`, icon: '🧾',
-            detail: `${data.gmCards.pendingBilling.count.toLocaleString('en-US')} delivered job orders not yet billed`,
-          },
-          {
-            label: 'Weighted Sales', value: `₱${money(data.gmCards.weightedSales.amount)}`, icon: '📈', trend: data.trend,
-            detail: `${data.gmCards.weightedSales.count.toLocaleString('en-US')} sales orders this month, net of tax`,
-          },
-          { label: 'Pending Ticket Approval', value: data.gmCards.pendingTicketApproval, icon: '⏳', detail: 'waiting on your sign-off' },
-          {
-            label: 'Actual Collection Head Office', value: `₱${money(data.gmCards.headOfficeCollection.amount)}`, icon: '💰',
-            detail: `${data.gmCards.headOfficeCollection.count.toLocaleString('en-US')} payments this month`,
-            extra: data.gmCards.headOfficeCollection.incentive
-              ? <CollectionIncentiveBreakdown inc={data.gmCards.headOfficeCollection.incentive} /> : null,
-          },
-        ]} />
+        <GmTopCards cards={data.gmCards} navigate={navigate} />
       ) : (
         <StatRow cards={[
           { label: 'Total Active Users', value: data.activeUsers, icon: '👥' },

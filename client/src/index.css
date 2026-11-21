@@ -1785,6 +1785,75 @@ button.progress-bar:disabled { cursor: not-allowed; opacity: 0.6; }
 /* The per-source split under a stat card's headline figure. Deliberately quieter than the
    value it breaks down, so the total still reads first. */
 .holo-stat-detail { font-size: 12px; font-weight: 600; color: rgba(255, 255, 255, 0.82); margin-top: 3px; white-space: nowrap; }
+/* The General Manager's top cards (Dashboard.jsx GmTopCards, 2026-11-21): the GM's mock-up layout in
+   the dashboard's own surface, font and colours, so they follow day / night mode like every card. */
+.gm-top { --gm-actual: #6a5ce0; --gm-target: #f59e0b; --gm-sales: #3f74e6; --gm-billing: #16a889;
+  display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1.1fr); gap: 18px; margin-bottom: 20px; }
+:root[data-theme='dark'] .gm-top { --gm-actual: #9d92ff; --gm-target: #fbbf24; --gm-sales: #7aa7ff; --gm-billing: #34d399; }
+.gm-card { position: relative; background: var(--dash-card-bg); border: 1px solid var(--dash-border); border-radius: 18px;
+  box-shadow: var(--dash-card-shadow); padding: 20px 22px; color: var(--dash-text); cursor: pointer; min-width: 0;
+  transition: transform .25s ease, box-shadow .25s ease; }
+.gm-card:hover { transform: translateY(-2px); box-shadow: 0 16px 36px rgba(43, 45, 66, .13); }
+.gm-card:focus-visible { outline: 2px solid var(--gm-actual); outline-offset: 2px; }
+.gm-label { font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--dash-text-dim); }
+.gm-muted { font-size: 12px; color: var(--dash-text-dim); margin-top: 6px; }
+
+.gm-collect { display: flex; gap: 22px; align-items: center; }
+.gm-collect-ring { position: relative; width: 150px; height: 150px; flex: none; }
+.gm-collect-ring svg { width: 100%; height: 100%; }
+.gm-ring-track { fill: none; stroke: var(--dash-border); stroke-width: 14; }
+.gm-ring-fill { fill: none; stroke: var(--gm-actual); stroke-width: 14; stroke-linecap: round; transition: stroke-dasharray .8s ease; }
+.gm-ring-text { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
+.gm-ring-pct { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.gm-ring-sub { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--dash-text-dim); }
+.gm-collect-body { flex: 1; min-width: 0; }
+.gm-collect-figs { display: flex; flex-wrap: wrap; gap: 6px 22px; margin: 8px 0 10px; }
+.gm-collect-figs span { display: block; font-size: 11px; color: var(--dash-text-dim); }
+.gm-collect-figs strong { font-size: 18px; font-variant-numeric: tabular-nums; }
+.gm-collect-figs .gm-actual { color: var(--gm-actual); }
+.gm-legend { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--dash-text-dim); margin-bottom: 6px; }
+.gm-key { width: 10px; height: 10px; border-radius: 3px; display: inline-block; margin-left: 6px; }
+.gm-key:first-child { margin-left: 0; }
+.gm-key-actual { background: var(--gm-actual); }
+.gm-key-target { background: var(--gm-target); }
+.gm-bars { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.gm-bar-group { display: flex; flex-direction: column; align-items: center; min-width: 0; }
+.gm-bar-pair { height: 96px; width: 100%; display: flex; align-items: flex-end; justify-content: center; gap: 4px; padding-top: 16px; }
+.gm-bar { position: relative; width: 42%; max-width: 22px; min-height: 3px; border-radius: 5px 5px 2px 2px; transition: height .8s ease; }
+.gm-bar span { position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); font-size: 9.5px; font-weight: 600;
+  white-space: nowrap; color: var(--dash-text-dim); padding-bottom: 2px; }
+.gm-bar-actual { background: var(--gm-actual); }
+.gm-bar-target { background: var(--gm-target); opacity: .85; }
+.gm-bar-label { margin-top: 6px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.gm-bar-label.under { color: #dc2626; }
+:root[data-theme='dark'] .gm-bar-label.under { color: #f87171; }
+
+.gm-stack { display: grid; grid-template-rows: 1fr 1fr; gap: 18px; min-width: 0; }
+.gm-figure { display: flex; flex-direction: column; justify-content: center; border-left: 5px solid var(--gm-accent); }
+.gm-tone-sales { --gm-accent: var(--gm-sales); }
+.gm-tone-billing { --gm-accent: var(--gm-billing); }
+.gm-big { font-size: 28px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 4px; color: var(--gm-accent);
+  overflow-wrap: anywhere; line-height: 1.15; }
+
+.gm-ticket-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
+.gm-ticket-table th, .gm-ticket-table td { background: transparent !important; color: var(--dash-text) !important; padding: 6px 4px;
+  border-bottom: 1px solid var(--dash-border); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.gm-ticket-table th { font-size: 11px; font-weight: 600; color: var(--dash-text-dim) !important; text-transform: uppercase; letter-spacing: .04em; }
+.gm-ticket-table td:first-child, .gm-ticket-table th:first-child { text-align: left; font-weight: 600; white-space: normal; }
+.gm-ticket-table tbody tr:last-child td { border-bottom: 0; }
+.gm-ticket-table tbody tr:hover td { background: transparent !important; }
+.gm-ticket-wait { margin-top: 10px; font-size: 12px; font-weight: 600; color: #b45309; background: rgba(245, 158, 11, .12);
+  border-radius: 8px; padding: 6px 10px; }
+:root[data-theme='dark'] .gm-ticket-wait { color: #fbbf24; }
+
+@media (max-width: 1100px) { .gm-top { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .gm-collect { grid-column: 1 / -1; } }
+@media (max-width: 640px) {
+  .gm-top { grid-template-columns: minmax(0, 1fr); }
+  .gm-collect { flex-direction: column; align-items: stretch; }
+  .gm-collect-ring { margin: 0 auto; }
+  .gm-bars { gap: 4px; }
+}
+
 /* The Collection Incentive split under the Actual Collection card (Dashboard.jsx). */
 .holo-stat-breakdown { margin-top: 10px; font-size: 11px; color: rgba(255, 255, 255, 0.9); }
 .holo-stat-breakdown table { width: 100%; border-collapse: collapse; }

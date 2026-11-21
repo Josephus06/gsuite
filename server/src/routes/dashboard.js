@@ -923,7 +923,7 @@ async function generalManagerCards() {
   const today = businessToday();
   const monthStart = `${today.slice(0, 7)}-01`;
   // Pending Billing is the Sales > Pending Billing report's own figure, all offices and reps.
-  const [billing, [[sales]], [[tickets]], [[collection]], incentive] = await Promise.all([
+  const [billing, [[sales]], [[tickets]], [[collection]], incentive, [ticketDepts]] = await Promise.all([
     pendingBillingSummary(),
     pool.query(
       `SELECT COUNT(*) AS count, COALESCE(SUM(net_of_tax), 0) AS amount
@@ -943,11 +943,23 @@ async function generalManagerCards() {
           AND (l.id IS NULL OR LOWER(TRIM(l.location_name)) LIKE 'head office%')`, [monthStart],
     ),
     headOfficeIncentive(today.slice(0, 7)),
+    // The Tickets card (2026-11-21): this month's approved and resolved tickets per department --
+    // every department that has ever received a ticket, so the list stays put month to month.
+    // Approved = the department head's or the GM's approval falls in the month.
+    pool.query(
+      `SELECT d.name AS department,
+              SUM(CASE WHEN t.approved_at >= ? OR t.gm_approved_at >= ? THEN 1 ELSE 0 END) AS approved,
+              SUM(CASE WHEN t.resolved_at >= ? THEN 1 ELSE 0 END) AS resolved
+         FROM tickets t JOIN departments d ON d.id = t.department_id
+        GROUP BY d.id, d.name
+        ORDER BY d.name`, [monthStart, monthStart, monthStart],
+    ),
   ]);
   return {
     pendingBilling: { count: Number(billing.count), amount: Number(billing.amount) },
     weightedSales: { count: Number(sales.count), amount: Number(sales.amount) },
     pendingTicketApproval: Number(tickets.count),
+    ticketsByDepartment: ticketDepts.map((r) => ({ department: r.department, approved: Number(r.approved), resolved: Number(r.resolved) })),
     headOfficeCollection: { count: Number(collection.count), amount: Number(collection.amount), incentive },
   };
 }
