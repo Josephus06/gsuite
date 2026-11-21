@@ -943,17 +943,24 @@ async function generalManagerCards() {
           AND (l.id IS NULL OR LOWER(TRIM(l.location_name)) LIKE 'head office%')`, [monthStart],
     ),
     headOfficeIncentive(today.slice(0, 7)),
-    // The Tickets card (2026-11-21): this month's approved and resolved tickets per department --
-    // only departments with any this month (15 departments, mostly zeros, made the card twice the
-    // height of its row), busiest first. Approved = the department head's or the GM's approval.
+    // The Tickets card (2026-11-21), per department the ticket was sent to -- only departments with
+    // any this month (15 departments, mostly zeros, made the card twice the height of its row),
+    // busiest first:
+    //   Approved  every ticket CREATED this month, less those still pending approval -- the same
+    //             tests as Tickets.jsx isPending / isGmPending: approvers named and not yet approved,
+    //             or forwarded to the GM and not yet approved by the GM. Declined ones are left out too.
+    //   Resolved  tickets resolved this month, whenever they were created.
     pool.query(
       `SELECT d.name AS department,
-              SUM(CASE WHEN t.approved_at >= ? OR t.gm_approved_at >= ? THEN 1 ELSE 0 END) AS approved,
+              SUM(CASE WHEN t.created_at >= ? AND t.declined_at IS NULL
+                        AND NOT (t.approved_at IS NULL AND EXISTS (SELECT 1 FROM ticket_approvers ta WHERE ta.ticket_id = t.id))
+                        AND NOT (t.forwarded_to_gm_at IS NOT NULL AND t.gm_approved_at IS NULL)
+                       THEN 1 ELSE 0 END) AS approved,
               SUM(CASE WHEN t.resolved_at >= ? THEN 1 ELSE 0 END) AS resolved
          FROM tickets t JOIN departments d ON d.id = t.department_id
         GROUP BY d.id, d.name
        HAVING approved > 0 OR resolved > 0
-        ORDER BY approved + resolved DESC, d.name`, [monthStart, monthStart, monthStart],
+        ORDER BY approved + resolved DESC, d.name`, [monthStart, monthStart],
     ),
   ]);
   return {
