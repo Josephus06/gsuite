@@ -167,54 +167,64 @@ function GmTopCards({ cards, navigate }) {
   const maxPct = Math.max(0.01, ...lines.flatMap((l) => [Number(l.target_pct) || 0, Number(l.actual_pct) || 0]));
   const depts = cards.ticketsByDepartment || [];
   const go = (path) => () => navigate(path);
+  const SHOWN = 6;
+  const totals = depts.reduce((t, d) => ({ approved: t.approved + d.approved, resolved: t.resolved + d.resolved }), { approved: 0, resolved: 0 });
+  const deptMax = Math.max(1, ...depts.map((d) => d.approved + d.resolved));
   return (
     <div className="gm-top">
       <div className="gm-card gm-collect" role="link" tabIndex={0} onClick={go('/treasury/collection-incentive')}
         title="Open Treasury > Collection Incentive">
-        <div className="gm-collect-ring">
-          <svg viewBox="0 0 140 140" aria-hidden="true">
-            <circle cx="70" cy="70" r={R} className="gm-ring-track" />
-            <circle cx="70" cy="70" r={R} className="gm-ring-fill" strokeDasharray={`${arc} ${C}`} transform="rotate(-90 70 70)" />
-          </svg>
-          <div className="gm-ring-text">
-            <div className="gm-ring-pct">{pct == null ? '—' : `${pct.toFixed(2)}%`}</div>
-            <div className="gm-ring-sub">of the target</div>
+        <div className="gm-collect-head">
+          <div>
+            <div className="gm-label">Actual Collection · Head Office</div>
+            <div className="gm-muted">{cards.headOfficeCollection.count.toLocaleString('en-US')} payments this month</div>
           </div>
-        </div>
-        <div className="gm-collect-body">
-          <div className="gm-label">Actual Collection · Head Office</div>
           <div className="gm-collect-figs">
             <div><span>Monthly target</span><strong>₱{inc ? money(inc.monthly_target) : '—'}</strong></div>
             <div><span>Actual</span><strong className="gm-actual">₱{money(collected)}</strong></div>
           </div>
-          {lines.length > 0 ? (<>
-            <div className="gm-legend"><span className="gm-key gm-key-actual" />Actual <span className="gm-key gm-key-target" />Target</div>
-            <div className="gm-bars">
-              {lines.map((l) => {
-                const a = Number(l.actual_pct) || 0; const t = Number(l.target_pct) || 0;
-                return (
-                  <div className="gm-bar-group" key={l.key} title={`${l.label}: actual ${pct1(a)} · target ${pct1(t)}`}>
-                    <div className="gm-bar-pair">
-                      <div className="gm-bar gm-bar-actual" style={{ height: `${(a / maxPct) * 100}%` }}><span>{pct1(a)}</span></div>
-                      <div className="gm-bar gm-bar-target" style={{ height: `${(t / maxPct) * 100}%` }}><span>{pct1(t)}</span></div>
-                    </div>
-                    <div className={`gm-bar-label${a < t ? ' under' : ''}`}>{l.label}</div>
-                  </div>
-                );
-              })}
+        </div>
+        <div className="gm-collect-main">
+          <div className="gm-collect-ring">
+            <svg viewBox="0 0 140 140" aria-hidden="true">
+              <circle cx="70" cy="70" r={R} className="gm-ring-track" />
+              <circle cx="70" cy="70" r={R} className="gm-ring-fill" strokeDasharray={`${arc} ${C}`} transform="rotate(-90 70 70)" />
+            </svg>
+            <div className="gm-ring-text">
+              <div className="gm-ring-pct">{pct == null ? '—' : `${pct.toFixed(2)}%`}</div>
+              <div className="gm-ring-sub">of the target</div>
             </div>
-          </>) : <div className="gm-muted">{cards.headOfficeCollection.count.toLocaleString('en-US')} payments this month</div>}
+          </div>
+          {lines.length > 0 && (
+            <div className="gm-chart">
+              <div className="gm-legend"><span className="gm-key gm-key-actual" />Actual <span className="gm-key gm-key-target" />Target</div>
+              <div className="gm-bars">
+                {lines.map((l) => {
+                  const a = Number(l.actual_pct) || 0; const t = Number(l.target_pct) || 0;
+                  return (
+                    <div className="gm-bar-group" key={l.key} title={`${l.label}: actual ${pct1(a)} · target ${pct1(t)}`}>
+                      <div className="gm-bar-pair">
+                        <div className="gm-bar gm-bar-actual" style={{ height: `${(a / maxPct) * 100}%` }}><span>{pct1(a)}</span></div>
+                        <div className="gm-bar gm-bar-target" style={{ height: `${(t / maxPct) * 100}%` }}><span>{pct1(t)}</span></div>
+                      </div>
+                      <div className={`gm-bar-label${a < t ? ' under' : ''}`}>{l.label}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
       <div className="gm-stack">
         <div className="gm-card gm-figure gm-tone-sales" role="link" tabIndex={0} onClick={go('/reports/weighted-sales')}>
-          <div className="gm-label">Weighted Sales</div>
+          <div className="gm-figure-top"><div className="gm-label">Weighted Sales</div><div className="gm-icon" aria-hidden="true">📈</div></div>
           <div className="gm-big">₱{money(cards.weightedSales.amount)}</div>
           <div className="gm-muted">{cards.weightedSales.count.toLocaleString('en-US')} sales orders this month, net of tax</div>
         </div>
         <div className="gm-card gm-figure gm-tone-billing" role="link" tabIndex={0} onClick={go('/reports/pending-billing')}>
-          <div className="gm-label">Pending Billing</div>
+          <div className="gm-figure-top"><div className="gm-label">Pending Billing</div><div className="gm-icon" aria-hidden="true">🧾</div></div>
           <div className="gm-big">₱{money(cards.pendingBilling.amount)}</div>
           <div className="gm-muted">{cards.pendingBilling.count.toLocaleString('en-US')} delivered job orders not yet billed</div>
         </div>
@@ -222,17 +232,29 @@ function GmTopCards({ cards, navigate }) {
 
       <div className="gm-card gm-tickets" role="link" tabIndex={0} onClick={go('/tickets')}>
         <div className="gm-label">Tickets · this month</div>
-        <table className="gm-ticket-table">
-          <thead><tr><th /><th>Approved</th><th>Resolved</th></tr></thead>
-          <tbody>
-            {depts.length === 0 && <tr><td colSpan={3} className="gm-muted">No tickets yet.</td></tr>}
-            {depts.map((d) => (
-              <tr key={d.department}><td>{d.department}</td><td>{d.approved}</td><td>{d.resolved}</td></tr>
+        <div className="gm-ticket-totals">
+          <div><strong>{totals.approved}</strong><span><i className="gm-key gm-key-actual" />Approved</span></div>
+          <div><strong>{totals.resolved}</strong><span><i className="gm-key gm-key-resolved" />Resolved</span></div>
+        </div>
+        {depts.length === 0 ? <div className="gm-muted">No tickets approved or resolved yet this month.</div> : (
+          <div className="gm-dept-list">
+            {depts.slice(0, SHOWN).map((d) => (
+              <div className="gm-dept" key={d.department} title={`${d.department}: ${d.approved} approved, ${d.resolved} resolved`}>
+                <div className="gm-dept-row">
+                  <span className="gm-dept-name">{d.department}</span>
+                  <span className="gm-dept-nums"><b className="gm-n-approved">{d.approved}</b> · <b className="gm-n-resolved">{d.resolved}</b></span>
+                </div>
+                <div className="gm-dept-track">
+                  <div className="gm-dept-fill gm-fill-approved" style={{ width: `${(d.approved / deptMax) * 100}%` }} />
+                  <div className="gm-dept-fill gm-fill-resolved" style={{ width: `${(d.resolved / deptMax) * 100}%` }} />
+                </div>
+              </div>
             ))}
-          </tbody>
-        </table>
+            {depts.length > SHOWN && <div className="gm-muted">+{depts.length - SHOWN} more department{depts.length - SHOWN === 1 ? '' : 's'}</div>}
+          </div>
+        )}
         {cards.pendingTicketApproval > 0 && (
-          <div className="gm-ticket-wait">{cards.pendingTicketApproval} waiting for your approval</div>
+          <div className="gm-ticket-wait">⏳ {cards.pendingTicketApproval} waiting for your approval</div>
         )}
       </div>
     </div>

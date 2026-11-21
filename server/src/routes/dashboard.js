@@ -944,15 +944,16 @@ async function generalManagerCards() {
     ),
     headOfficeIncentive(today.slice(0, 7)),
     // The Tickets card (2026-11-21): this month's approved and resolved tickets per department --
-    // every department that has ever received a ticket, so the list stays put month to month.
-    // Approved = the department head's or the GM's approval falls in the month.
+    // only departments with any this month (15 departments, mostly zeros, made the card twice the
+    // height of its row), busiest first. Approved = the department head's or the GM's approval.
     pool.query(
       `SELECT d.name AS department,
               SUM(CASE WHEN t.approved_at >= ? OR t.gm_approved_at >= ? THEN 1 ELSE 0 END) AS approved,
               SUM(CASE WHEN t.resolved_at >= ? THEN 1 ELSE 0 END) AS resolved
          FROM tickets t JOIN departments d ON d.id = t.department_id
         GROUP BY d.id, d.name
-        ORDER BY d.name`, [monthStart, monthStart, monthStart],
+       HAVING approved > 0 OR resolved > 0
+        ORDER BY approved + resolved DESC, d.name`, [monthStart, monthStart, monthStart],
     ),
   ]);
   return {
