@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
@@ -194,7 +194,7 @@ function ItemsTable({ doc, withDate }) {
 
 // The Fuel Slip (asked 2026-11-17), laid out like the paper P O Slip the gas station already honours:
 // logo, FUEL SLIP, Control No. on the right, Date / Plate No in the left column and Charge to / No. of
-// Liters in the right, the bearer notice, then Driver's Signature and Gas Station / Cashier side by side
+// Liters in the right, the bearer notice, then the signatures stacked: Driver, Approved By, Gas Station Cashier
 // with Noted By centred under them. The requester signs as the driver and the approver as Noted By, each
 // with their e-signature when one is on file; the cashier signs by hand.
 //
@@ -202,8 +202,32 @@ function ItemsTable({ doc, withDate }) {
 // exactly the 72 mm printable width, so nothing is scaled, and 203 dpi keeps the small type, logo and
 // signatures sharp. It is NOT for the XP-76IIN: that is a dot-matrix printer with only 63.5 mm printable,
 // and this two-column layout shrunk to fit it came out unreadable (2026-11-19).
-function FuelSlip({ doc }) {
+// Print-once (asked 2026-11-23): Print first records the print on the server (POST /forms/:id/printed),
+// which refuses a second one unless the user is a System Admin; only then does the dialog open. The
+// sheet prints only while that button has armed it -- Ctrl+P on the preview prints a blank page -- so
+// every copy is counted. An already printed slip is not even sent to a non-admin (PrintLocked below).
+function FuelSlip({ doc, onPrinted }) {
   const d = doc.detail || {};
+  const pageRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const ps = doc.print_state || null;
+  const printed = ps && ps.print_count > 0;
+  async function printOnce() {
+    setBusy(true); setErr('');
+    try {
+      await api.post(`/forms/${doc.id}/printed`);
+    } catch (e) {
+      setErr(e.response?.data?.error || 'Could not record the print, so it was not printed.');
+      setBusy(false);
+      return;
+    }
+    const page = pageRef.current;
+    page.classList.add('fs-armed');
+    const done = () => { page.classList.remove('fs-armed'); window.removeEventListener('afterprint', done); setBusy(false); if (onPrinted) onPrinted(); };
+    window.addEventListener('afterprint', done);
+    window.print();
+  }
   const ink = (image) => (
     <div className="sig-ink" style={{ '--sig-h': '5mm' }}>{image ? <img src={image} alt="" /> : null}</div>
   );
@@ -211,7 +235,7 @@ function FuelSlip({ doc }) {
     <div className="fs-pair"><span className="fs-label">{label}</span><span className="fs-line">{value || ''}</span></div>
   );
   return (
-    <div className="fs-page">
+    <div className="fs-page" ref={pageRef}>
       <style>{`
         .fs-page { background: #fff; color: #000; padding: 16px; }
         .fs-toolbar { margin-bottom: 12px; }
@@ -242,25 +266,35 @@ function FuelSlip({ doc }) {
                    white-space: normal; overflow-wrap: break-word; min-height: 4.5mm; }
         .fs-notice { text-align: left; margin: 3mm 0 0; text-indent: 5mm; font-size: 9pt; line-height: 1.35; }
         /* Room above for the e-signature, which is drawn rising above its line. */
-        .fs-signs { display: flex; justify-content: space-between; margin-top: auto; padding-top: 6mm; }
-        .fs-sign { width: 33mm; text-align: center; font-size: 8pt; letter-spacing: 0.2pt; }
-        .fs-sign-name { font-size: 9pt; font-weight: 700; min-height: 3.5mm; overflow-wrap: break-word; }
-        .fs-sign-rule { border-top: 1px solid #000; margin-top: 0.3mm; padding-top: 0.3mm; }
-        .fs-noted { display: flex; justify-content: center; margin-top: 4mm; }
+        /* Stacked, one under the other, each line the full width (2026-11-23). */
+        .fs-signs { display: flex; flex-direction: column; gap: 5mm; margin-top: auto; padding-top: 6mm; }
+        .fs-sign { width: 100%; text-align: center; font-size: 8.5pt; letter-spacing: 0.2pt; }
+        .fs-sign-name { font-size: 9.5pt; font-weight: 700; min-height: 4mm; overflow-wrap: break-word; }
+        .fs-sign-rule { border-top: 1px solid #000; margin-top: 0.3mm; padding-top: 0.4mm; }
         @media print {
           .fs-no-print { display: none !important; }
           .fs-page { padding: 0; }
+          .fs-page:not(.fs-armed) .fs-sheet { display: none !important; }
+          .fs-page:not(.fs-armed)::after { content: 'Use the Print button on the page -- a Fuel Slip prints once.'; font: 10pt sans-serif; }
           .fs-sheet { outline: none; margin: 0; }
           /* 72 mm wide = the 80 mm printer's printable width, so nothing is scaled. Taller than wide ON
              PURPOSE: a landscape page makes Chrome turn the roll sideways and split the slip across two
              sheets (REQ-1744, 2026-11-19). 135 mm leaves room for the larger type (2026-11-20) and the Gas
-             Station Branch line (2026-11-23); the rest is feed. */
-          @page { size: 72mm 135mm; margin: 0; }
+             Station Branch line and the stacked signatures (2026-11-23); the rest is feed. */
+          @page { size: 72mm 150mm; margin: 0; }
         }
       `}</style>
       <div className="fs-toolbar fs-no-print">
-        <button className="btn btn-sm btn-primary" onClick={() => window.print()}>Print</button>
+        <button className="btn btn-sm btn-primary" disabled={busy} onClick={printOnce}>
+          {busy ? 'Printing…' : printed ? 'Reprint (admin)' : 'Print'}
+        </button>
         <span className="muted" style={{ marginLeft: 10, fontSize: 12 }}>80 mm thermal printer (e.g. Xprinter XP-80) · 72 mm wide slip. In the print dialog: Margins None, Scale Default.</span>
+        <div style={{ marginTop: 6, fontSize: 12.5 }}>
+          {printed
+            ? <span style={{ color: '#b45309', fontWeight: 600 }}>Already printed {ps.print_count} time{ps.print_count === 1 ? '' : 's'} — first on {fmtDate(String(ps.first_printed_at || '').slice(0, 10))}{ps.first_printed_by_name ? ` by ${ps.first_printed_by_name}` : ''}. You can reprint it as an admin.</span>
+            : <span className="muted">This slip can be printed <strong>once</strong>. After that only an admin can reprint it.</span>}
+          {err && <div style={{ color: '#b91c1c', fontWeight: 600, marginTop: 4 }}>{err}</div>}
+        </div>
       </div>
       <div className="fs-sheet">
         <img className="fs-logo" src={letterhead} alt="GraphicStar Imaging Corp." />
@@ -278,6 +312,7 @@ function FuelSlip({ doc }) {
           This slip allows the bearer for refuel in any Light Fuels Corporation branches. This is a system generated
           form, no need for original signature.
         </div>
+        {/* One aligned column, full width (asked 2026-11-23): Driver, Approved By, then the cashier. */}
         <div className="fs-signs">
           <div className="fs-sign">
             {ink(doc.owner_signature)}
@@ -285,19 +320,33 @@ function FuelSlip({ doc }) {
             <div className="fs-sign-rule">Driver&rsquo;s Signature</div>
           </div>
           <div className="fs-sign">
-            {ink(null)}
-            <div className="fs-sign-name" />
-            <div className="fs-sign-rule">Gas Station / Cashier</div>
-          </div>
-        </div>
-        <div className="fs-noted">
-          <div className="fs-sign">
             {ink(doc.approved_signature)}
             <div className="fs-sign-name">{doc.approved_by_name || ''}</div>
             <div className="fs-sign-rule">Approved By</div>
           </div>
+          <div className="fs-sign">
+            {ink(null)}
+            <div className="fs-sign-name" />
+            <div className="fs-sign-rule">Gas Station Cashier Signature</div>
+          </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// A Fuel Slip already printed, opened by someone who may not reprint it: who printed it and when.
+function PrintLocked({ doc }) {
+  const ps = doc.print_state || {};
+  return (
+    <div style={{ maxWidth: 520, margin: '60px auto', padding: 24, textAlign: 'center', font: '14px/1.6 system-ui, sans-serif' }}>
+      <div style={{ fontSize: 34 }}>🔒</div>
+      <h2 style={{ margin: '8px 0' }}>{doc.request_no || doc.type_label} was already printed</h2>
+      <p style={{ color: '#64748b' }}>
+        A Fuel Slip can be printed only once
+        {ps.first_printed_at ? <> — it was printed on <strong>{fmtDate(String(ps.first_printed_at).slice(0, 10))}</strong>{ps.first_printed_by_name ? <> by <strong>{ps.first_printed_by_name}</strong></> : null}</> : null}.
+        Ask an admin to reprint it.
+      </p>
     </div>
   );
 }
@@ -308,11 +357,10 @@ export default function FormPrint() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    api.get(`/forms/${id}/print`)
-      .then(({ data }) => { setDoc(data); setLoading(false); })
-      .catch((e) => { setError(e.response?.data?.error || 'This form cannot be printed.'); setLoading(false); });
-  }, [id]);
+  const load = useCallback(() => api.get(`/forms/${id}/print`)
+    .then(({ data }) => { setDoc(data); setLoading(false); })
+    .catch((e) => { setError(e.response?.data?.error || 'This form cannot be printed.'); setLoading(false); }), [id]);
+  useEffect(() => { load(); }, [load]);
 
   if (loading) return <LoadingSpinner />;
   if (error) return <div className="error-banner" style={{ margin: 20 }}>{error}</div>;
@@ -321,7 +369,8 @@ export default function FormPrint() {
   const isFund = doc.type === 'liquidation' || doc.type === 'revolving_fund';
 
   // A Fuel Request prints as a slip on the XP-76IIN's 76 mm roll (asked 2026-11-17), not on A4.
-  if (doc.type === 'fuel') return <FuelSlip doc={doc} />;
+  if (doc.print_locked) return <PrintLocked doc={doc} />;
+  if (doc.type === 'fuel') return <FuelSlip doc={doc} onPrinted={load} />;
 
   return (
     <div className="rf-page">

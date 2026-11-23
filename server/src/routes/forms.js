@@ -2540,25 +2540,60 @@ router.delete('/:id/attachments/:attachmentId', requireAuth, async (req, res, ne
   } catch (err) { next(err); }
 });
 
+// Why a form cannot be printed yet, or null when it can.
+function printBlockedReason(doc) {
+  // An attendance adjustment prints once its superior has noted it, like the trip sheet.
+  const printsWhenNoted = ['business_trip', 'attendance_adjustment'].includes(doc.type);
+  // Overtime filed for someone else ends at accepted -- a step past approved -- and prints there too.
+  const allowed = printsWhenNoted ? ['noted', 'approved'] : doc.type === 'overtime' ? ['approved', 'accepted'] : ['approved'];
+  if (allowed.includes(doc.status)) return null;
+  return printsWhenNoted
+    ? `${TYPE_LABELS[doc.type]} can be printed once it has been noted.`
+    : 'Only an approved form can be printed.';
+}
+
+// A Fuel Slip prints ONCE (asked 2026-11-23): it is the bearer's voucher at the gas station, so a
+// second copy is a second tank. After the first print only a System Admin may print it again.
+// Counted in form_requests.print_count by POST /:id/printed, which the Print button calls BEFORE the
+// print dialog opens; columns from db/add-form-print-count.js -- missing (not migrated yet), every
+// form reads as never printed rather than the page failing.
+const PRINT_ONCE_TYPES = ['fuel'];
+async function printState(formId) {
+  try {
+    const [[r]] = await pool.query(
+      `SELECT f.print_count, f.first_printed_at, COALESCE(u.display_name, u.username) AS first_printed_by_name
+         FROM form_requests f LEFT JOIN users u ON u.id = f.first_printed_by WHERE f.id = ?`, [formId]);
+    return r ? { print_count: Number(r.print_count) || 0, first_printed_at: r.first_printed_at, first_printed_by_name: r.first_printed_by_name } : null;
+  } catch (e) {
+    if (e.code === 'ER_BAD_FIELD_ERROR') return { print_count: 0, first_printed_at: null, first_printed_by_name: null, untracked: true };
+    throw e;
+  }
+}
+
 router.get('/:id/print', requireAuth, requirePermission(ROUTE, 'can_print'), async (req, res, next) => {
   try {
     const doc = await loadFull(req.params.id);
     if (!doc) return res.status(404).json({ error: 'Not found' });
     if (!(await maySee(req.user.id, doc))) return res.status(403).json({ error: 'This form is not yours to view.' });
 
-    // An attendance adjustment prints once its superior has noted it, like the trip sheet.
-    const printsWhenNoted = ['business_trip', 'attendance_adjustment'].includes(doc.type);
-    // Overtime filed for someone else ends at accepted -- a step past approved -- and prints there too.
-    const allowed = printsWhenNoted ? ['noted', 'approved'] : doc.type === 'overtime' ? ['approved', 'accepted'] : ['approved'];
-    if (!allowed.includes(doc.status)) {
-      return res.status(403).json({
-        error: printsWhenNoted
-          ? `${TYPE_LABELS[doc.type]} can be printed once it has been noted.`
-          : 'Only an approved form can be printed.',
-      });
-    }
+    const blocked = printBlockedReason(doc);
+    if (blocked) return res.status(403).json({ error: blocked });
 
     doc.type_label = TYPE_LABELS[doc.type] || doc.type;
+
+    // Print-once: an already printed slip is not sent at all to someone who may not reprint it --
+    // only who printed it and when -- so the old copy cannot be printed again from the browser.
+    if (PRINT_ONCE_TYPES.includes(doc.type)) {
+      const st = await printState(doc.id);
+      const admin = await isSystemAdmin(req.user.id);
+      doc.print_state = { ...st, may_reprint: admin, print_once: true };
+      if (st && st.print_count > 0 && !admin) {
+        return res.json({
+          id: doc.id, type: doc.type, type_label: doc.type_label, request_no: doc.request_no,
+          print_locked: true, print_state: doc.print_state,
+        });
+      }
+    }
 
     // The three signatures, fetched HERE and nowhere else. They are a few KB of PNG each and only
     // the printed sheet has anywhere to put them -- loading them on every form view would put
@@ -2585,6 +2620,47 @@ router.get('/:id/print', requireAuth, requirePermission(ROUTE, 'can_print'), asy
     }
     return res.json(doc);
   } catch (err) { return next(err); }
+});
+
+// Record a print -- called by the Print button before the dialog opens. For a print-once form a
+// second print is refused unless a System Admin asks. Row-locked so two quick clicks cannot both
+// count as the first.
+router.post('/:id/printed', requireAuth, requirePermission(ROUTE, 'can_print'), async (req, res, next) => {
+  const conn = await pool.getConnection();
+  try {
+    const doc = await loadFull(req.params.id);
+    if (!doc) return res.status(404).json({ error: 'Not found' });
+    if (!(await maySee(req.user.id, doc))) return res.status(403).json({ error: 'This form is not yours to view.' });
+    const blocked = printBlockedReason(doc);
+    if (blocked) return res.status(403).json({ error: blocked });
+    if (!PRINT_ONCE_TYPES.includes(doc.type)) return res.json({ ok: true });
+
+    const admin = await isSystemAdmin(req.user.id);
+    await conn.beginTransaction();
+    let row;
+    try {
+      [[row]] = await conn.query('SELECT print_count FROM form_requests WHERE id = ? FOR UPDATE', [doc.id]);
+    } catch (e) {
+      await conn.rollback();
+      if (e.code === 'ER_BAD_FIELD_ERROR') return res.json({ ok: true, untracked: true }); // not migrated yet
+      throw e;
+    }
+    if (Number(row.print_count) > 0 && !admin) {
+      await conn.rollback();
+      return res.status(409).json({ error: `${doc.request_no || 'This slip'} was already printed. Only an admin can reprint it.` });
+    }
+    await conn.query(
+      `UPDATE form_requests SET print_count = print_count + 1,
+              first_printed_at = COALESCE(first_printed_at, NOW()), first_printed_by = COALESCE(first_printed_by, ?)
+        WHERE id = ?`, [req.user.id, doc.id]);
+    await conn.commit();
+    return res.json({ ok: true, ...(await printState(doc.id)) });
+  } catch (err) {
+    try { await conn.rollback(); } catch { /* already done */ }
+    return next(err);
+  } finally {
+    conn.release();
+  }
 });
 
 module.exports = router;
