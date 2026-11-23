@@ -15,13 +15,14 @@ function lastMonth() {
   const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const last = new Date(now.getFullYear(), now.getMonth(), 0);
   const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-  return { from: iso(first), to: iso(last), payeeType: '', payee: null };
+  return { from: iso(first), to: iso(last), payeeType: '', payee: null, type: '' };
 }
 
 // The filters as query params. Payee Type alone narrows to all suppliers or all employees; a
 // chosen Payee narrows to that one.
 const filterParams = (r) => ({
   from: r.from, to: r.to,
+  ...(r.type ? { type: r.type } : {}),
   ...(r.payeeType ? { payee_type: r.payeeType } : {}),
   ...(r.payeeType && r.payee ? { payee_id: r.payee.id } : {}),
 });
@@ -73,6 +74,7 @@ export default function DisbursementReport() {
 
   const rows = data?.rows || [];
   const pending = data?.bill_payments_without_release_date || 0;
+  const pendingCheques = data?.cheques_without_release_date || 0;
 
   return (
     <div>
@@ -96,6 +98,18 @@ export default function DisbursementReport() {
           <div className="field">
             <label>To</label>
             <input type="date" value={range.to} onChange={(e) => setRange({ ...range, to: e.target.value })} />
+          </div>
+          {/* Type (2026-11-23): advance cheques (a line on 13100 Advances To Suppliers) apart from other
+              cheques, and Fund Transfers as their own source. */}
+          <div className="field">
+            <label>Type</label>
+            <select value={range.type} onChange={(e) => setRange({ ...range, type: e.target.value })}>
+              <option value="">All</option>
+              <option>Cheque</option>
+              <option>Advance Cheque</option>
+              <option>Bill Payment</option>
+              <option>Fund Transfer</option>
+            </select>
           </div>
           <div className="field">
             <label>Payee Type</label>
@@ -136,24 +150,33 @@ export default function DisbursementReport() {
         </div>
       )}
 
+      {pendingCheques > 0 && (
+        <div className="warning-banner" style={{ marginBottom: 8 }}>
+          {pendingCheques} cheque{pendingCheques === 1 ? ' has' : 's have'} no Date Released (advance cheques among them) and
+          {pendingCheques === 1 ? ' is' : ' are'} not included in any date range. Set it on the Cheque screen for
+          {pendingCheques === 1 ? ' it' : ' them'} to appear here.
+        </div>
+      )}
+
       {loading ? <LoadingSpinner /> : (
         <div className="card">
           <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
             {rows.length} disbursement{rows.length === 1 ? '' : 's'} released {applied.from} to {applied.to}
             {applied.payeeType && <> to {applied.payee ? applied.payee.name : `all ${applied.payeeType === 'supplier' ? 'suppliers' : 'employees'}`}</>}
-            {rows.length > 0 && <> — total {money(data?.total_amount)}</>}
+            {rows.length > 0 && <> — total {money(data?.total_amount)} · EWT {money(data?.total_ewt)}</>}
           </div>
           <div className="table-wrap">
             <table>
               <thead>
                 <tr>
                   <th>Date released</th><th>Payee</th><th>Date Created</th><th>Cheque No.</th>
-                  <th>Account</th><th>Memo</th><th>Source</th><th style={{ textAlign: 'right' }}>Amount</th>
+                  <th>Account</th><th>Memo</th><th>Type</th><th style={{ textAlign: 'right' }}>Amount</th>
+                  <th style={{ textAlign: 'right' }}>EWT</th><th>2307</th>
                 </tr>
               </thead>
               <tbody>
                 {rows.length === 0 && (
-                  <tr><td colSpan={8} className="muted" style={{ textAlign: 'center', padding: 20 }}>
+                  <tr><td colSpan={10} className="muted" style={{ textAlign: 'center', padding: 20 }}>
                     Nothing was released in this range.
                   </td></tr>
                 )}
@@ -165,8 +188,19 @@ export default function DisbursementReport() {
                     <td>{r.cheque_no || '—'}</td>
                     <td>{r.account_code ? `${r.account_code} — ${r.account_name}` : (r.account_name || '—')}</td>
                     <td>{r.memo || ''}</td>
-                    <td>{r.source}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {r.type}
+                      {r.doc_no && <div className="muted" style={{ fontSize: 11 }}>{r.doc_no}</div>}
+                    </td>
                     <td style={{ textAlign: 'right' }}>{money(r.amount)}</td>
+                    <td style={{ textAlign: 'right' }} title={r.ewt_estimated ? 'Estimated at the supplier’s usual rate -- the advance is not billed yet (as on BIR 2307 to Suppliers)' : undefined}>
+                      {Number(r.ewt) ? money(r.ewt) : ''}{r.ewt_estimated && <span className="muted" style={{ fontSize: 11 }}> est.</span>}
+                    </td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {!r.bir_2307 ? '' : r.bir_2307.released
+                        ? <span className="badge badge-success" title="A BIR 2307 covering this payment has been issued">Released {day(r.bir_2307.issued_at)}</span>
+                        : <span className="badge badge-warning">Not yet released</span>}
+                    </td>
                   </tr>
                 ))}
               </tbody>
