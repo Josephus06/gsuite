@@ -41,6 +41,11 @@ export default function ReversalJournalModal({ invoiceId, previewPath, voidPath,
     ]).then(([p, l]) => {
       setPreview(p.data);
       setLocation(p.data.location);
+      // A post-dated document (a cheque dated 2027, asked 2026-11-23) could not be voided: the date
+      // defaulted to today, which the server refuses as before the document's date. Default such a
+      // reversal to the document's own date, so it nets out in the same period as the entry it cancels.
+      const docDay = String(p.data.doc_date || p.data.invoice_date || '').slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(docDay) && docDay > today()) setDate(docDay);
       setLocations(pick(l.data));
     }).catch((e) => setError(e.response?.data?.error || 'Could not load the reversal.'));
   }, [previewUrl]);
