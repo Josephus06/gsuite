@@ -173,6 +173,8 @@ export default function BirPurchaseReport() {
                     <th>Reference No</th>
                     <th>Date Created</th>
                     <th>Vendor</th>
+                    {/* The accounts the bill debits, as its GL Impact shows them (Input VAT left out). */}
+                    <th>Expense Account</th>
                     <th>Tax Code</th>
                     <th className="text-right">Net of Tax</th>
                     <th className="text-right">Tax Amount</th>
@@ -186,7 +188,7 @@ export default function BirPurchaseReport() {
                 <tbody>
                   {rows.length === 0 && (
                     <tr>
-                      <td colSpan={13} className="muted" style={{ textAlign: 'center', padding: 20 }}>
+                      <td colSpan={14} className="muted" style={{ textAlign: 'center', padding: 20 }}>
                         No vendor bills match this filter.
                       </td>
                     </tr>
@@ -198,6 +200,11 @@ export default function BirPurchaseReport() {
                       <td>{r.reference_no}</td>
                       <td>{day(r.date_created)}</td>
                       <td><SupplierLink id={r.supplier_id} name={r.supplier_name} /></td>
+                      <td style={{ minWidth: 180 }}>
+                        {r.expense_account
+                          ? r.expense_account.split('; ').map((a) => <div key={a}>{a}</div>)
+                          : <span className="muted">—</span>}
+                      </td>
                       <td>{r.tax_code}</td>
                       <td className="text-right">{money(r.net_of_tax)}</td>
                       <td className="text-right">{money(r.tax_amount)}</td>

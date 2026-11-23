@@ -157,6 +157,51 @@ router.get('/sales', requireAuth, requirePermission(SALES_ROUTE, 'can_view'), as
   }
 });
 
+// The Purchase Report's Expense Account column (asked 2026-11-23): the accounts each bill DEBITS, as
+// its GL Impact tab shows them -- an imported bill from the source's own entry (live_gl_entries), any
+// other computed from its lines (lib/glImpact.js computeVendorBillGl) -- less Input VAT (14300), which
+// is not what the purchase was for. Several accounts are joined "code name; code name".
+const INPUT_VAT_CODE = '14300';
+async function expenseAccountsFor(billIds) {
+  const ids = [...new Set(billIds.map(Number).filter(Boolean))];
+  const out = new Map();
+  if (!ids.length) return out;
+  const add = (id, code, name) => {
+    if (!code || String(code) === INPUT_VAT_CODE) return;
+    const label = `${code} ${name || ''}`.trim();
+    if (!out.has(id)) out.set(id, []);
+    if (!out.get(id).includes(label)) out.get(id).push(label);
+  };
+  const withLive = new Set();
+  for (let k = 0; k < ids.length; k += 1000) {
+    const [live] = await pool.query(
+      `SELECT source_id, account_code, MAX(account_name) AS account_name, SUM(debit) AS debit
+         FROM live_gl_entries WHERE source_type = 'vendor_bill' AND source_id IN (?)
+        GROUP BY source_id, account_code ORDER BY source_id, MIN(id)`, [ids.slice(k, k + 1000)]);
+    for (const r of live) {
+      withLive.add(Number(r.source_id));
+      if (Number(r.debit) > 0.004) add(Number(r.source_id), r.account_code, r.account_name);
+    }
+  }
+  const rest = ids.filter((id) => !withLive.has(id));
+  if (rest.length) {
+    const { computeVendorBillGl, vendorBillDebitLines } = require('../lib/glImpact');
+    const debitLines = await vendorBillDebitLines(rest);
+    for (let k = 0; k < rest.length; k += 1000) {
+      const [bills] = await pool.query(
+        `SELECT vb.id, vb.gross_amount, vb.net_of_tax, vb.tax_amount, vb.wtax_amount, vb.purchase_order_id,
+                coa.account_code, coa.account_name
+           FROM vendor_bills vb LEFT JOIN chart_of_accounts coa ON coa.id = vb.account_id
+          WHERE vb.id IN (?)`, [rest.slice(k, k + 1000)]);
+      for (const vb of bills) {
+        const gl = await computeVendorBillGl(vb, debitLines.get(Number(vb.id)) || []);
+        for (const g of gl) if (Number(g.debit) > 0.004) add(Number(vb.id), g.account_code, g.account_name);
+      }
+    }
+  }
+  return new Map([...out].map(([id, list]) => [id, list.join('; ')]));
+}
+
 // ---- BIR Reports > Purchase Report ----
 //
 // "Created From" is the purchase order the bill was raised against -- the live column of the same
@@ -204,12 +249,13 @@ router.get('/purchase', requireAuth, requirePermission(PURCHASE_ROUTE, 'can_view
       const [rows] = await pool.query(
         `${select} ${baseFrom} ${whereSql} ORDER BY vb.date_created DESC, vb.id DESC`, whereParams,
       );
+      const accounts = await expenseAccountsFor(rows.map((r) => r.id));
       const csv = csvBody(
-        ['Vendor Bill No', 'Created From', 'Reference No', 'Date Created', 'Vendor', 'Tax Code', 'Net of Tax',
+        ['Vendor Bill No', 'Created From', 'Reference No', 'Date Created', 'Vendor', 'Expense Account', 'Tax Code', 'Net of Tax',
           'Tax Amount', 'Total Amount', 'Withholding Tax Amount', 'Net Amount', 'Supplier TIN',
           'Supplier Address'],
         rows,
-        (r) => [r.bill_no, r.created_from, r.reference_no, r.date_created, r.supplier_name, r.tax_code,
+        (r) => [r.bill_no, r.created_from, r.reference_no, r.date_created, r.supplier_name, accounts.get(Number(r.id)) || '', r.tax_code,
           r.net_of_tax, r.tax_amount, r.total_amount, r.wtax_amount, r.net_amount,
           r.supplier_tin, r.supplier_address],
       );
@@ -225,7 +271,8 @@ router.get('/purchase', requireAuth, requirePermission(PURCHASE_ROUTE, 'can_view
       `${select} ${baseFrom} ${whereSql} ORDER BY vb.date_created DESC, vb.id DESC LIMIT ? OFFSET ?`,
       [...whereParams, limit, (page - 1) * limit],
     );
-    return res.json({ rows, total, page, limit });
+    const accounts = await expenseAccountsFor(rows.map((r) => r.id));
+    return res.json({ rows: rows.map((r) => ({ ...r, expense_account: accounts.get(Number(r.id)) || '' })), total, page, limit });
   } catch (err) {
     return next(err);
   }
