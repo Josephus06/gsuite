@@ -420,6 +420,8 @@ app.use('/api/reports/commission', commissionReportRoutes);
 app.use('/api/reports/invoiced-job-orders', invoicedJobOrderRoutes);
 app.use('/api/reports/pending-billing', pendingBillingReportRoutes);
 app.use('/api/reports/disbursement', disbursementReportRoutes);
+// Reports > Fuel Issuance (2026-11-23): Audit's control over fuel slips -- routes/fuelIssuanceReport.js.
+app.use('/api/reports/fuel-issuance', require('./routes/fuelIssuanceReport'));
 app.use('/api/reports/forecast', forecastReportRoutes);
 app.use('/api/reports/delivery-vs-actual', deliveryVsActualReportRoutes);
 app.use('/api/reports/weighted-sales', weightedSalesReportRoutes);

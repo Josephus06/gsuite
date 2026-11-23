@@ -2653,6 +2653,10 @@ router.post('/:id/printed', requireAuth, requirePermission(ROUTE, 'can_print'), 
       `UPDATE form_requests SET print_count = print_count + 1,
               first_printed_at = COALESCE(first_printed_at, NOW()), first_printed_by = COALESCE(first_printed_by, ?)
         WHERE id = ?`, [req.user.id, doc.id]);
+    // Every print in the form's history (who, when, which copy) -- the Fuel Issuance report's audit
+    // trail, so a reprint is never just a count.
+    const before = Number(row.print_count) || 0;
+    await logFormAudit(conn, doc.id, req.user.id, before ? 'Reprinted' : 'Printed', 'Print count', before, before + 1);
     await conn.commit();
     return res.json({ ok: true, ...(await printState(doc.id)) });
   } catch (err) {

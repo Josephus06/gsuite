@@ -367,6 +367,8 @@ const NAV_STRUCTURE = [
           // The source's Invoiced Job Orders (2026-10-22): every invoice line that bills a JO.
           { route: '/reports/invoiced-job-orders', label: 'Invoiced Job Orders' },
           { route: '/reports/disbursement', label: 'Disbursement Report' },
+          // Audit's control over fuel slips (2026-11-23, routes/fuelIssuanceReport.js).
+          { route: '/reports/fuel-issuance', label: 'Fuel Issuance Report' },
           { route: '/reports/parked-bank-items', label: 'Unidentified Bank Items' },
         ],
       },

@@ -83,6 +83,7 @@ import CommissionInvoices from './pages/reports/CommissionInvoices';
 import InvoicedJobOrders from './pages/reports/InvoicedJobOrders';
 import PendingBilling from './pages/reports/PendingBilling';
 import DisbursementReport from './pages/reports/DisbursementReport';
+import FuelIssuanceReport from './pages/reports/FuelIssuanceReport';
 import ForecastReport from './pages/reports/ForecastReport';
 import DeliveryVsActualReport from './pages/reports/DeliveryVsActualReport';
 import WeightedSalesReport from './pages/reports/WeightedSalesReport';
@@ -612,6 +613,7 @@ function App() {
         <Route path="/reports/invoiced-job-orders" element={<InvoicedJobOrders />} />
         <Route path="/reports/pending-billing" element={<PendingBilling />} />
         <Route path="/reports/disbursement" element={<DisbursementReport />} />
+        <Route path="/reports/fuel-issuance" element={<FuelIssuanceReport />} />
         <Route path="/reports/forecast" element={<ForecastReport />} />
         <Route path="/reports/delivery-vs-actual" element={<DeliveryVsActualReport />} />
         <Route path="/reports/weighted-sales" element={<WeightedSalesReport />} />
