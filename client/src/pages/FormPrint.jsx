@@ -228,8 +228,10 @@ function FuelSlip({ doc, onPrinted }) {
     window.addEventListener('afterprint', done);
     window.print();
   }
+  // 10 mm box, so the drawn signature prints ~20 mm tall (the shared .sig-ink doubles it) -- at 5 mm it
+  // came out too small once each signature had the slip's full width (2026-11-23).
   const ink = (image) => (
-    <div className="sig-ink" style={{ '--sig-h': '5mm' }}>{image ? <img src={image} alt="" /> : null}</div>
+    <div className="sig-ink" style={{ '--sig-h': '10mm' }}>{image ? <img src={image} alt="" /> : null}</div>
   );
   const blank = (label, value) => (
     <div className="fs-pair"><span className="fs-label">{label}</span><span className="fs-line">{value || ''}</span></div>
@@ -280,8 +282,8 @@ function FuelSlip({ doc, onPrinted }) {
           /* 72 mm wide = the 80 mm printer's printable width, so nothing is scaled. Taller than wide ON
              PURPOSE: a landscape page makes Chrome turn the roll sideways and split the slip across two
              sheets (REQ-1744, 2026-11-19). 135 mm leaves room for the larger type (2026-11-20) and the Gas
-             Station Branch line and the stacked signatures (2026-11-23); the rest is feed. */
-          @page { size: 72mm 150mm; margin: 0; }
+             Station Branch line and the stacked, larger signatures (2026-11-23); the rest is feed. */
+          @page { size: 72mm 165mm; margin: 0; }
         }
       `}</style>
       <div className="fs-toolbar fs-no-print">
