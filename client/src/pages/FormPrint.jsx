@@ -234,6 +234,7 @@ function FuelSlip({ doc }) {
            two lines instead of three (2026-11-20). */
         .fs-grid { display: grid; grid-template-columns: 31mm 1fr; column-gap: 3mm; row-gap: 2mm; }
         .fs-pair { display: flex; flex-direction: column; min-width: 0; }
+        .fs-wide { grid-column: 1 / -1; min-width: 0; }
         .fs-pair .fs-label { font-size: 8.5pt; }
         .fs-label { white-space: nowrap; flex: none; }
         /* Wraps rather than cuts off ("Support-Sys..." on REQ-1744, 2026-11-17): a long value takes a second line. */
@@ -252,8 +253,9 @@ function FuelSlip({ doc }) {
           .fs-sheet { outline: none; margin: 0; }
           /* 72 mm wide = the 80 mm printer's printable width, so nothing is scaled. Taller than wide ON
              PURPOSE: a landscape page makes Chrome turn the roll sideways and split the slip across two
-             sheets (REQ-1744, 2026-11-19). 125 mm leaves room for the larger type (2026-11-20); the rest is feed. */
-          @page { size: 72mm 125mm; margin: 0; }
+             sheets (REQ-1744, 2026-11-19). 135 mm leaves room for the larger type (2026-11-20) and the Gas
+             Station Branch line (2026-11-23); the rest is feed. */
+          @page { size: 72mm 135mm; margin: 0; }
         }
       `}</style>
       <div className="fs-toolbar fs-no-print">
@@ -262,17 +264,19 @@ function FuelSlip({ doc }) {
       </div>
       <div className="fs-sheet">
         <img className="fs-logo" src={letterhead} alt="GraphicStar Imaging Corp." />
-        <div className="fs-title">FUEL SLIP</div>
+        <div className="fs-title">PO FUEL SLIP</div>
         <div className="fs-control"><span className="fs-label">Control No.:</span><span className="fs-line">{d.form_no || doc.request_no}</span></div>
         <div className="fs-grid">
           {blank('Date:', fmtDate(d.fuel_date))}
           {blank('Charge to:', doc.department)}
           {blank('Plate No:', d.vehicle_name)}
           {blank('No. of Liters:', d.liters != null ? `${Number(d.liters)}` : '')}
+          {/* Gas Station Branch (2026-11-23): the station typed on the form, else a blank line for the cashier. */}
+          <div className="fs-wide">{blank('Gas Station Branch:', d.station)}</div>
         </div>
         <div className="fs-notice">
-          This slip allows the bearer for refuel in any Leciann Ventures Inc. branches. Do not accept if not signed by any
-          of the authorized personnel.
+          This slip allows the bearer for refuel in any Light Fuels Corporation branches. This is a system generated
+          form, no need for original signature.
         </div>
         <div className="fs-signs">
           <div className="fs-sign">
@@ -290,7 +294,7 @@ function FuelSlip({ doc }) {
           <div className="fs-sign">
             {ink(doc.approved_signature)}
             <div className="fs-sign-name">{doc.approved_by_name || ''}</div>
-            <div className="fs-sign-rule">Noted By</div>
+            <div className="fs-sign-rule">Approved By</div>
           </div>
         </div>
       </div>
