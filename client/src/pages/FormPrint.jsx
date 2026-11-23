@@ -307,8 +307,6 @@ function FuelSlip({ doc, onPrinted }) {
           {blank('Charge to:', doc.department)}
           {blank('Plate No:', d.vehicle_name)}
           {blank('No. of Liters:', d.liters != null ? `${Number(d.liters)}` : '')}
-          {/* Gas Station Branch (2026-11-23): the station typed on the form, else a blank line for the cashier. */}
-          <div className="fs-wide">{blank('Gas Station Branch:', d.station)}</div>
         </div>
         <div className="fs-notice">
           This slip allows the bearer for refuel in any Light Fuels Corporation branches. This is a system generated
@@ -326,6 +324,9 @@ function FuelSlip({ doc, onPrinted }) {
             <div className="fs-sign-name">{doc.approved_by_name || ''}</div>
             <div className="fs-sign-rule">Approved By</div>
           </div>
+          {/* Gas Station Branch: the station typed on the form, else a blank line for the cashier. Moved
+              down here, just above the cashier's signature, the part the station fills in (2026-11-23). */}
+          {blank('Gas Station Branch:', d.station)}
           <div className="fs-sign">
             {ink(null)}
             <div className="fs-sign-name" />
