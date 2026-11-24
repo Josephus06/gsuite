@@ -153,18 +153,69 @@ function last6MonthLabels() {
 // month for Head Office -- each aging bucket's target % against its actual share, and the monthly
 // target. Same numbers as that page, which the server takes from the report itself.
 const pct1 = (v) => `${(Number(v || 0) * 100).toFixed(1)}%`;
-// The General Manager's top cards (2026-11-21), laid out as the GM's mock-up -- Actual Collection
-// against the monthly target with its aging buckets, Weighted Sales and Pending Billing stacked, and
-// tickets per department -- in the dashboard's own colours and font (theme-aware, day and night).
-function GmTopCards({ cards }) {
-  const inc = cards.headOfficeCollection.incentive;
-  const collected = inc ? inc.collected : cards.headOfficeCollection.amount;
+// Actual Collection · Head Office (2026-11-21): the ring of % of target, the target / actual figures and
+// Actual vs Target bars per aging bucket. On the General Manager's row and, since 2026-11-24, on top of
+// a Treasury account's dashboard (server: dashboard.js headOfficeCollection, the same figures for both).
+function GmCollectionCard({ collection }) {
+  const inc = collection.incentive;
+  const collected = inc ? inc.collected : collection.amount;
   const pct = inc ? (Number(inc.pct_of_target) || 0) * 100 : null; // the server sends a fraction (0.2332)
   const R = 54; const C = 2 * Math.PI * R;
   const arc = pct == null ? 0 : Math.min(100, Math.max(0, pct)) / 100 * C;
   const lines = inc ? inc.lines : [];
   // Fractions (0.49 = 49%); the tallest bar fills the chart.
   const maxPct = Math.max(0.01, ...lines.flatMap((l) => [Number(l.target_pct) || 0, Number(l.actual_pct) || 0]));
+  return (
+    <Link className="gm-card gm-collect" to="/treasury/collection-incentive" title="Open Treasury > Collection Incentive">
+      <div className="gm-collect-head">
+        <div>
+          <div className="gm-label">Actual Collection · Head Office</div>
+          <div className="gm-muted">{collection.count.toLocaleString('en-US')} payments this month</div>
+        </div>
+        <div className="gm-collect-figs">
+          <div><span>Monthly target</span><strong>₱{inc ? money(inc.monthly_target) : '—'}</strong></div>
+          <div><span>Actual</span><strong className="gm-actual">₱{money(collected)}</strong></div>
+        </div>
+      </div>
+      <div className="gm-collect-main">
+        <div className="gm-collect-ring">
+          <svg viewBox="0 0 140 140" aria-hidden="true">
+            <circle cx="70" cy="70" r={R} className="gm-ring-track" />
+            <circle cx="70" cy="70" r={R} className="gm-ring-fill" strokeDasharray={`${arc} ${C}`} transform="rotate(-90 70 70)" />
+          </svg>
+          <div className="gm-ring-text">
+            <div className="gm-ring-pct">{pct == null ? '—' : `${pct.toFixed(2)}%`}</div>
+            <div className="gm-ring-sub">of the target</div>
+          </div>
+        </div>
+        {lines.length > 0 && (
+          <div className="gm-chart">
+            <div className="gm-legend"><span className="gm-key gm-key-actual" />Actual <span className="gm-key gm-key-target" />Target</div>
+            <div className="gm-bars">
+              {lines.map((l) => {
+                const a = Number(l.actual_pct) || 0; const t = Number(l.target_pct) || 0;
+                return (
+                  <div className="gm-bar-group" key={l.key} title={`${l.label}: actual ${pct1(a)} · target ${pct1(t)}`}>
+                    <div className="gm-bar-pair">
+                      <div className="gm-bar gm-bar-actual" style={{ height: `${(a / maxPct) * 100}%` }}><span>{pct1(a)}</span></div>
+                      <div className="gm-bar gm-bar-target" style={{ height: `${(t / maxPct) * 100}%` }}><span>{pct1(t)}</span></div>
+                    </div>
+                    <div className={`gm-bar-label${a < t ? ' under' : ''}`}>{l.label}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    </Link>
+  );
+}
+
+// The General Manager's top cards (2026-11-21), laid out as the GM's mock-up -- Actual Collection
+// against the monthly target with its aging buckets, Weighted Sales and Pending Billing stacked, and
+// tickets per department -- in the dashboard's own colours and font (theme-aware, day and night).
+function GmTopCards({ cards }) {
   const depts = cards.ticketsByDepartment || [];
   // Each card is a real link (asked 2026-11-24) so it can be right-clicked -> Open in new tab, or
   // Ctrl / middle-clicked; a plain click still opens the report in place.
@@ -173,49 +224,7 @@ function GmTopCards({ cards }) {
   const deptMax = Math.max(1, ...depts.map((d) => d.approved + d.resolved));
   return (
     <div className="gm-top">
-      <Link className="gm-card gm-collect" to="/treasury/collection-incentive" title="Open Treasury > Collection Incentive">
-        <div className="gm-collect-head">
-          <div>
-            <div className="gm-label">Actual Collection · Head Office</div>
-            <div className="gm-muted">{cards.headOfficeCollection.count.toLocaleString('en-US')} payments this month</div>
-          </div>
-          <div className="gm-collect-figs">
-            <div><span>Monthly target</span><strong>₱{inc ? money(inc.monthly_target) : '—'}</strong></div>
-            <div><span>Actual</span><strong className="gm-actual">₱{money(collected)}</strong></div>
-          </div>
-        </div>
-        <div className="gm-collect-main">
-          <div className="gm-collect-ring">
-            <svg viewBox="0 0 140 140" aria-hidden="true">
-              <circle cx="70" cy="70" r={R} className="gm-ring-track" />
-              <circle cx="70" cy="70" r={R} className="gm-ring-fill" strokeDasharray={`${arc} ${C}`} transform="rotate(-90 70 70)" />
-            </svg>
-            <div className="gm-ring-text">
-              <div className="gm-ring-pct">{pct == null ? '—' : `${pct.toFixed(2)}%`}</div>
-              <div className="gm-ring-sub">of the target</div>
-            </div>
-          </div>
-          {lines.length > 0 && (
-            <div className="gm-chart">
-              <div className="gm-legend"><span className="gm-key gm-key-actual" />Actual <span className="gm-key gm-key-target" />Target</div>
-              <div className="gm-bars">
-                {lines.map((l) => {
-                  const a = Number(l.actual_pct) || 0; const t = Number(l.target_pct) || 0;
-                  return (
-                    <div className="gm-bar-group" key={l.key} title={`${l.label}: actual ${pct1(a)} · target ${pct1(t)}`}>
-                      <div className="gm-bar-pair">
-                        <div className="gm-bar gm-bar-actual" style={{ height: `${(a / maxPct) * 100}%` }}><span>{pct1(a)}</span></div>
-                        <div className="gm-bar gm-bar-target" style={{ height: `${(t / maxPct) * 100}%` }}><span>{pct1(t)}</span></div>
-                      </div>
-                      <div className={`gm-bar-label${a < t ? ' under' : ''}`}>{l.label}</div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-        </div>
-      </Link>
+      <GmCollectionCard collection={cards.headOfficeCollection} />
 
       <div className="gm-stack">
         <Link className="gm-card gm-figure gm-tone-sales" to="/reports/weighted-sales" title="Open Weighted Sales per Month">
@@ -455,14 +464,18 @@ function AdminDashboard({ data, user, navigate, showInstallCalendar = false }) {
         // The General Manager's own cards (server/src/routes/dashboard.js generalManagerCards --
         // the notes there say why each figure is filtered the way it is).
         <GmTopCards cards={data.gmCards} />
-      ) : (
+      ) : (<>
+        {/* Treasury (2026-11-24): the General Manager's Actual Collection card, full width, on top. */}
+        {data.treasuryCollection && (
+          <div className="gm-top gm-top-solo"><GmCollectionCard collection={data.treasuryCollection} /></div>
+        )}
         <StatRow cards={[
           { label: 'Total Active Users', value: data.activeUsers, icon: '👥' },
           { label: 'Sales This Month', value: `₱${money(data.salesThisMonth.amount)}`, icon: '📈', trend: data.trend },
           { label: 'Pending Approvals', value: data.pendingApprovals, icon: '⏳' },
           { label: 'Orders This Month', value: data.salesThisMonth.count, icon: '🧾' },
         ]} />
-      )}
+      </>)}
 
       <div className="dash-main-grid">
         <ProfileCard user={user} roleLabel={ROLE_LABELS.admin} rings={data.rings} activity={activity} />

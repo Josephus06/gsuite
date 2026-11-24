@@ -919,20 +919,13 @@ async function isGeneralManager(userId) {
   return !!row;
 }
 
-async function generalManagerCards() {
+// The Actual Collection · Head Office card's figures: this month's Head Office payments and the
+// Collection Incentive breakdown. Shared by the General Manager's cards and, since 2026-11-24, the
+// Treasury dashboard (account type Treasury), so both read the very same numbers.
+async function headOfficeCollection() {
   const today = businessToday();
   const monthStart = `${today.slice(0, 7)}-01`;
-  // Pending Billing is the Sales > Pending Billing report's own figure, all offices and reps.
-  const [billing, [[sales]], [[tickets]], [[collection]], incentive, [ticketDepts]] = await Promise.all([
-    pendingBillingSummary(),
-    pool.query(
-      `SELECT COUNT(*) AS count, COALESCE(SUM(net_of_tax), 0) AS amount
-         FROM sales_orders WHERE date_created >= ? AND status <> 'cancelled'`, [monthStart],
-    ),
-    pool.query(
-      `SELECT COUNT(*) AS count FROM tickets
-        WHERE forwarded_to_gm_at IS NOT NULL AND gm_approved_at IS NULL AND declined_at IS NULL`,
-    ),
+  const [[[collection]], incentive] = await Promise.all([
     // No location counts as Head Office, as lib/userLocation.js isHeadOfficeName decides.
     pool.query(
       `SELECT COUNT(*) AS count, COALESCE(SUM(cp.payment_amount), 0) AS amount
@@ -943,6 +936,25 @@ async function generalManagerCards() {
           AND (l.id IS NULL OR LOWER(TRIM(l.location_name)) LIKE 'head office%')`, [monthStart],
     ),
     headOfficeIncentive(today.slice(0, 7)),
+  ]);
+  return { count: Number(collection.count), amount: Number(collection.amount), incentive };
+}
+
+async function generalManagerCards() {
+  const today = businessToday();
+  const monthStart = `${today.slice(0, 7)}-01`;
+  // Pending Billing is the Sales > Pending Billing report's own figure, all offices and reps.
+  const [billing, [[sales]], [[tickets]], collection, [ticketDepts]] = await Promise.all([
+    pendingBillingSummary(),
+    pool.query(
+      `SELECT COUNT(*) AS count, COALESCE(SUM(net_of_tax), 0) AS amount
+         FROM sales_orders WHERE date_created >= ? AND status <> 'cancelled'`, [monthStart],
+    ),
+    pool.query(
+      `SELECT COUNT(*) AS count FROM tickets
+        WHERE forwarded_to_gm_at IS NOT NULL AND gm_approved_at IS NULL AND declined_at IS NULL`,
+    ),
+    headOfficeCollection(),
     // The Tickets card (2026-11-21), per department the ticket was sent to -- only departments with
     // any this month (15 departments, mostly zeros, made the card twice the height of its row),
     // busiest first:
@@ -968,7 +980,7 @@ async function generalManagerCards() {
     weightedSales: { count: Number(sales.count), amount: Number(sales.amount) },
     pendingTicketApproval: Number(tickets.count),
     ticketsByDepartment: ticketDepts.map((r) => ({ department: r.department, approved: Number(r.approved), resolved: Number(r.resolved) })),
-    headOfficeCollection: { count: Number(collection.count), amount: Number(collection.amount), incentive },
+    headOfficeCollection: collection,
   };
 }
 
@@ -1124,9 +1136,15 @@ async function buildDashboard(req) {
     const scope = await resolveScope(req.user.id);
 
     if (scope.role === 'admin') {
-      const [metrics, gm] = await Promise.all([adminMetrics(req.user.id), isGeneralManager(req.user.id)]);
+      const [metrics, gm, [[acct]]] = await Promise.all([
+        adminMetrics(req.user.id), isGeneralManager(req.user.id),
+        pool.query('SELECT account_type FROM users WHERE id = ?', [req.user.id]),
+      ]);
       const [gmCards, gmRings] = gm ? await Promise.all([generalManagerCards(), generalManagerRings()]) : [null, null];
-      return { role: 'admin', ...metrics, ...(gmRings ? { rings: gmRings } : {}), gmCards };
+      // Treasury (asked 2026-11-24): the General Manager's Actual Collection · Head Office card, on top
+      // of their own dashboard. A GM already has it among their cards.
+      const treasuryCollection = !gm && acct?.account_type === 'Treasury' ? await headOfficeCollection() : null;
+      return { role: 'admin', ...metrics, ...(gmRings ? { rings: gmRings } : {}), gmCards, treasuryCollection };
     }
 
     if (scope.role === 'design_supervisor') {
