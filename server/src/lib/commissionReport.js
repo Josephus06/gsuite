@@ -335,6 +335,55 @@ async function loadMonthLocks(employeeId, year) {
   }
 }
 
+// Lock / Unlock from the Commission Summary screen (asked 2026-11-24). Locking keeps the month's
+// figures as the report computes them right now; only finished months (before the current one) can
+// be locked. Unlocking deletes the lock, so the month is recomputed live again. Each change is
+// written to audit_logs (CommissionMonthLock, auditable_id = employee, a 'Status Change' on field
+// "YYYY-MM lock" -- event_type is an enum with no Locked / Unlocked). Returns the months changed.
+const isFinishedMonth = (year, month, now = new Date()) => year * 12 + month < now.getFullYear() * 12 + now.getMonth() + 1;
+
+async function lockMonths(employeeId, year, months, userId, source) {
+  const report = await buildCommissionReport(employeeId, year);
+  if (!report) return [];
+  const done = [];
+  for (const month of months) {
+    const row = report.rows.find((r) => r.month === month);
+    if (!row || row.locked || !isFinishedMonth(year, month)) continue;
+    await pool.query(
+      `INSERT INTO commission_month_locks
+         (employee_id, year, month, weighted_sales, performance_pct, estimated_commission, passing_gp_total,
+          expected_commission, confirmed_commission, live_confirmed_at_lock, source, locked_by_user_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [employeeId, year, month, row.weighted_sales, row.performance_pct, row.estimated_commission, row.passing_gp_total,
+        row.expected_commission, row.confirmed_commission, row.confirmed_commission, source, userId]
+    );
+    await pool.query(
+      `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+       VALUES ('CommissionMonthLock', ?, 'Status Change', ?, 'Unlocked', ?, ?)`,
+      [employeeId, `${year}-${String(month).padStart(2, '0')} lock`, `Locked (Confirmed ${row.confirmed_commission})`, userId]
+    );
+    done.push(month);
+  }
+  return done;
+}
+
+async function unlockMonths(employeeId, year, months, userId) {
+  const locks = await loadMonthLocks(employeeId, year);
+  const done = [];
+  for (const month of months) {
+    const lock = locks.get(month);
+    if (!lock) continue;
+    await pool.query('DELETE FROM commission_month_locks WHERE employee_id = ? AND year = ? AND month = ?', [employeeId, year, month]);
+    await pool.query(
+      `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
+       VALUES ('CommissionMonthLock', ?, 'Status Change', ?, ?, 'Unlocked', ?)`,
+      [employeeId, `${year}-${String(month).padStart(2, '0')} lock`, `Locked (Confirmed ${Number(lock.confirmed_commission)})`, userId]
+    );
+    done.push(month);
+  }
+  return done;
+}
+
 function applyMonthLock(row, lock) {
   if (!lock) return { ...row, locked: false };
   const passing = round2(lock.passing_gp_total);
@@ -528,4 +577,7 @@ function withholdConfirmedWithoutPayable(report) {
   return { ...report, rows };
 }
 
-module.exports = { buildCommissionReport, buildCommissionJoDetail, getTeamEmployeeIds, getSbuDivisionIds, withholdConfirmedWithoutPayable };
+module.exports = {
+  buildCommissionReport, buildCommissionJoDetail, getTeamEmployeeIds, getSbuDivisionIds, withholdConfirmedWithoutPayable,
+  lockMonths, unlockMonths, isFinishedMonth,
+};

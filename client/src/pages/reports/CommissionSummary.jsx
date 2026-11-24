@@ -48,7 +48,37 @@ export default function CommissionSummary() {
     setExtracting(false);
   }
 
+  // Lock / Unlock (System Admin and Accounting: data.can_lock). Only finished months -- before the
+  // current one -- can be locked; the server checks the same. The reply carries the person's
+  // refreshed rows, swapped into their block in place.
+  const [lockBusy, setLockBusy] = useState('');
+  const now = new Date();
+  const finished = (m) => year * 12 + m < now.getFullYear() * 12 + now.getMonth() + 1;
+  async function setLock(block, months, action) {
+    if (!months.length) return;
+    const names = months.map((m) => block.rows.find((r) => r.month === m)?.month_name).join(', ');
+    const msg = action === 'lock'
+      ? `Lock ${names} for ${block.name}?\n\nThe figures shown now are kept as they are: later invoices and payments will not change them. Only new releases change Unpaid.`
+      : `Unlock ${names} for ${block.name}?\n\nThe month(s) will be recalculated from today's invoices and payments, so Confirmed and Unpaid may change.`;
+    if (!window.confirm(msg)) return;
+    setLockBusy(`${block.employee_id}`); setError('');
+    try {
+      const { data: d } = await api.post('/reports/commission/locks', { employeeId: block.employee_id, year, months, action }, { timeout: 300000 });
+      setData((prev) => ({
+        ...prev,
+        sheets: prev.sheets.map((s) => ({
+          ...s,
+          blocks: s.blocks.map((b) => (b.employee_id === block.employee_id ? { ...b, rows: d.rows, total_unpaid: d.total_unpaid } : b)),
+        })),
+      }));
+    } catch (e) {
+      setError(e.response?.data?.error || `Could not ${action} the month(s).`);
+    }
+    setLockBusy('');
+  }
+
   const sheet = data?.sheets.find((s) => s.name === tab);
+  const canLock = !!data?.can_lock;
   return (
     <div>
       <div className="page-header"><h1>Commission Summary</h1></div>
@@ -72,6 +102,7 @@ export default function CommissionSummary() {
           One sheet per group, one block per person, the same figures as the Commission report. Extract gives the Excel workbook.
           CP # is the month&apos;s Commission Payable; <span style={{ color: '#b91c1c', fontWeight: 600 }}>No CP</span> means none has been created: that month cannot be released on a voucher, and its Confirmed and Unpaid Commission are not shown until one is.
           {' '}🔒 marks a locked month: its figures are kept as they were handed over for release, and only new releases change its Unpaid.
+          {data?.can_lock && ' A lock stays until someone unlocks it here; only finished months can be locked.'}
         </div>
       </div>
 
@@ -88,9 +119,28 @@ export default function CommissionSummary() {
             ))}
           </div>
           {!data.sheets.length && <div className="muted">No commissioned sales reps to report on.</div>}
-          {sheet?.blocks.map((b) => (
+          {sheet?.blocks.map((b) => {
+            const busy = lockBusy === `${b.employee_id}`;
+            const toLock = b.rows.filter((r) => !r.locked && finished(r.month) && (Number(r.expected_commission) || Number(r.released_commission))).map((r) => r.month);
+            const toUnlock = b.rows.filter((r) => r.locked).map((r) => r.month);
+            return (
             <div key={b.employee_id} style={{ marginBottom: 24 }}>
-              <div style={{ fontWeight: 700, marginBottom: 6 }}>{b.label}: {b.name}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+                <span style={{ fontWeight: 700 }}>{b.label}: {b.name}</span>
+                {canLock && (
+                  <>
+                    <button type="button" className="btn btn-sm" disabled={busy || !toLock.length} onClick={() => setLock(b, toLock, 'lock')}
+                      title="Keep every finished month's figures as they are now">
+                      🔒 Lock all finished months
+                    </button>
+                    <button type="button" className="btn btn-sm" disabled={busy || !toUnlock.length} onClick={() => setLock(b, toUnlock, 'unlock')}
+                      title="Recalculate every locked month from today's invoices and payments">
+                      Unlock all
+                    </button>
+                    {busy && <span className="muted" style={{ fontSize: 12 }}>Saving...</span>}
+                  </>
+                )}
+              </div>
               <div className="table-wrap">
                 <table>
                   <thead>
@@ -102,6 +152,7 @@ export default function CommissionSummary() {
                           ? [<th key="exp" colSpan={2} style={{ textAlign: 'center' }}>Expenses</th>, <th key={k} rowSpan={2} style={{ textAlign: 'right' }}>{label}</th>]
                           : <th key={k} rowSpan={2} style={{ textAlign: k === 'division_name' ? 'left' : 'right' }}>{label}</th>
                       ))}
+                      {canLock && <th rowSpan={2} style={{ textAlign: 'center' }}>Lock</th>}
                     </tr>
                     <tr><th style={{ textAlign: 'right' }}>Deducted</th><th style={{ textAlign: 'right' }}>Refunded</th></tr>
                   </thead>
@@ -117,6 +168,21 @@ export default function CommissionSummary() {
                             {k === 'division_name' ? (r[k] || '') : money(r[k])}
                           </td>
                         ))}
+                        {canLock && (
+                          <td style={{ textAlign: 'center', whiteSpace: 'nowrap' }}>
+                            {r.locked && (
+                              <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setLock(b, [r.month], 'unlock')}
+                                title={r.locked_source || 'Locked'}>
+                                Unlock
+                              </button>
+                            )}
+                            {!r.locked && finished(r.month) && (Number(r.expected_commission) || Number(r.released_commission)) ? (
+                              <button type="button" className="btn btn-sm" disabled={busy} onClick={() => setLock(b, [r.month], 'lock')}>
+                                Lock
+                              </button>
+                            ) : null}
+                          </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -124,12 +190,14 @@ export default function CommissionSummary() {
                     <tr style={{ fontWeight: 700 }}>
                       <td colSpan={COLS.length + 1} style={{ textAlign: 'right' }}>TOTAL</td>
                       <td style={{ textAlign: 'right' }}>{money(b.total_unpaid) || '0.00'}</td>
+                      {canLock && <td />}
                     </tr>
                   </tfoot>
                 </table>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
