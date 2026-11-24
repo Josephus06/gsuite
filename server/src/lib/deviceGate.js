@@ -179,6 +179,11 @@ function middleware() {
       }
       if (isRegister) {
         res.setHeader('Cache-Control', 'no-store');
+        // Its one inline script, allowed by hash, so the site's CSP (lib/security.js: scripts 'self'
+        // only) does not flag it.
+        const { CSP } = require('./security');
+        const pageCsp = CSP.replace("script-src 'self'", `script-src 'self' '${registerScriptHash()}'`);
+        res.setHeader(process.env.CSP_ENFORCE === '1' ? 'Content-Security-Policy' : 'Content-Security-Policy-Report-Only', pageCsp);
         return res.status(200).type('html').send(REGISTER_HTML);
       }
       return next();
@@ -299,6 +304,15 @@ const REGISTER_HTML = `<!doctype html>
 })();
 </script>
 </body></html>`;
+
+let scriptHash = null;
+function registerScriptHash() {
+  if (!scriptHash) {
+    const js = REGISTER_HTML.split('<script>')[1].split('</script>')[0];
+    scriptHash = `sha256-${crypto.createHash('sha256').update(js, 'utf8').digest('base64')}`;
+  }
+  return scriptHash;
+}
 
 module.exports = {
   COOKIE, middleware, evaluate, loadSettings, clearSettingsCache, forcedOff, clientIp, readCookie,

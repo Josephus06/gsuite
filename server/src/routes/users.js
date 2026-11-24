@@ -1,7 +1,7 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
 const pool = require('../db');
-const { requireAuth, requirePermission } = require('../middleware/auth');
+const { requireAuth, requirePermission, forgetUserActive } = require('../middleware/auth');
 const { PLANNER_FLAGS } = require('../lib/plannerRoles');
 
 const router = express.Router();
@@ -143,6 +143,8 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     if (!username || !email || !password || !display_name) {
       return res.status(400).json({ error: 'username, email, password, and display_name are required' });
     }
+    // The same minimum users meet changing their own (routes/auth.js); an admin-set one had none (2026-11-24).
+    if (String(password).length < 8) return res.status(400).json({ error: 'The password must be at least 8 characters.' });
     const passwordHash = await bcrypt.hash(password, 10);
     // Fields not sent take the column default rather than NULL -- see the note on PUT below.
     const sentFields = ACCOUNT_TYPE_FIELDS.filter((f) => req.body[f] !== undefined);
@@ -186,6 +188,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     ];
     const values = [email, display_name, employee_id || null, default_branch_id || null, is_active ?? true, ...accountTypeValues];
 
+    if (password && String(password).length < 8) return res.status(400).json({ error: 'The password must be at least 8 characters.' });
     if (password) {
       fields.push('password_hash = ?');
       values.push(await bcrypt.hash(password, 10));
@@ -210,6 +213,8 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     }
 
     await pool.query(`UPDATE users SET ${fields.join(', ')}, updated_at = NOW() WHERE id = ?`, [...values, req.params.id]);
+    // Deactivating signs the user out of this server at once, not at their token's expiry.
+    forgetUserActive(req.params.id);
     if (req.body.sales_division_ids !== undefined) await saveSalesDivisions(req.params.id, req.body.sales_division_ids);
     const nextSupervisors = supervisorIdsFrom(req.body);
     if (nextSupervisors !== undefined) await saveSupervisors(req.params.id, nextSupervisors);
@@ -234,6 +239,7 @@ router.delete('/:id', requireAuth, requirePermission(ROUTE, 'can_delete'), async
       await conn.query('DELETE FROM user_branches WHERE user_id = ?', [req.params.id]);
       await conn.query('DELETE FROM users WHERE id = ?', [req.params.id]);
       await conn.commit();
+      forgetUserActive(req.params.id); // a deleted user's open sessions end at once
     } catch (err) {
       await conn.rollback();
       throw err;

@@ -6,6 +6,7 @@ const { PLANNER_COLUMNS, PLANNER_FLAGS, isPlanner } = require('../lib/plannerRol
 const { requireAuth, clearPresence, isSystemAdmin } = require('../middleware/auth');
 const { isHeadOfficeUser } = require('../lib/userLocation');
 const { findLoginUser, AMBIGUOUS_MESSAGE } = require('../lib/loginLookup');
+const { loginBlocked, loginFailed, loginSucceeded } = require('../lib/security');
 
 const router = express.Router();
 
@@ -31,6 +32,10 @@ router.post('/login', async (req, res, next) => {
     if (!username || !password) {
       return res.status(400).json({ error: 'username and password are required' });
     }
+    // Brute-force guard (2026-11-24, lib/security.js): 10 failed sign-ins on an account, or 100
+    // from one address, in 15 minutes locks sign-in there for the rest of the window.
+    const blocked = loginBlocked(req, username);
+    if (blocked) return res.status(429).json({ error: blocked });
 
     // Named columns rather than SELECT *: users carries three MEDIUMTEXT image blobs
     // (avatar_data, cover_data, bg_data -- the last one a full-screen wallpaper), and a
@@ -44,8 +49,12 @@ router.post('/login', async (req, res, next) => {
               is_supervisor, is_purchasing_supervisor, ${PLANNER_COLUMNS},
               is_production_supervisor, can_edit_approved_po`);
     if (found.error === 'ambiguous') return res.status(401).json({ error: AMBIGUOUS_MESSAGE });
-    if (!found.user) return res.status(401).json({ error: 'Invalid credentials' });
+    if (!found.user) {
+      loginFailed(req, username);
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
     const { user } = found;
+    loginSucceeded(username);
 
     await pool.query('UPDATE users SET last_login_at = NOW() WHERE id = ?', [user.id]);
 

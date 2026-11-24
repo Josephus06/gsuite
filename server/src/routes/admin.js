@@ -86,4 +86,13 @@ router.get('/system-health', requireAuth, requireSystemAdmin, async (req, res, n
   } catch (err) { next(err); }
 });
 
+// Dependencies (2026-11-24, lib/dependencyCheck.js): known vulnerabilities and outdated packages for
+// the server and the web app. Check only -- updates go through a tested deploy. ?refresh=1 re-runs it.
+router.get('/dependencies', requireAuth, requireSystemAdmin, async (req, res, next) => {
+  try {
+    const { dependencyReport } = require('../lib/dependencyCheck');
+    res.json(await dependencyReport({ refresh: req.query.refresh === '1' }));
+  } catch (err) { next(err); }
+});
+
 module.exports = router;

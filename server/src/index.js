@@ -157,6 +157,13 @@ const { msUntilBusinessTime } = require('./lib/crmCadence');
 const { startSampling } = require('./lib/systemHealth');
 
 const app = express();
+// Security (2026-11-24, lib/security.js): don't announce the framework; security headers on every
+// response, CSP report-only until CSP_ENFORCE=1.
+app.disable('x-powered-by');
+{
+  const { securityHeaders } = require('./lib/security');
+  app.use(securityHeaders());
+}
 // Who the visitor really is, for the device gate's office-network check (lib/deviceGate.js). The cloud
 // sits behind nginx on the same box, which appends the visitor's address to X-Forwarded-For -- trusting
 // only the loopback proxy takes that address and ignores anything a visitor forges further left.
@@ -292,6 +299,17 @@ app.use((req, res, next) => {
     : next();
 });
 app.use(express.json({ limit: '2mb' })); // room for the base64 profile-picture payload
+
+// Security (2026-11-24, lib/security.js): CSP violation reports (browsers send them with their own
+// content types), and per-IP limits on the public no-login endpoints. Signed-in requests are limited
+// per user in middleware/auth.js requireAuth.
+{
+  const { cspReportHandler, publicRateLimit } = require('./lib/security');
+  app.post('/api/security/csp-report',
+    express.json({ type: ['application/csp-report', 'application/reports+json', 'application/json'], limit: '64kb' }),
+    cspReportHandler);
+  app.use(publicRateLimit());
+}
 
 // Device gate (2026-11-20): off the office network, only registered devices reach anything below --
 // pages, the app's code and every API. Off until switched on from System > Registered Devices.

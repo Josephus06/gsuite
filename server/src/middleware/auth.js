@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const pool = require('../db');
+const { userRateLimit } = require('../lib/security');
 
 // can_edit and can_update are DIFFERENT rights, despite the grid having labelled can_edit
 // "Can Update" for years. can_edit opens the Edit form -- structural change to the record.
@@ -50,22 +51,53 @@ function touchPresence(userId) {
     .finally(() => { presenceInFlight -= 1; });
 }
 
-function requireAuth(req, res, next) {
+// A token stays valid until it expires (12 h), so a user deactivated -- or deleted -- in Users &
+// Permissions used to keep working until then (found 2026-11-24). Every request now checks the
+// account is still active, through a 60-second cache so it is not a query per request; deactivating
+// takes effect within a minute (at once for a change made on this server: forgetUserActive).
+const ACTIVE_TTL_MS = 60_000;
+const activeCache = new Map(); // user id -> { at, active }
+async function isActiveUser(userId) {
+  const hit = activeCache.get(userId);
+  if (hit && Date.now() - hit.at < ACTIVE_TTL_MS) return hit.active;
+  const [[u]] = await pool.query('SELECT is_active FROM users WHERE id = ?', [userId]);
+  const active = !!(u && u.is_active);
+  activeCache.set(userId, { at: Date.now(), active });
+  if (activeCache.size > 20000) activeCache.clear();
+  return active;
+}
+function forgetUserActive(userId) { if (userId) activeCache.delete(Number(userId)); else activeCache.clear(); }
+
+async function requireAuth(req, res, next) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
   if (!token) return res.status(401).json({ error: 'Missing authorization token' });
 
+  let payload;
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = payload;
-    // Never beat presence for an impersonated session: the user is not actually online, and
-    // showing them on the feed's Contacts rail because an admin opened their account would
-    // be plainly wrong -- and would keep them "online" indefinitely while the admin worked.
-    if (!payload.impersonated_by) touchPresence(payload.id);
-    next();
+    payload = jwt.verify(token, process.env.JWT_SECRET);
   } catch (err) {
     return res.status(401).json({ error: 'Invalid or expired token' });
   }
+  try {
+    // The account itself, and for a "log in as" session the admin acting too, must still be active.
+    if (!(await isActiveUser(Number(payload.id)))
+      || (payload.impersonated_by && !(await isActiveUser(Number(payload.impersonated_by.id))))) {
+      return res.status(401).json({ error: 'This account has been deactivated.' });
+    }
+  } catch (err) {
+    // The database being unreachable is not a reason to sign everyone out -- the request that
+    // follows will fail on its own if it really cannot reach it.
+    console.error('[auth] active-user check failed:', err.code || err.message);
+  }
+  // Per user, not per IP: the whole office shares one address (lib/security.js).
+  if (!userRateLimit(payload.id, res)) return undefined;
+  req.user = payload;
+  // Never beat presence for an impersonated session: the user is not actually online, and
+  // showing them on the feed's Contacts rail because an admin opened their account would
+  // be plainly wrong -- and would keep them "online" indefinitely while the admin worked.
+  if (!payload.impersonated_by) touchPresence(payload.id);
+  return next();
 }
 
 // Called on logout so someone who signs out drops off the Contacts rail immediately rather
@@ -117,4 +149,4 @@ async function userCan(userId, route, action = 'can_view') {
   return !!(perm && perm.allowed);
 }
 
-module.exports = { requireAuth, requirePermission, clearPresence, isSystemAdmin, userCan };
+module.exports = { requireAuth, requirePermission, clearPresence, isSystemAdmin, userCan, forgetUserActive };

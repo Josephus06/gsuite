@@ -13,6 +13,7 @@
 const express = require('express');
 const pool = require('../db');
 const { findLoginUser, AMBIGUOUS_MESSAGE } = require('../lib/loginLookup');
+const { loginBlocked, loginFailed, loginSucceeded } = require('../lib/security');
 const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const gate = require('../lib/deviceGate');
 
@@ -22,16 +23,9 @@ const trunc = (s, n) => (s == null || String(s).trim() === '' ? null : String(s)
 // ---------------------------------------------------------------------------------------------
 const publicRouter = express.Router();
 
-// Requests are sign-ins, so they get the same kind of brake a login would want: 10 per IP per 10 min.
-const attempts = new Map();
-function limited(ip) {
-  const now = Date.now();
-  const list = (attempts.get(ip) || []).filter((t) => now - t < 10 * 60_000);
-  list.push(now);
-  attempts.set(ip, list);
-  if (attempts.size > 10_000) attempts.clear();
-  return list.length > 10;
-}
+// Registering signs an admin in, so it shares the sign-in brake (lib/security.js): FAILED attempts
+// only, per account and per address. Until 2026-11-24 it counted every attempt per IP, so an admin
+// registering an eleventh phone in ten minutes from the office was refused.
 
 publicRouter.get('/status', async (req, res, next) => {
   try {
@@ -57,8 +51,9 @@ publicRouter.get('/status', async (req, res, next) => {
 publicRouter.post('/register', async (req, res, next) => {
   try {
     const ip = gate.clientIp(req);
-    if (limited(ip)) return res.status(429).json({ error: 'Too many attempts. Wait a few minutes and try again.' });
     const { username, password } = req.body || {};
+    const blocked = loginBlocked(req, username);
+    if (blocked) return res.status(429).json({ error: blocked });
     const deviceName = trunc(req.body?.device_name, 100);
     if (!username || !password) return res.status(400).json({ error: 'Type the admin username and password.' });
     if (!deviceName) return res.status(400).json({ error: 'Give this device a name.' });
@@ -66,8 +61,9 @@ publicRouter.post('/register', async (req, res, next) => {
     // Several accounts may share an email (2026-11-24): lib/loginLookup.js picks the right one.
     const found = await findLoginUser(username, password);
     if (found.error === 'ambiguous') return res.status(401).json({ error: AMBIGUOUS_MESSAGE });
-    if (!found.user) return res.status(401).json({ error: 'Wrong username or password.' });
+    if (!found.user) { loginFailed(req, username); return res.status(401).json({ error: 'Wrong username or password.' }); }
     const { user } = found;
+    loginSucceeded(username);
     if (!(await userCan(user.id, ROUTE, 'can_approve'))) {
       return res.status(403).json({ error: 'Only an administrator can register a device.' });
     }
