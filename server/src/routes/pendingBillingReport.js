@@ -158,8 +158,11 @@ async function loadRows(req, { allReps = false } = {}) {
     where.push('(jo.job_order_no LIKE ? OR so.sales_order_no LIKE ? OR ns.nsso_no LIKE ? OR c.name LIKE ? OR jo.description LIKE ?)');
     const q = `%${String(search).trim()}%`; params.push(q, q, q, q, q);
   }
+  // One Job Order (the Email button, 2026-11-24).
+  if (Number(req.query.job_order_id) > 0) { where.push('jo.id = ?'); params.push(Number(req.query.job_order_id)); }
   const [jos] = await pool.query(
     `SELECT jo.id, jo.job_order_no, jo.description, jo.quantity, jo.quantity_inspected, jo.quantity_delivered, jo.quantity_invoiced,
+            COALESCE(so.sales_rep_id, ns.sales_rep_id, jo.sales_rep_id) AS sales_rep_id,
             jo.production_stage, jo.delivery_date, jo.units, jo.nsso_id, jo.sales_order_line_id, jo.nsso_line_id,
             so.id AS sales_order_id, so.sales_order_no, so.date_created AS so_date, ns.nsso_no, ns.type AS nsso_type,
             COALESCE(so.customer_id, ns.customer_id) AS customer_id, c.name AS customer_name,
@@ -203,7 +206,7 @@ async function loadRows(req, { allReps = false } = {}) {
     withKind ? pool.query(
       `SELECT m.target, m.target_id, m.marked_at, ${sentCol ? "DATE_FORMAT(m.sent_date, '%Y-%m-%d')" : 'NULL'} AS sent_date, u.display_name AS marked_by FROM pending_billing_marks m
          LEFT JOIN users u ON u.id = m.marked_by_user_id
-        WHERE (m.target IN ('par', 'pics') AND m.target_id IN (?)) OR (m.target = 'po' AND m.target_id IN (?))`, [ids, soIds]) : [[]],
+        WHERE (m.target IN ('par', 'pics', 'email') AND m.target_id IN (?)) OR (m.target = 'po' AND m.target_id IN (?))`, [ids, soIds]) : [[]],
   ]);
   const marks = new Map(markRows.map((m) => [`${m.target}|${m.target_id}`, m]));
   const markOf = (target, id) => { const m = marks.get(`${target}|${Number(id)}`); return m ? { by: m.marked_by, at: m.marked_at, sent: m.sent_date || null } : null; };
@@ -245,6 +248,8 @@ async function loadRows(req, { allReps = false } = {}) {
       po_file: withPo.has(Number(j.sales_order_id)), po_mark: j.sales_order_id ? markOf('po', j.sales_order_id) : null,
       with_par: withPar.has(Number(j.id)) || !!markOf('par', j.id),
       with_pics: withPics.has(Number(j.id)) || !!markOf('pics', j.id),
+      // The last reminder emailed to the sales rep (POST /email): who sent it and when.
+      email_mark: markOf('email', j.id),
       with_po: withPo.has(Number(j.sales_order_id)) || !!(j.sales_order_id && markOf('po', j.sales_order_id)), invoiced_qty: invoiced, invoice_nos: i?.invoice_nos || null,
       completed_date: completed, last_delivery_date: delM.get(Number(j.id))?.d || null,
       uninvoiced_qty: Number(uninvoiced.toFixed(4)),
@@ -308,6 +313,101 @@ router.put('/mark', requireAuth, requirePermission(ROUTE, 'can_update'), async (
   } catch (err) {
     next(err);
   }
+});
+
+// ---- Email the sales rep about one Job Order (asked 2026-11-24) ----
+//
+// To the email on the sales rep's user account (Users & Permissions -- the address they log in with),
+// else the one on their employee record. Built from the row exactly as this report shows it (loadRows,
+// one JO), so the email and the screen cannot disagree; a JO the sender cannot see here (sales-rep
+// scope) cannot be emailed either. Replies go to the sender. The last one sent is kept per JO in
+// pending_billing_marks (target 'email': who, when) and shown under the button; the same JO cannot be
+// emailed again within 10 minutes, so a double click is not two emails.
+const EMAIL_COOLDOWN_MIN = 10;
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const peso = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const day = (v) => (v ? String(v instanceof Date ? v.toISOString() : v).slice(0, 10) : '');
+
+async function emailTarget(req, joId) {
+  const [row] = await loadRows({ ...req, query: { job_order_id: joId } });
+  if (!row) return { error: 'This Job Order is not on your Pending Billing list.', status: 404 };
+  if (!row.sales_rep_id) return { row, error: 'This Job Order has no sales rep.', status: 409 };
+  const [[rep]] = await pool.query(
+    `SELECT TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, ''))) AS name, e.email AS employee_email,
+            (SELECT u.email FROM users u WHERE u.employee_id = e.id AND u.is_active = 1 AND u.email LIKE '%@%' ORDER BY u.id LIMIT 1) AS user_email
+       FROM employees e WHERE e.id = ?`, [row.sales_rep_id]);
+  const email = String(rep?.user_email || rep?.employee_email || '').trim();
+  if (!email || !email.includes('@')) {
+    return { row, error: `${rep?.name || 'The sales rep'} has no email address -- add it on their user account (Users & Permissions).`, status: 409 };
+  }
+  return { row, to: { name: rep.name, email } };
+}
+
+router.get('/email-preview', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const t = await emailTarget(req, Number(req.query.job_order_id));
+    if (t.error) return res.status(t.status).json({ error: t.error });
+    res.json({ to: t.to, last: t.row.email_mark || null });
+  } catch (err) { next(err); }
+});
+
+router.post('/email', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const joId = Number(req.body?.job_order_id);
+    if (!joId) return res.status(400).json({ error: 'job_order_id is required.' });
+    const t = await emailTarget(req, joId);
+    if (t.error) return res.status(t.status).json({ error: t.error });
+    const r = t.row;
+    // Compared in the database, on its own clock: marked_at comes back as text in the database's time
+    // zone, so comparing it with the app's clock in JS was off by hours.
+    const [[recent]] = await pool.query(
+      `SELECT 1 AS x FROM pending_billing_marks WHERE target = 'email' AND target_id = ? AND marked_at > NOW() - INTERVAL ${EMAIL_COOLDOWN_MIN} MINUTE`, [r.id]);
+    if (recent) {
+      return res.status(429).json({ error: `${r.job_order_no} was just emailed${r.email_mark?.by ? ` by ${r.email_mark.by}` : ''}. Wait ${EMAIL_COOLDOWN_MIN} minutes before sending again.` });
+    }
+    const mailer = require('../lib/mailer');
+    const [[me]] = await pool.query('SELECT display_name, email FROM users WHERE id = ?', [req.user.id]);
+    const note = String(req.body?.note || '').trim().slice(0, 2000);
+    const missing = [!r.with_par && 'PAR', !r.with_pics && 'Pictures', !r.with_po && r.sales_order_id && 'PO'].filter(Boolean);
+    const order = r.sales_order_no || r.nsso_no || '';
+    const base = String(process.env.CLIENT_URL || 'https://gsuite.graphicstar.ph').replace(/\/$/, '');
+    const link = `${base}/job-orders/${r.id}`;
+    const lines = [
+      ['Job Order', r.job_order_no], ['Sales Order', order], ['Customer', r.customer_name], ['Description', r.description],
+      ['Completed', day(r.completed_date || r.so_date)], ['Days pending', r.days_pending],
+      ['Qty to bill', `${Number(r.uninvoiced_qty).toLocaleString('en-US')} of ${Number(r.quantity).toLocaleString('en-US')}`],
+      ['Unbilled amount', `PHP ${peso(r.unbilled_amount)}`],
+      ['Still missing', missing.length ? missing.join(', ') : 'Nothing -- PAR, pictures and PO are in'],
+    ];
+    const subject = `Pending billing: ${r.job_order_no} -- ${r.customer_name || ''} (${r.days_pending ?? '?'} days)`;
+    const text = `Hi ${t.to.name || ''},\n\n${r.job_order_no} is delivered but not yet billed. Please follow up so it can be invoiced.\n\n`
+      + lines.map(([k, v]) => `${k}: ${v ?? ''}`).join('\n')
+      + (note ? `\n\nNote from ${me?.display_name || 'Billing'}:\n${note}` : '')
+      + `\n\nOpen it in T1S: ${link}\n\n-- Sent from T1S Pending Billing by ${me?.display_name || ''}`;
+    const html = `<p>Hi ${esc(t.to.name)},</p>
+<p><strong>${esc(r.job_order_no)}</strong> is delivered but not yet billed. Please follow up so it can be invoiced.</p>
+<table cellpadding="6" style="border-collapse:collapse;font:14px Arial,sans-serif">
+${lines.map(([k, v]) => `<tr><td style="color:#555;border-bottom:1px solid #eee">${esc(k)}</td><td style="border-bottom:1px solid #eee"><strong>${esc(v)}</strong></td></tr>`).join('\n')}
+</table>
+${note ? `<p style="margin-top:14px"><em>Note from ${esc(me?.display_name || 'Billing')}:</em><br>${esc(note).replace(/\n/g, '<br>')}</p>` : ''}
+<p><a href="${esc(link)}">Open ${esc(r.job_order_no)} in T1S</a></p>
+<p style="color:#888;font-size:12px">Sent from T1S Pending Billing by ${esc(me?.display_name || '')}.</p>`;
+
+    const sent = await mailer.send({
+      to: t.to.email, subject, text, html,
+      replyTo: me?.email && String(me.email).includes('@') ? me.email : undefined,
+      fromName: me?.display_name ? `${me.display_name} via T1S` : undefined,
+    });
+    if (!sent || sent.ok === false) return res.status(502).json({ error: sent?.error || 'The email could not be sent.' });
+
+    await pool.query(
+      `INSERT INTO pending_billing_marks (target, target_id, marked_by_user_id, marked_at) VALUES ('email', ?, ?, NOW())
+       ON DUPLICATE KEY UPDATE marked_by_user_id = VALUES(marked_by_user_id), marked_at = NOW()`, [r.id, req.user.id]);
+    const [[m]] = await pool.query(
+      `SELECT m.marked_at, u.display_name AS marked_by FROM pending_billing_marks m LEFT JOIN users u ON u.id = m.marked_by_user_id
+        WHERE m.target = 'email' AND m.target_id = ?`, [r.id]);
+    res.json({ ok: true, to: t.to, mark: m ? { by: m.marked_by, at: m.marked_at } : null });
+  } catch (err) { next(err); }
 });
 
 router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {

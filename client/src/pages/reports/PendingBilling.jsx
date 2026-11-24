@@ -35,6 +35,29 @@ export default function PendingBilling() {
   const WHAT = { par: 'PAR', pics: 'Pictures', po: 'PO' };
   const perJo = (target) => target === 'par' || target === 'pics';
 
+  // Email the sales rep (2026-11-24): the window shows who it goes to (their user account's email)
+  // before anything is sent; an optional note goes in the email. { row, to, last, note, busy, error, sentTo }
+  const [mail, setMail] = useState(null);
+  async function openEmail(row) {
+    setMail({ row, to: null, note: '', busy: true, error: '' });
+    try {
+      const { data: d } = await api.get('/reports/pending-billing/email-preview', { params: { job_order_id: row.id } });
+      setMail((m) => m && { ...m, to: d.to, last: d.last, busy: false });
+    } catch (e) {
+      setMail((m) => m && { ...m, busy: false, error: e.response?.data?.error || 'Could not find the sales rep’s email.' });
+    }
+  }
+  async function sendEmail() {
+    setMail((m) => ({ ...m, busy: true, error: '' }));
+    try {
+      const { data: d } = await api.post('/reports/pending-billing/email', { job_order_id: mail.row.id, note: mail.note });
+      setData((x) => ({ ...x, rows: x.rows.map((r) => (r.id === mail.row.id ? { ...r, email_mark: d.mark } : r)) }));
+      setMail((m) => ({ ...m, busy: false, sentTo: d.to }));
+    } catch (e) {
+      setMail((m) => ({ ...m, busy: false, error: e.response?.data?.error || 'The email could not be sent.' }));
+    }
+  }
+
   // A PO mark belongs to the sales order, so it changes every row of that order.
   async function toggleMark(row, target, checked, sentDate) {
     if (perJo(target) && checked && !sentDate) { setAskSent({ row, target, date: todayKey }); return; }
@@ -166,6 +189,42 @@ export default function PendingBilling() {
           </form>
         </Modal>
       )}
+      {mail && (
+        <Modal title={`Email the sales rep · ${mail.row.job_order_no}`} onClose={() => setMail(null)}>
+          {mail.sentTo ? (
+            <>
+              <p style={{ marginTop: 0 }}>✓ Sent to <strong>{mail.sentTo.name}</strong> ({mail.sentTo.email}).</p>
+              <div style={{ display: 'flex', justifyContent: 'flex-end' }}><button type="button" className="btn btn-primary" onClick={() => setMail(null)}>Close</button></div>
+            </>
+          ) : (
+            <form onSubmit={(e) => { e.preventDefault(); if (mail.to && !mail.busy) sendEmail(); }}>
+              <p style={{ marginTop: 0 }}>
+                A reminder that <strong>{mail.row.job_order_no}</strong> ({mail.row.customer_name}) is delivered but not billed:
+                {' '}{qty(mail.row.uninvoiced_qty)} to bill, {money(mail.row.unbilled_amount)}, {mail.row.days_pending ?? '?'} days pending
+                {[!mail.row.with_par && 'PAR', !mail.row.with_pics && 'pictures', !mail.row.with_po && mail.row.sales_order_id && 'PO'].filter(Boolean).length
+                  ? <> — still missing {[!mail.row.with_par && 'PAR', !mail.row.with_pics && 'pictures', !mail.row.with_po && mail.row.sales_order_id && 'PO'].filter(Boolean).join(', ')}</> : null}.
+              </p>
+              <div className="field">
+                <label>To</label>
+                <div style={{ padding: '6px 0' }}>
+                  {mail.busy && !mail.to ? 'Finding the sales rep’s email…' : mail.to ? <><strong>{mail.to.name}</strong> &lt;{mail.to.email}&gt;</> : '—'}
+                </div>
+              </div>
+              {mail.last && <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>Last emailed {displayDateTime(mail.last.at)}{mail.last.by ? ` by ${mail.last.by}` : ''}.</div>}
+              <div className="field">
+                <label>Note (optional)</label>
+                <textarea rows={3} maxLength={2000} value={mail.note} placeholder="e.g. Please send the signed PAR so we can bill this week."
+                  onChange={(e) => setMail((m) => ({ ...m, note: e.target.value }))} style={{ width: '100%' }} />
+              </div>
+              {mail.error && <div className="error-banner" style={{ marginTop: 8 }}>{mail.error}</div>}
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+                <button type="button" className="btn" onClick={() => setMail(null)}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={!mail.to || mail.busy}>{mail.busy && mail.to ? 'Sending…' : 'Send email'}</button>
+              </div>
+            </form>
+          )}
+        </Modal>
+      )}
       {!data ? <LoadingSpinner /> : (
         <>
           <div className="card" style={{ marginBottom: 16, display: 'flex', gap: 32, flexWrap: 'wrap' }}>
@@ -187,10 +246,11 @@ export default function PendingBilling() {
                     <th className="text-right">Days Pending</th><th className="text-right">Qty</th>
                     <th className="text-right">Delivered</th><th className="text-right">Invoiced</th><th className="text-right">To Bill</th>
                     <th className="text-right">Unit Price</th><th className="text-right">Unbilled Amount</th>
+                    <th title="Email the Job Order's sales rep a reminder to follow it up for billing">Email</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {data.rows.length === 0 && <tr><td colSpan={17} className="muted" style={{ textAlign: 'center', padding: 16 }}>Nothing pending billing.</td></tr>}
+                  {data.rows.length === 0 && <tr><td colSpan={18} className="muted" style={{ textAlign: 'center', padding: 16 }}>Nothing pending billing.</td></tr>}
                   {data.rows.map((r) => (
                     <tr key={r.id}>
                       <td style={{ whiteSpace: 'nowrap' }}><Link to={`/job-orders/${r.id}`}>{r.job_order_no}</Link></td>
@@ -210,11 +270,19 @@ export default function PendingBilling() {
                       <td className="text-right"><strong>{qty(r.uninvoiced_qty)}</strong></td>
                       <td className="text-right">{money(r.unit_gross)}</td>
                       <td className="text-right"><strong>{money(r.unbilled_amount)}</strong></td>
+                      <td style={{ whiteSpace: 'nowrap' }}>
+                        <button type="button" className="btn btn-sm" onClick={() => openEmail(r)} title={`Email ${r.sales_rep_name || 'the sales rep'} about ${r.job_order_no}`}>✉ Email</button>
+                        {r.email_mark && (
+                          <div className="muted" style={{ fontSize: 11 }} title={`Emailed by ${r.email_mark.by || 'someone'}, ${displayDateTime(r.email_mark.at)}`}>
+                            Emailed {displayDate(String(r.email_mark.at).slice(0, 10))}
+                          </div>
+                        )}
+                      </td>
                     </tr>
                   ))}
                   {data.rows.length > 0 && (
                     <tr style={{ fontWeight: 700, borderTop: '2px solid var(--border)' }}>
-                      <td colSpan={13}>Total</td><td className="text-right">{qty(t.qty)}</td><td /><td className="text-right">{money(t.amount)}</td>
+                      <td colSpan={14}>Total</td><td className="text-right">{qty(t.qty)}</td><td /><td className="text-right">{money(t.amount)}</td><td />
                     </tr>
                   )}
                 </tbody>
