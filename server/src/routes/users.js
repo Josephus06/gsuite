@@ -167,7 +167,7 @@ router.post('/', requireAuth, requirePermission(ROUTE, 'can_add'), async (req, r
     );
     res.status(201).json(row);
   } catch (err) {
-    if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Username or email already in use' });
+    if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'That username is already taken' }); // emails may be shared since 2026-11-24
     next(err);
   }
 });
@@ -220,7 +220,7 @@ router.put('/:id', requireAuth, requirePermission(ROUTE, 'can_edit'), async (req
     if (!row) return res.status(404).json({ error: 'Not found' });
     res.json(row);
   } catch (err) {
-    if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'Email already in use' });
+    if (err.code === 'ER_DUP_ENTRY') return res.status(409).json({ error: 'That username is already taken' }); // emails may be shared since 2026-11-24
     next(err);
   }
 });

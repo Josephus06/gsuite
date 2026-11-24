@@ -11,8 +11,8 @@
 //     PUT  /:id              { device_name }
 //     DELETE /:id
 const express = require('express');
-const bcrypt = require('bcryptjs');
 const pool = require('../db');
+const { findLoginUser, AMBIGUOUS_MESSAGE } = require('../lib/loginLookup');
 const { requireAuth, requirePermission, userCan } = require('../middleware/auth');
 const gate = require('../lib/deviceGate');
 
@@ -63,12 +63,11 @@ publicRouter.post('/register', async (req, res, next) => {
     if (!username || !password) return res.status(400).json({ error: 'Type the admin username and password.' });
     if (!deviceName) return res.status(400).json({ error: 'Give this device a name.' });
 
-    const [[user]] = await pool.query(
-      'SELECT id, password_hash FROM users WHERE (username = ? OR email = ?) AND is_active = TRUE', [username, username],
-    );
-    if (!user || !(await bcrypt.compare(String(password), user.password_hash))) {
-      return res.status(401).json({ error: 'Wrong username or password.' });
-    }
+    // Several accounts may share an email (2026-11-24): lib/loginLookup.js picks the right one.
+    const found = await findLoginUser(username, password);
+    if (found.error === 'ambiguous') return res.status(401).json({ error: AMBIGUOUS_MESSAGE });
+    if (!found.user) return res.status(401).json({ error: 'Wrong username or password.' });
+    const { user } = found;
     if (!(await userCan(user.id, ROUTE, 'can_approve'))) {
       return res.status(403).json({ error: 'Only an administrator can register a device.' });
     }

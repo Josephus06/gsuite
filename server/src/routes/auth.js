@@ -5,6 +5,7 @@ const pool = require('../db');
 const { PLANNER_COLUMNS, PLANNER_FLAGS, isPlanner } = require('../lib/plannerRoles');
 const { requireAuth, clearPresence, isSystemAdmin } = require('../middleware/auth');
 const { isHeadOfficeUser } = require('../lib/userLocation');
+const { findLoginUser, AMBIGUOUS_MESSAGE } = require('../lib/loginLookup');
 
 const router = express.Router();
 
@@ -36,18 +37,15 @@ router.post('/login', async (req, res, next) => {
     // star here drags all of them across the wire on every single sign-in to read a
     // password hash and ten flags. This list is exactly what the handler below uses:
     // password_hash for the bcrypt compare, and the rest for the token and the response.
-    const [[user]] = await pool.query(
-      `SELECT id, username, email, display_name, password_hash, default_branch_id,
+    // Several accounts may share an email (2026-11-24): lib/loginLookup.js picks the right one.
+    const found = await findLoginUser(username, password,
+      `id, username, email, display_name, password_hash, default_branch_id,
               account_type, can_approve_sales_estimate, is_design_supervisor,
               is_supervisor, is_purchasing_supervisor, ${PLANNER_COLUMNS},
-              is_production_supervisor, can_edit_approved_po
-         FROM users WHERE (username = ? OR email = ?) AND is_active = TRUE`,
-      [username, username]
-    );
-    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
-
-    const ok = await bcrypt.compare(password, user.password_hash);
-    if (!ok) return res.status(401).json({ error: 'Invalid credentials' });
+              is_production_supervisor, can_edit_approved_po`);
+    if (found.error === 'ambiguous') return res.status(401).json({ error: AMBIGUOUS_MESSAGE });
+    if (!found.user) return res.status(401).json({ error: 'Invalid credentials' });
+    const { user } = found;
 
     await pool.query('UPDATE users SET last_login_at = NOW() WHERE id = ?', [user.id]);
 
