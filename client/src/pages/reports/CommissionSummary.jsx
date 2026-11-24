@@ -71,6 +71,7 @@ export default function CommissionSummary() {
         <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
           One sheet per group, one block per person, the same figures as the Commission report. Extract gives the Excel workbook.
           CP # is the month&apos;s Commission Payable; <span style={{ color: '#b91c1c', fontWeight: 600 }}>No CP</span> means none has been created: that month cannot be released on a voucher, and its Confirmed and Unpaid Commission are not shown until one is.
+          {' '}🔒 marks a locked month: its figures are kept as they were handed over for release, and only new releases change its Unpaid.
         </div>
       </div>
 
@@ -110,7 +111,9 @@ export default function CommissionSummary() {
                         <td>{r.month_name}</td>
                         <td><CommissionPayableCell row={r} /></td>
                         {COLS.map(([k]) => (
-                          <td key={k} style={{ textAlign: k === 'division_name' ? 'left' : 'right' }}>
+                          <td key={k} style={{ textAlign: k === 'division_name' ? 'left' : 'right' }}
+                            title={k === 'confirmed_commission' && r.locked ? `Locked${r.locked_source ? ` from ${r.locked_source}` : ''}: kept as handed over for release, not recomputed from invoices` : undefined}>
+                            {k === 'confirmed_commission' && r.locked && <span aria-label="Locked" style={{ marginRight: 4, fontSize: '0.85em' }}>🔒</span>}
                             {k === 'division_name' ? (r[k] || '') : money(r[k])}
                           </td>
                         ))}

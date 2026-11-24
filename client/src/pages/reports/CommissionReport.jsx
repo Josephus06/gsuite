@@ -168,7 +168,11 @@ export default function CommissionReport() {
                     <td data-label="Estimated Commission" style={{ textAlign: 'right' }}>{money(r.estimated_commission)}</td>
                     <td data-label="Total JO Passing" style={{ textAlign: 'right' }}>{money(r.passing_gp_total)}</td>
                     <td data-label="Expected Commission" style={{ textAlign: 'right' }}>{money(r.expected_commission)}</td>
-                    <td data-label="Confirmed Commission" style={{ textAlign: 'right' }}>{money(r.confirmed_commission)}</td>
+                    <td data-label="Confirmed Commission" style={{ textAlign: 'right' }}
+                      title={r.locked ? `Locked${r.locked_source ? ` from ${r.locked_source}` : ''}: kept as handed over for release, not recomputed from invoices (system today: ${money(r.live_confirmed_commission) || '0.00'})` : undefined}>
+                      {r.locked && <span aria-label="Locked" style={{ marginRight: 4, fontSize: '0.85em' }}>🔒</span>}
+                      {money(r.confirmed_commission)}
+                    </td>
                     <td data-label="Released Commission" style={{ textAlign: 'right' }}>
                       {Number(r.released_commission) !== 0
                         ? <button type="button" className="link-btn" title="Show the vouchers" onClick={() => openReleased(r)}>{money(r.released_commission)}</button>

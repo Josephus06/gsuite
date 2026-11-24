@@ -267,6 +267,11 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
     }
   }
 
+  // Locked months (asked 2026-11-24): a month whose figures were handed over for release is read
+  // from commission_month_locks, not recomputed -- see applyMonthLock. Not for a division-filtered
+  // report: a lock holds the rep's whole month, not one division's share of it.
+  const locks = filters.salesDivisionId ? new Map() : await loadMonthLocks(employeeId, year);
+
   const rows = months.map((r) => {
     const weighted = round2(r.weighted_sales);
     const pct = r.quota > 0 ? round2((weighted / r.quota) * 100) : 0;
@@ -299,12 +304,52 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
       unpaid_commission: unpaid,
       payables: payablesByMonth[r.month] || [],
     };
-  });
+  }).map((row) => applyMonthLock(row, locks.get(row.month)));
 
   return {
     employee_id: employee.id, employee_name: employee.name, year: Number(year),
     scheme_name: schemeName, team_size: teamEmployeeIds.length, company_wide: !!scope.companyWide,
     sbu_division_count: sbuDivisionIds.length, rows,
+  };
+}
+
+// Locked months (asked 2026-11-24). Confirmed Commission is recomputed from live invoices every
+// time, so an old month moves after it was handed over for release: on 2026-11-23 a February order
+// had the rest of it invoiced, its paid share fell from 57% to 15%, and the Sales Manager's Unpaid
+// dropped by 1,229.63 after the Nov 16 summary was prepared.
+// A locked month keeps the figures it was locked with -- Weighted Sales through Confirmed -- and
+// only Released (and so Unpaid = Confirmed - Released) stays live, so a later voucher still pays
+// it down. Locks are loaded by src/db/lock-commission-from-file.js.
+async function loadMonthLocks(employeeId, year) {
+  try {
+    const [rows] = await pool.query(
+      `SELECT month, weighted_sales, performance_pct, estimated_commission, passing_gp_total,
+              expected_commission, confirmed_commission, source, locked_at
+         FROM commission_month_locks WHERE employee_id = ? AND year = ?`,
+      [employeeId, year]
+    );
+    return new Map(rows.map((l) => [Number(l.month), l]));
+  } catch (err) {
+    if (err.code === 'ER_NO_SUCH_TABLE') return new Map(); // a box not yet migrated: nothing locked
+    throw err;
+  }
+}
+
+function applyMonthLock(row, lock) {
+  if (!lock) return { ...row, locked: false };
+  const passing = round2(lock.passing_gp_total);
+  const expected = round2(lock.expected_commission);
+  const confirmed = round2(lock.confirmed_commission);
+  return {
+    ...row,
+    weighted_sales: round2(lock.weighted_sales), performance_pct: round2(lock.performance_pct),
+    estimated_commission: round2(lock.estimated_commission), passing_gp_total: passing,
+    expected_commission: expected, confirmed_commission: confirmed,
+    // The paid part implied by the locked Confirmed (Confirmed = paid / passing x Expected).
+    paid_passing_total: expected > 0 ? round2((confirmed / expected) * passing) : 0,
+    unpaid_commission: round2(confirmed - Number(row.released_commission || 0)),
+    locked: true, locked_source: lock.source || null, locked_at: lock.locked_at || null,
+    live_confirmed_commission: row.confirmed_commission,
   };
 }
 
@@ -318,6 +363,13 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
 // own net-of-tax (the same figure the report commissions on) times its SO's paid fraction --
 // gross collected / gross invoiced. That way a paid-in-full invoice marks its JOs' full net as
 // paid, uniformly for original and DT-converted invoices alike.
+//
+// The paid fraction is collected / the WHOLE ORDER (asked 2026-11-24), not collected / invoiced so
+// far: dividing by what had been invoiced made a partly billed order look well paid until the rest
+// was billed -- a 1,232,000 order read 57% paid on 161,280 collected while only 286,720 was
+// invoiced, then 15% once the rest was invoiced. The order total is the SO's gross
+// (sales_orders.total_amount); when the invoices come to more than it (fees billed on top), they
+// are the base instead, and the fraction never exceeds 100%.
 async function computePaidByJo(joIds) {
   const paidByJo = new Map();
   if (!joIds.length) return paidByJo;
@@ -332,15 +384,17 @@ async function computePaidByJo(joIds) {
   const fractionBySo = new Map();
   if (soIds.length) {
     const [inv] = await pool.query(
-      `SELECT sales_order_id, SUM(gross_amount) AS gross, SUM(gross_amount - amount_due) AS paid
-         FROM sales_invoices
-        WHERE sales_order_id IN (?) AND (status IS NULL OR status <> 'cancelled')
-        GROUP BY sales_order_id`,
+      `SELECT si.sales_order_id, SUM(si.gross_amount) AS gross, SUM(si.gross_amount - si.amount_due) AS paid,
+              MAX(so.total_amount) AS order_total
+         FROM sales_invoices si
+         JOIN sales_orders so ON so.id = si.sales_order_id
+        WHERE si.sales_order_id IN (?) AND (si.status IS NULL OR si.status <> 'cancelled')
+        GROUP BY si.sales_order_id`,
       [soIds]
     );
     for (const r of inv) {
-      const gross = Number(r.gross) || 0;
-      fractionBySo.set(r.sales_order_id, gross > 0 ? (Number(r.paid) / gross) : 0);
+      const base = Math.max(Number(r.order_total) || 0, Number(r.gross) || 0);
+      fractionBySo.set(r.sales_order_id, base > 0 ? Math.min(1, Number(r.paid) / base) : 0);
     }
   }
   for (const j of jos) {
