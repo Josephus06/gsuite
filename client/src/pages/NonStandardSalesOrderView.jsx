@@ -54,11 +54,11 @@ export default function NonStandardSalesOrderView() {
   // permission a sales supervisor holds. The server decides the same way (mayApproveNsso).
   // An RMA / RMA-Installation: the supervisor or head of whoever created it (or a System Admin) --
   // the server works that out and says so in may_approve. Its NSJO-RMA then waits on a GM.
-  const canApprove = n.type === 'sample'
-    ? (!!user?.is_sales_business_unit || user?.account_type === 'System Admin')
-    : ['rma', 'rma_installation'].includes(n.type)
-      ? !!n.may_approve
-      : can('/non-standard-sales-orders', 'can_approve');
+  // A Sample from a branch (office not Head Office, 2026-11-24) waits on its creator's supervisor --
+  // the server works out a Sample's approver too, so its may_approve decides here.
+  const canApprove = ['sample', 'rma', 'rma_installation'].includes(n.type)
+    ? !!n.may_approve
+    : can('/non-standard-sales-orders', 'can_approve');
   const canAdd = can('/non-standard-sales-orders', 'can_add');
   const isOpen = n.status !== 'cancelled';
   const notApproved = n.status === 'pending_approval';

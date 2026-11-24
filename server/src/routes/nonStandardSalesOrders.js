@@ -6,6 +6,7 @@ const { releaseIfDirectToProduction } = require('../lib/directToProduction');
 const { assignDocNo } = require('../lib/docNumber');
 const { requireAuth, requirePermission, userCan, isSystemAdmin } = require('../middleware/auth');
 const { getSalesRepEmployeeScope, isAboveInChain, directSupervisorIds } = require('../lib/salesVisibility');
+const { isHeadOfficeName } = require('../lib/userLocation');
 const { sendXlsx, day } = require('../lib/xlsxExport');
 const { DESIGN_QUEUE_STATUS } = require('../lib/designSupervisorVisibility');
 const { notifyDesignSupervisors } = require('../lib/designNotifications');
@@ -773,6 +774,24 @@ router.put('/:id/lines/:lineId/sample', requireAuth, requireOpenPeriod('non_stan
 // whoever created it (user_supervisors), or a System Admin; not on that permission either. Then
 // the NSJO-RMA made from it waits on a General Manager (asked 2026-11-04; it was the GM approving
 // the NSSO from 2026-10-31): create -> head approves -> create NSJO-RMA -> GM approves -> Design.
+//
+// A SAMPLE whose office location is NOT Head Office (a branch, asked 2026-11-24) is approved by the
+// supervisor -- or anyone above them -- of whoever created it (user_supervisors), as an RMA is, or a
+// System Admin; the SBU-head rule is Head Office's. An NSSO with no office counts as Head Office (the
+// stricter side, lib/userLocation.js isHeadOfficeName). Migrated NSSOs have no creator: their sales
+// rep's account stands in for it.
+async function nssoIsHeadOffice(n) {
+  if (n.office_location_name !== undefined) return isHeadOfficeName(n.office_location_name);
+  if (!n.office_location_id) return true;
+  const [[loc]] = await pool.query('SELECT location_name FROM locations WHERE id = ?', [n.office_location_id]);
+  return isHeadOfficeName(loc?.location_name);
+}
+async function nssoRaisedBy(n) {
+  if (n.created_by_user_id) return n.created_by_user_id;
+  if (!n.sales_rep_id) return null;
+  const [[u]] = await pool.query('SELECT id FROM users WHERE employee_id = ? AND is_active = 1 ORDER BY id LIMIT 1', [n.sales_rep_id]);
+  return u ? u.id : null;
+}
 async function mayApproveNsso(userId, n) {
   const { type } = n;
   if (type === 'rma' || type === 'rma_installation') {
@@ -780,6 +799,7 @@ async function mayApproveNsso(userId, n) {
   }
   if (type === 'sample') {
     if (await isSystemAdmin(userId)) return true;
+    if (!(await nssoIsHeadOffice(n))) return isAboveInChain(userId, await nssoRaisedBy(n));
     const [[u]] = await pool.query('SELECT is_sales_business_unit FROM users WHERE id = ?', [userId]);
     return !!(u && u.is_sales_business_unit);
   }
@@ -790,11 +810,16 @@ async function mayApproveNsso(userId, n) {
 router.put('/:id/approve', requireAuth, async (req, res, next) => {
   const conn = await pool.getConnection();
   try {
-    const [[n]] = await conn.query('SELECT status, type, created_by_user_id FROM non_standard_sales_orders WHERE id = ?', [req.params.id]);
+    const [[n]] = await conn.query(
+      `SELECT n.status, n.type, n.created_by_user_id, n.sales_rep_id, n.office_location_id, loc.location_name AS office_location_name
+         FROM non_standard_sales_orders n LEFT JOIN locations loc ON loc.id = n.office_location_id WHERE n.id = ?`, [req.params.id]);
     if (!n) return res.status(404).json({ error: 'Not found' });
     if (!(await mayApproveNsso(req.user.id, n))) {
       return res.status(403).json({
-        error: n.type === 'sample' ? 'Only an SBU head can approve a Sample NSSO.'
+        error: n.type === 'sample'
+          ? (await nssoIsHeadOffice(n)
+            ? 'Only an SBU head can approve a Head Office Sample NSSO.'
+            : `Only the supervisor of whoever created this Sample NSSO can approve it (office: ${n.office_location_name || 'branch'}).`)
           : ['rma', 'rma_installation'].includes(n.type) ? 'Only the supervisor or head of whoever created this RMA NSSO can approve it.'
             : 'You do not have permission to perform this action',
       });
