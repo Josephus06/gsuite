@@ -325,6 +325,11 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
 // invoiced, then 15% once the rest was invoiced, and commission already released for it dropped.
 // The order total is the SO's gross (sales_orders.total_amount); when the invoices come to more
 // than it (fees billed on top), they are the base instead, and the fraction never exceeds 100%.
+//
+// Only for orders created on or after WHOLE_ORDER_RULE_FROM (asked 2026-11-24: "starting today only
+// the rule can be applied"). Older orders keep the earlier rule, collected / invoiced so far, so
+// commission already worked out on them stays as it was.
+const WHOLE_ORDER_RULE_FROM = '2026-11-24';
 async function computePaidByJo(joIds) {
   const paidByJo = new Map();
   if (!joIds.length) return paidByJo;
@@ -340,16 +345,21 @@ async function computePaidByJo(joIds) {
   if (soIds.length) {
     const [inv] = await pool.query(
       `SELECT si.sales_order_id, SUM(si.gross_amount) AS gross, SUM(si.gross_amount - si.amount_due) AS paid,
-              MAX(so.total_amount) AS order_total
+              MAX(so.total_amount) AS order_total, MAX(so.date_created >= ?) AS whole_order_rule
          FROM sales_invoices si
          JOIN sales_orders so ON so.id = si.sales_order_id
         WHERE si.sales_order_id IN (?) AND (si.status IS NULL OR si.status <> 'cancelled')
         GROUP BY si.sales_order_id`,
-      [soIds]
+      [WHOLE_ORDER_RULE_FROM, soIds]
     );
     for (const r of inv) {
-      const base = Math.max(Number(r.order_total) || 0, Number(r.gross) || 0);
-      fractionBySo.set(r.sales_order_id, base > 0 ? Math.min(1, Number(r.paid) / base) : 0);
+      const gross = Number(r.gross) || 0;
+      if (Number(r.whole_order_rule)) {
+        const base = Math.max(Number(r.order_total) || 0, gross);
+        fractionBySo.set(r.sales_order_id, base > 0 ? Math.min(1, Number(r.paid) / base) : 0);
+      } else {
+        fractionBySo.set(r.sales_order_id, gross > 0 ? (Number(r.paid) / gross) : 0); // the earlier rule, unchanged
+      }
     }
   }
   for (const j of jos) {
