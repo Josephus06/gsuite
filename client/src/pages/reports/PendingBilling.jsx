@@ -137,6 +137,36 @@ export default function PendingBilling() {
     } catch { setError('Could not export.'); } finally { setExporting(false); }
   }
 
+  // Email selected (2026-11-24): tick JOs, then one email per sales rep listing all of theirs.
+  // The selection keeps only JOs still on screen after the list reloads.
+  const [picked, setPicked] = useState(() => new Set());
+  useEffect(() => {
+    if (!data?.rows) return;
+    const onScreen = new Set(data.rows.map((r) => r.id));
+    setPicked((p) => new Set([...p].filter((id) => onScreen.has(id))));
+  }, [data?.rows]);
+  const togglePick = (id) => setPicked((p) => { const n = new Set(p); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  const allPicked = !!data?.rows?.length && data.rows.every((r) => picked.has(r.id));
+  const pickAll = (on) => setPicked(on ? new Set((data?.rows || []).map((r) => r.id)) : new Set());
+  // { plan, note, busy, error, done }
+  const [bulk, setBulk] = useState(null);
+  async function openBulk() {
+    setBulk({ plan: null, note: '', busy: true, error: '' });
+    try {
+      const { data: plan } = await api.post('/reports/pending-billing/email-bulk/preview', { job_order_ids: [...picked] });
+      setBulk((b) => b && { ...b, plan, busy: false });
+    } catch (e) { setBulk((b) => b && { ...b, busy: false, error: e.response?.data?.error || 'Could not prepare the emails.' }); }
+  }
+  async function sendBulk() {
+    setBulk((b) => ({ ...b, busy: true, error: '' }));
+    try {
+      const { data: d } = await api.post('/reports/pending-billing/email-bulk', { job_order_ids: [...picked], note: bulk.note });
+      setData((x) => ({ ...x, rows: x.rows.map((r) => (d.marks[r.id] ? { ...r, email_mark: d.marks[r.id] } : r)) }));
+      setBulk((b) => ({ ...b, busy: false, done: d }));
+      if (d.results.every((x) => x.ok)) setPicked(new Set());
+    } catch (e) { setBulk((b) => ({ ...b, busy: false, error: e.response?.data?.error || 'The emails could not be sent.' })); }
+  }
+
   const upd = (k, v) => setF((x) => ({ ...x, [k]: v }));
   const t = data?.totals || {};
 
@@ -144,8 +174,69 @@ export default function PendingBilling() {
     <div>
       <div className="page-header">
         <h1>Pending Billing</h1>
-        <button type="button" className="btn btn-sm" disabled={exporting || !data?.rows?.length} onClick={exportExcel}>{exporting ? 'Exporting…' : 'Export to Excel'}</button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button type="button" className="btn btn-sm btn-primary" disabled={!picked.size} onClick={openBulk}
+            title="One email to each sales rep, listing all of their selected Job Orders">
+            ✉ Email selected{picked.size ? ` (${picked.size})` : ''}
+          </button>
+          <button type="button" className="btn btn-sm" disabled={exporting || !data?.rows?.length} onClick={exportExcel}>{exporting ? 'Exporting…' : 'Export to Excel'}</button>
+        </div>
       </div>
+      {bulk && (
+        <Modal title={`Email ${picked.size || ''} selected Job Order${picked.size === 1 ? '' : 's'}`} onClose={() => setBulk(null)}>
+          {bulk.done ? (
+            <>
+              {bulk.done.results.length === 0 && <p style={{ marginTop: 0 }}>Nothing was sent.</p>}
+              {bulk.done.results.map((x) => (
+                <div key={x.email} style={{ padding: '3px 0', color: x.ok ? undefined : '#b91c1c' }}>
+                  {x.ok ? '✓' : '✗'} {x.name} &lt;{x.email}&gt; — {x.jos} JO{x.jos === 1 ? '' : 's'}{x.ok ? '' : `: ${x.error}`}
+                </div>
+              ))}
+              {bulk.done.no_email.length > 0 && <p className="muted" style={{ fontSize: 12 }}>Not sent (no email): {bulk.done.no_email.map((x) => x.name).join(', ')}</p>}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}><button type="button" className="btn btn-primary" onClick={() => setBulk(null)}>Close</button></div>
+            </>
+          ) : !bulk.plan ? (
+            <>{bulk.busy ? <p style={{ marginTop: 0 }}>Grouping the Job Orders by sales rep…</p> : null}
+              {bulk.error && <div className="error-banner">{bulk.error}</div>}</>
+          ) : (
+            <form onSubmit={(e) => { e.preventDefault(); if (!bulk.busy && bulk.plan.recipients.length) sendBulk(); }}>
+              <p style={{ marginTop: 0 }}>One email to each sales rep, listing all of their selected Job Orders:</p>
+              <div style={{ maxHeight: 220, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 6, padding: '4px 10px' }}>
+                {bulk.plan.recipients.length === 0 && <div className="muted" style={{ padding: 6 }}>Nobody to email.</div>}
+                {bulk.plan.recipients.map((x) => (
+                  <div key={x.email} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, padding: '4px 0', borderBottom: '1px solid var(--border)' }}>
+                    <span><strong>{x.name}</strong> <span className="muted">&lt;{x.email}&gt;</span></span>
+                    <span style={{ whiteSpace: 'nowrap' }}>{x.jos} JO{x.jos === 1 ? '' : 's'} · {money(x.amount)}</span>
+                  </div>
+                ))}
+              </div>
+              {bulk.plan.no_email.length > 0 && (
+                <div className="warning-banner" style={{ marginTop: 8, fontSize: 12 }}>
+                  Skipped -- no email on their account: {bulk.plan.no_email.map((x) => `${x.name} (${x.jos.length})`).join(', ')}.
+                </div>
+              )}
+              {(bulk.plan.skipped_recent.length > 0 || bulk.plan.no_rep.length > 0) && (
+                <div className="muted" style={{ marginTop: 6, fontSize: 12 }}>
+                  {bulk.plan.skipped_recent.length > 0 && <>Skipped -- emailed in the last 10 minutes: {bulk.plan.skipped_recent.join(', ')}. </>}
+                  {bulk.plan.no_rep.length > 0 && <>Skipped -- no sales rep: {bulk.plan.no_rep.join(', ')}.</>}
+                </div>
+              )}
+              <div className="field" style={{ marginTop: 10 }}>
+                <label>Note (optional, in every email)</label>
+                <textarea rows={3} maxLength={2000} value={bulk.note} placeholder="e.g. Please send the signed PARs so we can bill before month end."
+                  onChange={(e) => setBulk((b) => ({ ...b, note: e.target.value }))} style={{ width: '100%' }} />
+              </div>
+              {bulk.error && <div className="error-banner" style={{ marginTop: 8 }}>{bulk.error}</div>}
+              <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
+                <button type="button" className="btn" onClick={() => setBulk(null)}>Cancel</button>
+                <button type="submit" className="btn btn-primary" disabled={bulk.busy || !bulk.plan.recipients.length}>
+                  {bulk.busy ? 'Sending…' : `Send ${bulk.plan.recipients.length} email${bulk.plan.recipients.length === 1 ? '' : 's'}`}
+                </button>
+              </div>
+            </form>
+          )}
+        </Modal>
+      )}
       <p className="muted" style={{ marginTop: -8 }}>Job Orders built, QI'd and delivered but not yet on a Delivery Ticket or Invoice, oldest first.</p>
 
       <div className="card" style={{ marginBottom: 16 }}>
@@ -238,6 +329,10 @@ export default function PendingBilling() {
               <table>
                 <thead>
                   <tr>
+                    <th style={{ width: 28 }}>
+                      <input type="checkbox" style={{ width: 'auto' }} checked={allPicked} disabled={!data.rows.length}
+                        onChange={(e) => pickAll(e.target.checked)} title="Select every Job Order listed" aria-label="Select all" />
+                    </th>
                     <th>Job Order</th><th>SO / NSSO</th><th>Customer</th><th>Sales Rep</th><th>Department</th><th>Description</th>
                     <th>Completed</th>
                     <th title="The Job Order has a PAR file (Production > Job Order > Production Attachment), or someone with Update rights here ticked it" style={{ textAlign: 'center' }}>wt PAR</th>
@@ -250,9 +345,10 @@ export default function PendingBilling() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.rows.length === 0 && <tr><td colSpan={18} className="muted" style={{ textAlign: 'center', padding: 16 }}>Nothing pending billing.</td></tr>}
+                  {data.rows.length === 0 && <tr><td colSpan={19} className="muted" style={{ textAlign: 'center', padding: 16 }}>Nothing pending billing.</td></tr>}
                   {data.rows.map((r) => (
                     <tr key={r.id}>
+                      <td><input type="checkbox" style={{ width: 'auto' }} checked={picked.has(r.id)} onChange={() => togglePick(r.id)} aria-label={`Select ${r.job_order_no}`} /></td>
                       <td style={{ whiteSpace: 'nowrap' }}><Link to={`/job-orders/${r.id}`}>{r.job_order_no}</Link></td>
                       <td style={{ whiteSpace: 'nowrap' }}>{r.sales_order_id ? <Link to={`/sales-orders/${r.sales_order_id}`}>{r.sales_order_no}</Link> : (r.nsso_no || '')}</td>
                       <td><CustomerLink id={r.customer_id} name={r.customer_name} /></td>
@@ -282,7 +378,7 @@ export default function PendingBilling() {
                   ))}
                   {data.rows.length > 0 && (
                     <tr style={{ fontWeight: 700, borderTop: '2px solid var(--border)' }}>
-                      <td colSpan={14}>Total</td><td className="text-right">{qty(t.qty)}</td><td /><td className="text-right">{money(t.amount)}</td><td />
+                      <td colSpan={15}>Total</td><td className="text-right">{qty(t.qty)}</td><td /><td className="text-right">{money(t.amount)}</td><td />
                     </tr>
                   )}
                 </tbody>

@@ -158,8 +158,12 @@ async function loadRows(req, { allReps = false } = {}) {
     where.push('(jo.job_order_no LIKE ? OR so.sales_order_no LIKE ? OR ns.nsso_no LIKE ? OR c.name LIKE ? OR jo.description LIKE ?)');
     const q = `%${String(search).trim()}%`; params.push(q, q, q, q, q);
   }
-  // One Job Order (the Email button, 2026-11-24).
+  // One Job Order (the Email button, 2026-11-24), or several (Email selected).
   if (Number(req.query.job_order_id) > 0) { where.push('jo.id = ?'); params.push(Number(req.query.job_order_id)); }
+  if (Array.isArray(req.query.job_order_ids)) {
+    const list = req.query.job_order_ids.map(Number).filter((n) => n > 0);
+    where.push('jo.id IN (?)'); params.push(list.length ? list : [0]);
+  }
   const [jos] = await pool.query(
     `SELECT jo.id, jo.job_order_no, jo.description, jo.quantity, jo.quantity_inspected, jo.quantity_delivered, jo.quantity_invoiced,
             COALESCE(so.sales_rep_id, ns.sales_rep_id, jo.sales_rep_id) AS sales_rep_id,
@@ -328,20 +332,137 @@ const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': 
 const peso = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const day = (v) => (v ? String(v instanceof Date ? v.toISOString() : v).slice(0, 10) : '');
 
+// A sales rep's name and the email to use: their user account's, else their employee record's.
+async function repContact(repId) {
+  const [[rep]] = await pool.query(
+    `SELECT TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, ''))) AS name, e.email AS employee_email,
+            (SELECT u.email FROM users u WHERE u.employee_id = e.id AND u.is_active = 1 AND u.email LIKE '%@%' ORDER BY u.id LIMIT 1) AS user_email
+       FROM employees e WHERE e.id = ?`, [repId]);
+  const email = String(rep?.user_email || rep?.employee_email || '').trim();
+  return { name: rep?.name || '', email: email.includes('@') ? email : null };
+}
+
 async function emailTarget(req, joId) {
   const [row] = await loadRows({ ...req, query: { job_order_id: joId } });
   if (!row) return { error: 'This Job Order is not on your Pending Billing list.', status: 404 };
   if (!row.sales_rep_id) return { row, error: 'This Job Order has no sales rep.', status: 409 };
-  const [[rep]] = await pool.query(
-    `SELECT TRIM(CONCAT(COALESCE(e.first_name, ''), ' ', COALESCE(e.last_name, ''))) AS name, e.email AS employee_email,
-            (SELECT u.email FROM users u WHERE u.employee_id = e.id AND u.is_active = 1 AND u.email LIKE '%@%' ORDER BY u.id LIMIT 1) AS user_email
-       FROM employees e WHERE e.id = ?`, [row.sales_rep_id]);
-  const email = String(rep?.user_email || rep?.employee_email || '').trim();
-  if (!email || !email.includes('@')) {
-    return { row, error: `${rep?.name || 'The sales rep'} has no email address -- add it on their user account (Users & Permissions).`, status: 409 };
+  const rep = await repContact(row.sales_rep_id);
+  if (!rep.email) {
+    return { row, error: `${rep.name || 'The sales rep'} has no email address -- add it on their user account (Users & Permissions).`, status: 409 };
   }
-  return { row, to: { name: rep.name, email } };
+  return { row, to: rep };
 }
+
+// JOs emailed within the cooldown, by id -- compared in the database, on its own clock.
+async function recentlyEmailed(ids) {
+  if (!ids.length) return new Set();
+  const [rows] = await pool.query(
+    `SELECT target_id FROM pending_billing_marks WHERE target = 'email' AND target_id IN (?) AND marked_at > NOW() - INTERVAL ${EMAIL_COOLDOWN_MIN} MINUTE`, [ids]);
+  return new Set(rows.map((r) => Number(r.target_id)));
+}
+const missingOf = (r) => [!r.with_par && 'PAR', !r.with_pics && 'Pictures', !r.with_po && r.sales_order_id && 'PO'].filter(Boolean);
+
+// Email selected (2026-11-24): the selected JOs grouped by sales rep -- ONE email per rep listing all
+// of theirs. Plan first (who gets what, who has no email, what was emailed in the last 10 minutes),
+// then send. At most 300 JOs at a time.
+const BULK_MAX = 300;
+async function bulkPlan(req, ids) {
+  const rows = await loadRows({ ...req, query: { job_order_ids: ids } });
+  const recent = await recentlyEmailed(rows.map((r) => Number(r.id)));
+  const groups = new Map();
+  const noRep = []; const skippedRecent = [];
+  for (const r of rows) {
+    if (recent.has(Number(r.id))) { skippedRecent.push(r.job_order_no); continue; }
+    if (!r.sales_rep_id) { noRep.push(r.job_order_no); continue; }
+    if (!groups.has(r.sales_rep_id)) groups.set(r.sales_rep_id, { rep_id: r.sales_rep_id, rows: [] });
+    groups.get(r.sales_rep_id).rows.push(r);
+  }
+  const recipients = []; const noEmail = [];
+  for (const g of groups.values()) {
+    const c = await repContact(g.rep_id);
+    const item = { rep_id: g.rep_id, name: c.name, email: c.email, rows: g.rows };
+    (c.email ? recipients : noEmail).push(item);
+  }
+  recipients.sort((a, b) => a.name.localeCompare(b.name));
+  return { found: rows.length, not_found: ids.length - rows.length, recipients, no_email: noEmail, no_rep: noRep, skipped_recent: skippedRecent };
+}
+const planOut = (p) => ({
+  found: p.found, not_found: p.not_found, no_rep: p.no_rep, skipped_recent: p.skipped_recent,
+  recipients: p.recipients.map((x) => ({ name: x.name, email: x.email, jos: x.rows.length, amount: Number(x.rows.reduce((s, r) => s + r.unbilled_amount, 0).toFixed(2)) })),
+  no_email: p.no_email.map((x) => ({ name: x.name, jos: x.rows.map((r) => r.job_order_no) })),
+});
+const idsOf = (v) => (Array.isArray(v) ? v : String(v || '').split(',')).map(Number).filter((n) => n > 0);
+
+router.post('/email-bulk/preview', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const ids = idsOf(req.body?.job_order_ids);
+    if (!ids.length) return res.status(400).json({ error: 'Select at least one Job Order.' });
+    if (ids.length > BULK_MAX) return res.status(400).json({ error: `Select at most ${BULK_MAX} Job Orders at a time.` });
+    res.json(planOut(await bulkPlan(req, ids)));
+  } catch (err) { next(err); }
+});
+
+router.post('/email-bulk', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
+  try {
+    const ids = idsOf(req.body?.job_order_ids);
+    if (!ids.length) return res.status(400).json({ error: 'Select at least one Job Order.' });
+    if (ids.length > BULK_MAX) return res.status(400).json({ error: `Select at most ${BULK_MAX} Job Orders at a time.` });
+    const plan = await bulkPlan(req, ids);
+    const mailer = require('../lib/mailer');
+    const [[me]] = await pool.query('SELECT display_name, email FROM users WHERE id = ?', [req.user.id]);
+    const note = String(req.body?.note || '').trim().slice(0, 2000);
+    const base = String(process.env.CLIENT_URL || 'https://gsuite.graphicstar.ph').replace(/\/$/, '');
+    const sender = me?.display_name || 'Billing';
+    const results = [];
+    const marks = {};
+    for (const g of plan.recipients) {
+      const rows = g.rows.sort((a, b) => (b.days_pending || 0) - (a.days_pending || 0));
+      const total = rows.reduce((s, r) => s + r.unbilled_amount, 0);
+      const subject = `Pending billing: ${rows.length} Job Order${rows.length === 1 ? '' : 's'} to follow up (PHP ${peso(total)})`;
+      const text = `Hi ${g.name},\n\nThese Job Orders are delivered but not yet billed. Please follow them up so they can be invoiced.\n\n`
+        + rows.map((r) => `${r.job_order_no} | ${r.sales_order_no || r.nsso_no || ''} | ${r.customer_name || ''} | ${r.description || ''} | `
+          + `${r.days_pending ?? '?'} days | to bill ${r.uninvoiced_qty} | PHP ${peso(r.unbilled_amount)} | missing: ${missingOf(r).join(', ') || 'nothing'}`).join('\n')
+        + `\n\nTotal unbilled: PHP ${peso(total)}`
+        + (note ? `\n\nNote from ${sender}:\n${note}` : '')
+        + `\n\nPending Billing in T1S: ${base}/reports/pending-billing\n\n-- Sent from T1S Pending Billing by ${sender}`;
+      const th = (t, right) => `<th style="text-align:${right ? 'right' : 'left'};background:#f3f4f6;border-bottom:1px solid #ddd">${t}</th>`;
+      const td = (t, right) => `<td style="text-align:${right ? 'right' : 'left'};border-bottom:1px solid #eee;vertical-align:top">${t}</td>`;
+      const html = `<p>Hi ${esc(g.name)},</p>
+<p>These Job Orders are delivered but not yet billed. Please follow them up so they can be invoiced.</p>
+<table cellpadding="6" style="border-collapse:collapse;font:13px Arial,sans-serif">
+<tr>${th('Job Order')}${th('Order')}${th('Customer')}${th('Description')}${th('Days', 1)}${th('To bill', 1)}${th('Unbilled (PHP)', 1)}${th('Still missing')}</tr>
+${rows.map((r) => `<tr>${td(`<a href="${esc(`${base}/job-orders/${r.id}`)}">${esc(r.job_order_no)}</a>`)}${td(esc(r.sales_order_no || r.nsso_no || ''))}${td(esc(r.customer_name))}${td(esc(r.description))}${td(esc(r.days_pending ?? ''), 1)}${td(esc(Number(r.uninvoiced_qty).toLocaleString('en-US')), 1)}${td(esc(peso(r.unbilled_amount)), 1)}${td(esc(missingOf(r).join(', ') || '—'))}</tr>`).join('\n')}
+<tr><td colspan="6" style="text-align:right"><strong>Total</strong></td><td style="text-align:right"><strong>${esc(peso(total))}</strong></td><td></td></tr>
+</table>
+${note ? `<p style="margin-top:14px"><em>Note from ${esc(sender)}:</em><br>${esc(note).replace(/\n/g, '<br>')}</p>` : ''}
+<p><a href="${esc(`${base}/reports/pending-billing`)}">Open Pending Billing in T1S</a></p>
+<p style="color:#888;font-size:12px">Sent from T1S Pending Billing by ${esc(sender)}.</p>`;
+      const sent = await mailer.send({
+        to: g.email, subject, text, html,
+        replyTo: me?.email && String(me.email).includes('@') ? me.email : undefined,
+        fromName: me?.display_name ? `${me.display_name} via T1S` : undefined,
+      });
+      if (sent && sent.ok !== false) {
+        for (const r of rows) {
+          await pool.query(
+            `INSERT INTO pending_billing_marks (target, target_id, marked_by_user_id, marked_at) VALUES ('email', ?, ?, NOW())
+             ON DUPLICATE KEY UPDATE marked_by_user_id = VALUES(marked_by_user_id), marked_at = NOW()`, [r.id, req.user.id]);
+        }
+        results.push({ name: g.name, email: g.email, jos: rows.length, ok: true });
+      } else {
+        results.push({ name: g.name, email: g.email, jos: rows.length, ok: false, error: sent?.error || 'Could not send.' });
+      }
+    }
+    const sentIds = plan.recipients.filter((g, i) => results[i].ok).flatMap((g) => g.rows.map((r) => Number(r.id)));
+    if (sentIds.length) {
+      const [ms] = await pool.query(
+        `SELECT m.target_id, m.marked_at, u.display_name AS marked_by FROM pending_billing_marks m LEFT JOIN users u ON u.id = m.marked_by_user_id
+          WHERE m.target = 'email' AND m.target_id IN (?)`, [sentIds]);
+      for (const m of ms) marks[m.target_id] = { by: m.marked_by, at: m.marked_at };
+    }
+    res.json({ ...planOut(plan), results, marks });
+  } catch (err) { next(err); }
+});
 
 router.get('/email-preview', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
