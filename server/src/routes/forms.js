@@ -930,6 +930,7 @@ router.get('/approval/queue', requireAuth, async (req, res, next) => {
 
     const [rows] = await pool.query(
       `SELECT f.id, f.request_no, f.type, f.status, f.department, f.name, f.created_at, f.submitted_at, f.noted_at,
+              f.approved_at, f.rejected_at, f.rejection_reason,
               f.user_id, f.department_id, ${RELEASE_STATUS_SQL},
               ${(await hasPreApproverCol()) ? 'f.pre_approver_user_id IS NOT NULL AND f.pre_approved_at IS NULL AS waiting_pre_approval,' : ''}
               u.display_name AS owner_name,
