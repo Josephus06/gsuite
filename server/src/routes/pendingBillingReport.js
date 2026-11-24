@@ -180,7 +180,7 @@ async function loadRows(req, { allReps = false } = {}) {
   const soIds = [...new Set(jos.map((j) => j.sales_order_id).filter(Boolean))].concat(0);
   const withKind = await hasSoAttachmentKind();
   const sentCol = withKind && await hasSentDate();
-  const [invM, [qis], [dels], [solRows], [nslRows], [poRows], [parRows], [markRows]] = await Promise.all([
+  const [invM, [qis], [dels], [solRows], [nslRows], [poRows], [parRows], [picRows], [markRows]] = await Promise.all([
     invoicedByJobOrder(jos),
     pool.query(`SELECT job_order_id, MAX(date_created) d FROM quality_inspections
                  WHERE job_order_id IN (?) AND (status IS NULL OR status <> 'cancelled') GROUP BY job_order_id`, [ids]),
@@ -196,17 +196,20 @@ async function loadRows(req, { allReps = false } = {}) {
       `SELECT DISTINCT sales_order_id FROM sales_order_attachments
         WHERE sales_order_id IN (?) AND (kind = 'PO' OR (kind IS NULL AND (
           LOWER(file_name) REGEXP '(^|[^a-z])(po|p[.]o[.]?)([^a-z]|$)' OR LOWER(file_name) LIKE '%purchase order%')))`, [soIds]) : [[]],
-    // 'PAR' since 2026-11-09 (Production Attachment's types became PAR / Picture); 'PAR & Pics' for older files.
+    // wt PAR and wt PICS are separate columns (asked 2026-11-24). 'PAR' / 'Picture' since 2026-11-09
+    // (Production Attachment's types); an older 'PAR & Pics' file ticks both.
     pool.query("SELECT DISTINCT job_order_id FROM job_order_attachments WHERE kind IN ('PAR', 'PAR & Pics') AND job_order_id IN (?)", [ids]),
+    pool.query("SELECT DISTINCT job_order_id FROM job_order_attachments WHERE kind IN ('Picture', 'Pictures', 'PAR & Pics') AND job_order_id IN (?)", [ids]),
     withKind ? pool.query(
       `SELECT m.target, m.target_id, m.marked_at, ${sentCol ? "DATE_FORMAT(m.sent_date, '%Y-%m-%d')" : 'NULL'} AS sent_date, u.display_name AS marked_by FROM pending_billing_marks m
          LEFT JOIN users u ON u.id = m.marked_by_user_id
-        WHERE (m.target = 'par' AND m.target_id IN (?)) OR (m.target = 'po' AND m.target_id IN (?))`, [ids, soIds]) : [[]],
+        WHERE (m.target IN ('par', 'pics') AND m.target_id IN (?)) OR (m.target = 'po' AND m.target_id IN (?))`, [ids, soIds]) : [[]],
   ]);
   const marks = new Map(markRows.map((m) => [`${m.target}|${m.target_id}`, m]));
   const markOf = (target, id) => { const m = marks.get(`${target}|${Number(id)}`); return m ? { by: m.marked_by, at: m.marked_at, sent: m.sent_date || null } : null; };
   const withPo = new Set(poRows.map((r) => Number(r.sales_order_id)));
   const withPar = new Set(parRows.map((r) => Number(r.job_order_id)));
+  const withPics = new Set(picRows.map((r) => Number(r.job_order_id)));
   const qiM = byJo(qis); const delM = byJo(dels);
   const solById = new Map(solRows.map((l) => [Number(l.id), l]));
   const solByJo = new Map(solRows.filter((l) => l.job_order_id).map((l) => [Number(l.job_order_id), l]));
@@ -237,9 +240,11 @@ async function loadRows(req, { allReps = false } = {}) {
     if (to && (!doneDay || doneDay > to)) continue;
     out.push({
       ...j, unit_gross: unit, // *_file: an attachment ticks it (and it cannot be unticked); *_mark: ticked by hand.
-      par_pics_file: withPar.has(Number(j.id)), par_pics_mark: markOf('par', j.id),
+      par_file: withPar.has(Number(j.id)), par_mark: markOf('par', j.id),
+      pics_file: withPics.has(Number(j.id)), pics_mark: markOf('pics', j.id),
       po_file: withPo.has(Number(j.sales_order_id)), po_mark: j.sales_order_id ? markOf('po', j.sales_order_id) : null,
-      with_par_pics: withPar.has(Number(j.id)) || !!markOf('par', j.id),
+      with_par: withPar.has(Number(j.id)) || !!markOf('par', j.id),
+      with_pics: withPics.has(Number(j.id)) || !!markOf('pics', j.id),
       with_po: withPo.has(Number(j.sales_order_id)) || !!(j.sales_order_id && markOf('po', j.sales_order_id)), invoiced_qty: invoiced, invoice_nos: i?.invoice_nos || null,
       completed_date: completed, last_delivery_date: delM.get(Number(j.id))?.d || null,
       uninvoiced_qty: Number(uninvoiced.toFixed(4)),
@@ -265,24 +270,25 @@ router.get('/', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, r
   }
 });
 
-// Tick or untick wt PAR&Pics (target 'par', a JO id) or wt PO (target 'po', a sales order id) by hand:
+// Tick or untick wt PAR (target 'par', a JO id), wt PICS ('pics', a JO id) or wt PO ('po', a sales order id) by hand:
 // can_update on Pending Billing (asked 2026-11-04). A box an attachment ticks stays ticked regardless.
 router.put('/mark', requireAuth, requirePermission(ROUTE, 'can_update'), async (req, res, next) => {
   try {
     const { target, id, checked } = req.body || {};
-    if (!['par', 'po'].includes(target) || !Number(id)) return res.status(400).json({ error: 'target (par or po) and id are required.' });
+    if (!['par', 'pics', 'po'].includes(target) || !Number(id)) return res.status(400).json({ error: 'target (par, pics or po) and id are required.' });
+    const perJo = target === 'par' || target === 'pics';
     if (!(await hasSoAttachmentKind())) return res.status(409).json({ error: 'Run node src/db/add-so-attachment-kind.js on the server first.' });
-    // Ticking wt PAR&Pics needs the date its hard copy was sent (2026-11-13); not later than today.
+    // Ticking wt PAR or wt PICS needs the date it was sent (2026-11-13; each its own since 2026-11-24); not later than today.
     const sentCol = await hasSentDate();
     const sent = String(req.body?.sent_date || '').slice(0, 10);
-    if (target === 'par' && checked && sentCol) {
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(sent)) return res.status(400).json({ error: 'Enter the date the PAR & Pics hard copy was sent.' });
+    if (perJo && checked && sentCol) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(sent)) return res.status(400).json({ error: `Enter the date the ${target === 'par' ? 'PAR' : 'pictures'} were sent.` });
       const [[{ today }]] = await pool.query("SELECT DATE_FORMAT(CURDATE(), '%Y-%m-%d') AS today");
       if (sent > today) return res.status(400).json({ error: 'The date sent cannot be later than today.' });
     }
-    const [[exists]] = await pool.query(target === 'par' ? 'SELECT id FROM job_orders WHERE id = ?' : 'SELECT id FROM sales_orders WHERE id = ?', [id]);
+    const [[exists]] = await pool.query(perJo ? 'SELECT id FROM job_orders WHERE id = ?' : 'SELECT id FROM sales_orders WHERE id = ?', [id]);
     if (!exists) return res.status(404).json({ error: 'Not found' });
-    if (checked && target === 'par' && sentCol) {
+    if (checked && perJo && sentCol) {
       // Ticking again (or changing the date) keeps the latest date and who set it.
       await pool.query(
         `INSERT INTO pending_billing_marks (target, target_id, marked_by_user_id, marked_at, sent_date) VALUES (?, ?, ?, NOW(), ?)
@@ -317,8 +323,10 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
       { header: 'Department', key: 'department_name', width: 18 },
       { header: 'Description', key: 'description', width: 44 },
       { header: 'Completed', key: 'completed_date', width: 12 },
-      { header: 'wt PAR&Pics', key: 'par', width: 11 },
-      { header: 'PAR&Pics Sent', key: 'par_sent', width: 13 },
+      { header: 'wt PAR', key: 'par', width: 8 },
+      { header: 'PAR Sent', key: 'par_sent', width: 11 },
+      { header: 'wt PICS', key: 'pics', width: 8 },
+      { header: 'PICS Sent', key: 'pics_sent', width: 11 },
       { header: 'wt PO', key: 'po', width: 8 },
       { header: 'Days Pending', key: 'days_pending', width: 10 },
       { header: 'Qty', key: 'quantity', width: 9 },
@@ -333,7 +341,8 @@ router.get('/export', requireAuth, requirePermission(ROUTE, 'can_view'), async (
     ws.getRow(1).font = { bold: true };
     for (const r of rows) {
       ws.addRow({ ...r, order: r.sales_order_no || r.nsso_no || '', completed_date: r.completed_date ? String(r.completed_date).slice(0, 10) : '',
-        par: r.with_par_pics ? 'Yes' : '', par_sent: r.par_pics_mark?.sent || '', po: r.with_po ? 'Yes' : '',
+        par: r.with_par ? 'Yes' : '', par_sent: r.par_mark?.sent || '',
+        pics: r.with_pics ? 'Yes' : '', pics_sent: r.pics_mark?.sent || '', po: r.with_po ? 'Yes' : '',
         unit_gross: Number(Number(r.unit_gross || 0).toFixed(2)) });
     }
     const total = ws.addRow({ job_order_no: 'Total', uninvoiced_qty: rows.reduce((s, r) => s + r.uninvoiced_qty, 0), unbilled_amount: rows.reduce((s, r) => s + r.unbilled_amount, 0) });

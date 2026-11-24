@@ -24,25 +24,29 @@ export default function PendingBilling() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [exporting, setExporting] = useState(false);
-  // can_update here ticks wt PAR&Pics / wt PO by hand; an attachment ticks them for everyone.
+  // can_update here ticks wt PAR / wt PICS / wt PO by hand; an attachment ticks them for everyone.
+  // PAR and PICS were one "wt PAR&Pics" box until 2026-11-24.
   const { can } = useAuth();
   const canMark = can('/reports/pending-billing', 'can_update');
   const [marking, setMarking] = useState('');
-  // Ticking wt PAR&Pics asks for the date its hard copy was sent (2026-11-13): { row, date }.
+  // Ticking wt PAR or wt PICS asks for the date it was sent (2026-11-13): { row, target, date }.
   const [askSent, setAskSent] = useState(null);
   const todayKey = new Date().toLocaleDateString('en-CA');
+  const WHAT = { par: 'PAR', pics: 'Pictures', po: 'PO' };
+  const perJo = (target) => target === 'par' || target === 'pics';
 
   // A PO mark belongs to the sales order, so it changes every row of that order.
   async function toggleMark(row, target, checked, sentDate) {
-    if (target === 'par' && checked && !sentDate) { setAskSent({ row, date: todayKey }); return; }
-    const id = target === 'par' ? row.id : row.sales_order_id;
+    if (perJo(target) && checked && !sentDate) { setAskSent({ row, target, date: todayKey }); return; }
+    const id = perJo(target) ? row.id : row.sales_order_id;
     setMarking(`${target}|${id}`); setError('');
     try {
       const { data: { mark } } = await api.put('/reports/pending-billing/mark', { target, id, checked, sent_date: sentDate || undefined });
       setData((d) => ({
         ...d,
         rows: d.rows.map((r) => {
-          if (target === 'par' && r.id === id) return { ...r, par_pics_mark: mark, with_par_pics: r.par_pics_file || !!mark };
+          if (target === 'par' && r.id === id) return { ...r, par_mark: mark, with_par: r.par_file || !!mark };
+          if (target === 'pics' && r.id === id) return { ...r, pics_mark: mark, with_pics: r.pics_file || !!mark };
           if (target === 'po' && r.sales_order_id === id) return { ...r, po_mark: mark, with_po: r.po_file || !!mark };
           return r;
         }),
@@ -51,14 +55,14 @@ export default function PendingBilling() {
   }
 
   const markBox = (row, target) => {
-    const file = target === 'par' ? row.par_pics_file : row.po_file;
-    const mark = target === 'par' ? row.par_pics_mark : row.po_mark;
-    const id = target === 'par' ? row.id : row.sales_order_id;
+    const file = row[`${target}_file`];
+    const mark = row[`${target}_mark`];
+    const id = perJo(target) ? row.id : row.sales_order_id;
     const editable = canMark && !file && !!id && marking !== `${target}|${id}`;
-    const what = target === 'par' ? 'PAR & Pics' : 'PO';
+    const what = WHAT[target];
     let title = `No ${what} yet`;
     if (file) title = `${what} attached`;
-    else if (mark) title = `${mark.sent ? `Hard copy sent ${displayDate(mark.sent)} · ` : ''}Ticked by ${mark.by || 'someone'}${mark.at ? `, ${displayDateTime(mark.at)}` : ''}`;
+    else if (mark) title = `${mark.sent ? `Sent ${displayDate(mark.sent)} · ` : ''}Ticked by ${mark.by || 'someone'}${mark.at ? `, ${displayDateTime(mark.at)}` : ''}`;
     return (
       <>
         <input type="checkbox" checked={!!(file || mark)} title={title} aria-label={`with ${what}`}
@@ -141,14 +145,14 @@ export default function PendingBilling() {
 
       {error && <div className="error-banner">{error}</div>}
       {askSent && (
-        <Modal title="PAR & Pics sent" onClose={() => setAskSent(null)}>
-          <p style={{ marginTop: 0 }}>{askSent.row.job_order_no} -- the date the PAR &amp; Pics hard copy was sent.</p>
+        <Modal title={`${WHAT[askSent.target]} sent`} onClose={() => setAskSent(null)}>
+          <p style={{ marginTop: 0 }}>{askSent.row.job_order_no} -- the date the {askSent.target === 'par' ? 'PAR' : 'pictures'} {askSent.target === 'par' ? 'was' : 'were'} sent.</p>
           <form onSubmit={(e) => {
             e.preventDefault();
             if (!askSent.date) return;
-            const { row, date } = askSent;
+            const { row, target, date } = askSent;
             setAskSent(null);
-            toggleMark(row, 'par', true, date);
+            toggleMark(row, target, true, date);
           }}>
             <div className="field">
               <label>Date Sent *</label>
@@ -177,7 +181,8 @@ export default function PendingBilling() {
                   <tr>
                     <th>Job Order</th><th>SO / NSSO</th><th>Customer</th><th>Sales Rep</th><th>Department</th><th>Description</th>
                     <th>Completed</th>
-                    <th title="The Job Order has a PAR file (Production > Job Order > Production Attachment), or someone with Update rights here ticked it" style={{ textAlign: 'center' }}>wt PAR&amp;Pics</th>
+                    <th title="The Job Order has a PAR file (Production > Job Order > Production Attachment), or someone with Update rights here ticked it" style={{ textAlign: 'center' }}>wt PAR</th>
+                    <th title="The Job Order has a Picture file (Production > Job Order > Production Attachment), or someone with Update rights here ticked it" style={{ textAlign: 'center' }}>wt PICS</th>
                     <th title="The Sales Order has a file typed PO (Sales Order > Attachment), or someone with Update rights here ticked it" style={{ textAlign: 'center' }}>wt PO</th>
                     <th className="text-right">Days Pending</th><th className="text-right">Qty</th>
                     <th className="text-right">Delivered</th><th className="text-right">Invoiced</th><th className="text-right">To Bill</th>
@@ -185,7 +190,7 @@ export default function PendingBilling() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.rows.length === 0 && <tr><td colSpan={16} className="muted" style={{ textAlign: 'center', padding: 16 }}>Nothing pending billing.</td></tr>}
+                  {data.rows.length === 0 && <tr><td colSpan={17} className="muted" style={{ textAlign: 'center', padding: 16 }}>Nothing pending billing.</td></tr>}
                   {data.rows.map((r) => (
                     <tr key={r.id}>
                       <td style={{ whiteSpace: 'nowrap' }}><Link to={`/job-orders/${r.id}`}>{r.job_order_no}</Link></td>
@@ -196,6 +201,7 @@ export default function PendingBilling() {
                       <td style={{ maxWidth: 320 }}>{r.description}</td>
                       <td style={{ whiteSpace: 'nowrap' }}>{displayDate(r.completed_date || r.so_date)}</td>
                       <td style={{ textAlign: 'center' }}>{markBox(r, 'par')}</td>
+                      <td style={{ textAlign: 'center' }}>{markBox(r, 'pics')}</td>
                       <td style={{ textAlign: 'center' }}>{markBox(r, 'po')}</td>
                       <td className="text-right" style={r.days_pending > 30 ? { color: 'var(--danger, #b91c1c)', fontWeight: 600 } : undefined}>{r.days_pending ?? ''}</td>
                       <td className="text-right">{qty(r.quantity)}</td>
