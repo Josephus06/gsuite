@@ -267,11 +267,6 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
     }
   }
 
-  // Locked months (asked 2026-11-24): a month whose figures were handed over for release is read
-  // from commission_month_locks, not recomputed -- see applyMonthLock. Not for a division-filtered
-  // report: a lock holds the rep's whole month, not one division's share of it.
-  const locks = filters.salesDivisionId ? new Map() : await loadMonthLocks(employeeId, year);
-
   const rows = months.map((r) => {
     const weighted = round2(r.weighted_sales);
     const pct = r.quota > 0 ? round2((weighted / r.quota) * 100) : 0;
@@ -304,101 +299,12 @@ async function buildCommissionReport(employeeId, year, filters = {}) {
       unpaid_commission: unpaid,
       payables: payablesByMonth[r.month] || [],
     };
-  }).map((row) => applyMonthLock(row, locks.get(row.month)));
+  });
 
   return {
     employee_id: employee.id, employee_name: employee.name, year: Number(year),
     scheme_name: schemeName, team_size: teamEmployeeIds.length, company_wide: !!scope.companyWide,
     sbu_division_count: sbuDivisionIds.length, rows,
-  };
-}
-
-// Locked months (asked 2026-11-24). Confirmed Commission is recomputed from live invoices every
-// time, so an old month moves after it was handed over for release: on 2026-11-23 a February order
-// had the rest of it invoiced, its paid share fell from 57% to 15%, and the Sales Manager's Unpaid
-// dropped by 1,229.63 after the Nov 16 summary was prepared.
-// A locked month keeps the figures it was locked with -- Weighted Sales through Confirmed -- and
-// only Released (and so Unpaid = Confirmed - Released) stays live, so a later voucher still pays
-// it down. Locks are loaded by src/db/lock-commission-from-file.js.
-async function loadMonthLocks(employeeId, year) {
-  try {
-    const [rows] = await pool.query(
-      `SELECT month, weighted_sales, performance_pct, estimated_commission, passing_gp_total,
-              expected_commission, confirmed_commission, source, locked_at
-         FROM commission_month_locks WHERE employee_id = ? AND year = ?`,
-      [employeeId, year]
-    );
-    return new Map(rows.map((l) => [Number(l.month), l]));
-  } catch (err) {
-    if (err.code === 'ER_NO_SUCH_TABLE') return new Map(); // a box not yet migrated: nothing locked
-    throw err;
-  }
-}
-
-// Lock / Unlock from the Commission Summary screen (asked 2026-11-24). Locking keeps the month's
-// figures as the report computes them right now; only finished months (before the current one) can
-// be locked. Unlocking deletes the lock, so the month is recomputed live again. Each change is
-// written to audit_logs (CommissionMonthLock, auditable_id = employee, a 'Status Change' on field
-// "YYYY-MM lock" -- event_type is an enum with no Locked / Unlocked). Returns the months changed.
-const isFinishedMonth = (year, month, now = new Date()) => year * 12 + month < now.getFullYear() * 12 + now.getMonth() + 1;
-
-async function lockMonths(employeeId, year, months, userId, source) {
-  const report = await buildCommissionReport(employeeId, year);
-  if (!report) return [];
-  const done = [];
-  for (const month of months) {
-    const row = report.rows.find((r) => r.month === month);
-    if (!row || row.locked || !isFinishedMonth(year, month)) continue;
-    await pool.query(
-      `INSERT INTO commission_month_locks
-         (employee_id, year, month, weighted_sales, performance_pct, estimated_commission, passing_gp_total,
-          expected_commission, confirmed_commission, live_confirmed_at_lock, source, locked_by_user_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [employeeId, year, month, row.weighted_sales, row.performance_pct, row.estimated_commission, row.passing_gp_total,
-        row.expected_commission, row.confirmed_commission, row.confirmed_commission, source, userId]
-    );
-    await pool.query(
-      `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
-       VALUES ('CommissionMonthLock', ?, 'Status Change', ?, 'Unlocked', ?, ?)`,
-      [employeeId, `${year}-${String(month).padStart(2, '0')} lock`, `Locked (Confirmed ${row.confirmed_commission})`, userId]
-    );
-    done.push(month);
-  }
-  return done;
-}
-
-async function unlockMonths(employeeId, year, months, userId) {
-  const locks = await loadMonthLocks(employeeId, year);
-  const done = [];
-  for (const month of months) {
-    const lock = locks.get(month);
-    if (!lock) continue;
-    await pool.query('DELETE FROM commission_month_locks WHERE employee_id = ? AND year = ? AND month = ?', [employeeId, year, month]);
-    await pool.query(
-      `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
-       VALUES ('CommissionMonthLock', ?, 'Status Change', ?, ?, 'Unlocked', ?)`,
-      [employeeId, `${year}-${String(month).padStart(2, '0')} lock`, `Locked (Confirmed ${Number(lock.confirmed_commission)})`, userId]
-    );
-    done.push(month);
-  }
-  return done;
-}
-
-function applyMonthLock(row, lock) {
-  if (!lock) return { ...row, locked: false };
-  const passing = round2(lock.passing_gp_total);
-  const expected = round2(lock.expected_commission);
-  const confirmed = round2(lock.confirmed_commission);
-  return {
-    ...row,
-    weighted_sales: round2(lock.weighted_sales), performance_pct: round2(lock.performance_pct),
-    estimated_commission: round2(lock.estimated_commission), passing_gp_total: passing,
-    expected_commission: expected, confirmed_commission: confirmed,
-    // The paid part implied by the locked Confirmed (Confirmed = paid / passing x Expected).
-    paid_passing_total: expected > 0 ? round2((confirmed / expected) * passing) : 0,
-    unpaid_commission: round2(confirmed - Number(row.released_commission || 0)),
-    locked: true, locked_source: lock.source || null, locked_at: lock.locked_at || null,
-    live_confirmed_commission: row.confirmed_commission,
   };
 }
 
@@ -410,15 +316,15 @@ function applyMonthLock(row, lock) {
 // than an invoice-line -> JO link: those links are only best-effort on the original importer and
 // are entirely absent on DT-converted invoices (whose lines carry no JO). For each JO we take its
 // own net-of-tax (the same figure the report commissions on) times its SO's paid fraction --
-// gross collected / gross invoiced. That way a paid-in-full invoice marks its JOs' full net as
-// paid, uniformly for original and DT-converted invoices alike.
+// gross collected / the order's gross. That way a fully billed, paid-in-full order marks its JOs'
+// full net as paid, uniformly for original and DT-converted invoices alike.
 //
 // The paid fraction is collected / the WHOLE ORDER (asked 2026-11-24), not collected / invoiced so
 // far: dividing by what had been invoiced made a partly billed order look well paid until the rest
 // was billed -- a 1,232,000 order read 57% paid on 161,280 collected while only 286,720 was
-// invoiced, then 15% once the rest was invoiced. The order total is the SO's gross
-// (sales_orders.total_amount); when the invoices come to more than it (fees billed on top), they
-// are the base instead, and the fraction never exceeds 100%.
+// invoiced, then 15% once the rest was invoiced, and commission already released for it dropped.
+// The order total is the SO's gross (sales_orders.total_amount); when the invoices come to more
+// than it (fees billed on top), they are the base instead, and the fraction never exceeds 100%.
 async function computePaidByJo(joIds) {
   const paidByJo = new Map();
   if (!joIds.length) return paidByJo;
@@ -577,7 +483,4 @@ function withholdConfirmedWithoutPayable(report) {
   return { ...report, rows };
 }
 
-module.exports = {
-  buildCommissionReport, buildCommissionJoDetail, getTeamEmployeeIds, getSbuDivisionIds, withholdConfirmedWithoutPayable,
-  lockMonths, unlockMonths, isFinishedMonth,
-};
+module.exports = { buildCommissionReport, buildCommissionJoDetail, getTeamEmployeeIds, getSbuDivisionIds, withholdConfirmedWithoutPayable };

@@ -15,7 +15,7 @@ const {
   arAgingWorkbook, apAgingWorkbook, arAgingDetailsWorkbook, apAgingDetailsWorkbook, sendWorkbook,
 } = require('../lib/agingWorkbook');
 const { parkedReport } = require('../lib/parkedBankItems');
-const { buildCommissionReport, buildCommissionJoDetail, getTeamEmployeeIds, getSbuDivisionIds, withholdConfirmedWithoutPayable, lockMonths, unlockMonths } = require('../lib/commissionReport');
+const { buildCommissionReport, buildCommissionJoDetail, getTeamEmployeeIds, getSbuDivisionIds, withholdConfirmedWithoutPayable } = require('../lib/commissionReport');
 const { buildCommissionSummary, commissionSummaryWorkbook } = require('../lib/commissionSummaryWorkbook');
 const {
   buildProfitabilityReport, buildProfitabilityCsv, buildProfitabilityLineDetail,
@@ -609,46 +609,7 @@ router.get('/commission/summary', requireAuth, requirePermission(COMMISSION_ROUT
     const year = Number(req.query.year) || new Date().getFullYear();
     const summary = await buildCommissionSummary(year, await getCommissionScope(req.user.id));
     if (req.query.format === 'xlsx') return sendWorkbook(res, commissionSummaryWorkbook(summary, year), `commission-${year}.xlsx`);
-    // Lock / Unlock buttons: the same people who see the commission working (System Admin, Accounting).
-    res.json({ year, sheets: summary, can_lock: await mayViewCommissionWorking(req.user.id) });
-  } catch (err) {
-    next(err);
-  }
-});
-
-// Lock / Unlock months on the Commission Summary (asked 2026-11-24; lib/commissionReport.js
-// lockMonths / unlockMonths). Body { employeeId, year, months: [1..12], action: 'lock' | 'unlock' }.
-// System Admin and Accounting only. Returns the person's refreshed block rows, so the screen updates
-// that block without regenerating the whole summary.
-router.post('/commission/locks', requireAuth, requirePermission(COMMISSION_ROUTE, 'can_view'), async (req, res, next) => {
-  try {
-    if (!(await mayViewCommissionWorking(req.user.id))) {
-      return res.status(403).json({ error: 'Only System Admin and Accounting can lock or unlock commission months.' });
-    }
-    const employeeId = Number(req.body.employeeId);
-    const year = Number(req.body.year);
-    const months = [...new Set((req.body.months || []).map(Number))].filter((m) => m >= 1 && m <= 12);
-    const { action } = req.body;
-    if (!employeeId || !year || !months.length || !['lock', 'unlock'].includes(action)) {
-      return res.status(400).json({ error: 'employeeId, year, months and action (lock / unlock) are required.' });
-    }
-    const scope = await getCommissionScope(req.user.id);
-    if (!scope.all && !scope.allowedIds.has(employeeId)) {
-      return res.status(403).json({ error: 'You can only lock commission months for yourself or your team.' });
-    }
-    let changed;
-    if (action === 'lock') {
-      const [[u]] = await pool.query('SELECT COALESCE(display_name, username) AS name FROM users WHERE id = ?', [req.user.id]);
-      const source = `Locked by ${u?.name || 'user'} on ${new Date().toISOString().slice(0, 10)}`;
-      changed = await lockMonths(employeeId, year, months, req.user.id, source);
-    } else {
-      changed = await unlockMonths(employeeId, year, months, req.user.id);
-    }
-    const data = withholdConfirmedWithoutPayable(await buildCommissionReport(employeeId, year, {}));
-    res.json({
-      changed, rows: data.rows,
-      total_unpaid: Math.round(data.rows.reduce((s, r) => s + Number(r.unpaid_commission || 0), 0) * 100) / 100,
-    });
+    res.json({ year, sheets: summary });
   } catch (err) {
     next(err);
   }

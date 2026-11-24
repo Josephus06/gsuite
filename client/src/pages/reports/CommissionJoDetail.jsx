@@ -40,9 +40,7 @@ function UnpaidDerivation({ s, monthName, year }) {
           <span style={{ borderTop: '1px solid var(--border)', paddingTop: 6, fontWeight: 600 }}>Confirmed Commission</span>
           <strong style={{ ...num, borderTop: '1px solid var(--border)', paddingTop: 6 }}>{money(s.confirmed_commission)}</strong>
           <span className="muted" style={note}>
-            {s.locked
-              ? <>🔒 Locked{s.locked_source ? ` from ${s.locked_source}` : ''}: kept as handed over for release (system today: {money(s.live_confirmed_commission) || '0.00'}). The job orders below are today&apos;s.</>
-              : <>{money(s.paid_passing_total)} ÷ {money(s.passing_gp_total)} × {money(s.expected_commission)}</>}
+            {money(s.paid_passing_total)} ÷ {money(s.passing_gp_total)} × {money(s.expected_commission)}
           </span>
 
           <span>Released Commission</span><strong style={num}>{money(s.released_commission)}</strong>
