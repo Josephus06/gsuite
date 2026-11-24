@@ -156,7 +156,7 @@ const pct1 = (v) => `${(Number(v || 0) * 100).toFixed(1)}%`;
 // The General Manager's top cards (2026-11-21), laid out as the GM's mock-up -- Actual Collection
 // against the monthly target with its aging buckets, Weighted Sales and Pending Billing stacked, and
 // tickets per department -- in the dashboard's own colours and font (theme-aware, day and night).
-function GmTopCards({ cards, navigate }) {
+function GmTopCards({ cards }) {
   const inc = cards.headOfficeCollection.incentive;
   const collected = inc ? inc.collected : cards.headOfficeCollection.amount;
   const pct = inc ? (Number(inc.pct_of_target) || 0) * 100 : null; // the server sends a fraction (0.2332)
@@ -166,14 +166,14 @@ function GmTopCards({ cards, navigate }) {
   // Fractions (0.49 = 49%); the tallest bar fills the chart.
   const maxPct = Math.max(0.01, ...lines.flatMap((l) => [Number(l.target_pct) || 0, Number(l.actual_pct) || 0]));
   const depts = cards.ticketsByDepartment || [];
-  const go = (path) => () => navigate(path);
+  // Each card is a real link (asked 2026-11-24) so it can be right-clicked -> Open in new tab, or
+  // Ctrl / middle-clicked; a plain click still opens the report in place.
   const SHOWN = 6;
   const totals = depts.reduce((t, d) => ({ approved: t.approved + d.approved, resolved: t.resolved + d.resolved }), { approved: 0, resolved: 0 });
   const deptMax = Math.max(1, ...depts.map((d) => d.approved + d.resolved));
   return (
     <div className="gm-top">
-      <div className="gm-card gm-collect" role="link" tabIndex={0} onClick={go('/treasury/collection-incentive')}
-        title="Open Treasury > Collection Incentive">
+      <Link className="gm-card gm-collect" to="/treasury/collection-incentive" title="Open Treasury > Collection Incentive">
         <div className="gm-collect-head">
           <div>
             <div className="gm-label">Actual Collection · Head Office</div>
@@ -215,22 +215,22 @@ function GmTopCards({ cards, navigate }) {
             </div>
           )}
         </div>
-      </div>
+      </Link>
 
       <div className="gm-stack">
-        <div className="gm-card gm-figure gm-tone-sales" role="link" tabIndex={0} onClick={go('/reports/weighted-sales')}>
+        <Link className="gm-card gm-figure gm-tone-sales" to="/reports/weighted-sales" title="Open Weighted Sales per Month">
           <div className="gm-figure-top"><div className="gm-label">Weighted Sales</div><div className="gm-icon" aria-hidden="true">📈</div></div>
           <div className="gm-big">₱{money(cards.weightedSales.amount)}</div>
           <div className="gm-muted">{cards.weightedSales.count.toLocaleString('en-US')} sales orders this month, net of tax</div>
-        </div>
-        <div className="gm-card gm-figure gm-tone-billing" role="link" tabIndex={0} onClick={go('/reports/pending-billing')}>
+        </Link>
+        <Link className="gm-card gm-figure gm-tone-billing" to="/reports/pending-billing" title="Open Pending Billing">
           <div className="gm-figure-top"><div className="gm-label">Pending Billing</div><div className="gm-icon" aria-hidden="true">🧾</div></div>
           <div className="gm-big">₱{money(cards.pendingBilling.amount)}</div>
           <div className="gm-muted">{cards.pendingBilling.count.toLocaleString('en-US')} delivered job orders not yet billed</div>
-        </div>
+        </Link>
       </div>
 
-      <div className="gm-card gm-tickets" role="link" tabIndex={0} onClick={go('/tickets')}>
+      <Link className="gm-card gm-tickets" to="/tickets" title="Open Tickets">
         <div className="gm-label">Tickets · this month</div>
         <div className="gm-ticket-totals">
           <div><strong>{totals.approved}</strong><span><i className="gm-key gm-key-actual" />Approved</span></div>
@@ -256,7 +256,7 @@ function GmTopCards({ cards, navigate }) {
         {cards.pendingTicketApproval > 0 && (
           <div className="gm-ticket-wait">⏳ {cards.pendingTicketApproval} waiting for your approval</div>
         )}
-      </div>
+      </Link>
     </div>
   );
 }
@@ -454,7 +454,7 @@ function AdminDashboard({ data, user, navigate, showInstallCalendar = false }) {
       {data.gmCards ? (
         // The General Manager's own cards (server/src/routes/dashboard.js generalManagerCards --
         // the notes there say why each figure is filtered the way it is).
-        <GmTopCards cards={data.gmCards} navigate={navigate} />
+        <GmTopCards cards={data.gmCards} />
       ) : (
         <StatRow cards={[
           { label: 'Total Active Users', value: data.activeUsers, icon: '👥' },
