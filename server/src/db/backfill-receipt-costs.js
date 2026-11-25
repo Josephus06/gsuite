@@ -21,7 +21,7 @@
 //
 // Droplet and office replicate: run on ONE of them. Railway: its own run.
 //   node src/db/backfill-receipt-costs.js                 # dry run
-//   node src/db/backfill-receipt-costs.js --apply
+//   node src/db/backfill-receipt-costs.js --apply [--user=<username>]   (changes are audited under that user; default admin)
 //   node src/db/backfill-receipt-costs.js --from=2026-10-01 --item=SIGN-POST-STEELFRAME-TUBE-W/PLATE-STIFFENER&BOLTS-SET
 require('dotenv').config();
 const pool = require('../db');
@@ -32,6 +32,7 @@ const APPLY = process.argv.includes('--apply');
 const arg = (name) => (process.argv.find((a) => a.startsWith(`--${name}=`)) || '').split('=').slice(1).join('=');
 const FROM = arg('from') || '2026-10-01';
 const ONLY_ITEM = arg('item');
+const USER = arg('user');
 const round4 = (v) => Math.round(v * 10000) / 10000;
 const fmt = (v) => (v === null || v === undefined ? '-' : Number(v).toLocaleString('en-PH', { maximumFractionDigits: 4 }));
 const day = (v) => String(v).slice(0, 10);
@@ -123,7 +124,9 @@ async function main() {
     const lastDay = item.last_purchase_date ? day(item.last_purchase_date) : null;
     const newLast = last && (!lastDay || last.date >= lastDay) ? last : null;
     const avgChanged = Math.abs(average - Number(item.average_cost || 0)) > 0.00005 || (item.average_cost === null && average > 0);
-    const lastChanged = newLast && (Math.abs(newLast.price - Number(item.last_purchase_price || 0)) > 0.00005 || newLast.date !== lastDay);
+    // Under half a centavo is the source's rounding of the same price (53.5714 vs 53.5713), not a change.
+    const lastChanged = newLast && (Math.abs(newLast.price - Number(item.last_purchase_price || 0)) >= 0.005
+      || item.last_purchase_price === null || newLast.date !== lastDay);
     if (avgChanged || lastChanged) {
       plans.push({ item, start, average: round4(average), newLast, avgChanged, lastChanged, receipts: mine.filter((e) => e.kind === 'receipt').length, returns: mine.filter((e) => e.kind === 'return').length });
     }
@@ -141,6 +144,12 @@ async function main() {
   if (!APPLY) { console.log('Dry run: nothing written. Re-run with --apply.'); return; }
   const conn = await pool.getConnection();
   try {
+    // audit_logs.set_by_user_id is required: the changes are logged under --user (default admin).
+    const [[actor]] = await conn.query(
+      `SELECT id, username FROM users WHERE username = ? OR (? = '' AND account_type = 'System Admin' AND is_active = 1)
+        ORDER BY username = ? DESC, id LIMIT 1`, [USER, USER, USER || 'admin']);
+    if (!actor) throw new Error(`No user ${USER ? `"${USER}"` : 'System Admin'} to record the changes under (--user=<username>).`);
+    console.log(`Recording the changes under user ${actor.username}.`);
     await conn.beginTransaction();
     const ref = `backfill since ${FROM}`;
     for (const p of plans) {
@@ -154,8 +163,8 @@ async function main() {
       for (const [field, oldValue, newValue] of audit) {
         await conn.query(
           `INSERT INTO audit_logs (auditable_type, auditable_id, event_type, field_name, old_value, new_value, set_by_user_id)
-           VALUES ('Inventory', ?, 'Updated', ?, ?, ?, NULL)`,
-          [p.item.id, `${field} (${ref})`, oldValue === null ? null : String(oldValue), String(newValue)]);
+           VALUES ('Inventory', ?, 'Updated', ?, ?, ?, ?)`,
+          [p.item.id, `${field} (${ref})`, oldValue === null ? null : String(oldValue), String(newValue), actor.id]);
       }
     }
     await conn.commit();
