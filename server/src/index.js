@@ -18,6 +18,10 @@ const customerRoutes = require('./routes/customers');
 const loyaltyIntegrationRoutes = require('./routes/loyaltyIntegration');
 // Read-only Material Costing feed for the Signage Studio, guarded by MATERIAL_COSTING_API_KEY.
 const materialCostingIntegrationRoutes = require('./routes/materialCostingIntegration');
+// Read-only customer feed for the Signage Studio, same key. See routes/customerIntegration.js.
+const customerIntegrationRoutes = require('./routes/customerIntegration');
+// Sales > 3D Studio: one-time sign-in link into the Signage Studio (STUDIO_WEB_URL / STUDIO_SSO_SECRET).
+const studioRoutes = require('./routes/studio');
 const supplierRoutes = require('./routes/suppliers');
 const inventoryRoutes = require('./routes/inventories');
 const estimateRoutes = require('./routes/estimates');
@@ -366,6 +370,8 @@ app.use('/api/crm-public', crmPublicRoutes);
 // API-key auth (not the login JWT): the Rewards website, server to server.
 app.use('/api/integrations/loyalty', loyaltyIntegrationRoutes);
 app.use('/api/integrations/material-costing', materialCostingIntegrationRoutes);
+app.use('/api/integrations/customers', customerIntegrationRoutes);
+app.use('/api/studio', studioRoutes);
 app.use('/api/web-products', webProductRoutes);
 app.use('/api/employees', employeeRoutes);
 app.use('/api/users', userRoutes);

@@ -12,6 +12,8 @@ const { parseDiscountChain } = require('../lib/discountChain');
 const { lineDepartmentError } = require('../lib/requireDepartment');
 const { notifyPoPending, notifyPoApproved } = require('../lib/approvalNotifications');
 const { isNonStockItem } = require('../lib/itemTypes');
+// Average Cost / Last Purchase Price follow receipts and returns at the PO price (2026-11-25).
+const { applyPurchaseCost } = require('../lib/itemCost');
 
 // Purchase Order types the General Manager alone approves whatever the amount: PO3 (Services with
 // JO). PO4 (Services / Non-Inventory without JO) follows PO1/PO2 from 2026-10-20 -- a Purchasing
@@ -1398,7 +1400,8 @@ router.post('/:id/receipts', requireAuth, requireReceiveRight, async (req, res, 
     const totalAmount = netOfTax + taxAmount;
 
     await conn.beginTransaction();
-    const { id: receiptId } = await insertNumbered(conn, {
+    const receiptDate = dateCreated || new Date().toISOString().slice(0, 10);
+    const { id: receiptId, no: receiptNo } = await insertNumbered(conn, {
       table: 'purchase_order_receipts',
       column: 'receipt_no',
       prefix: 'RR-',
@@ -1410,6 +1413,13 @@ router.post('/:id/receipts', requireAuth, requireReceiveRight, async (req, res, 
     });
 
     for (const l of computed) {
+      // Before the line is written, so the on-hand it averages over does not include it yet.
+      if (l.locationId && !isNonStockItem(l.poLine.item_type) && l.qty > 0) {
+        await applyPurchaseCost(conn, {
+          itemId: l.poLine.item_id, userId: req.user.id, ref: receiptNo, date: receiptDate,
+          addQty: l.qty, addValue: l.lineNetOfTax,
+        });
+      }
       await conn.query(
         `INSERT INTO purchase_order_receipt_lines
            (purchase_order_receipt_id, purchase_order_line_id, item_id, location_id, qty_received, rate, disc_percent, disc_amount, net_of_tax, tax_code_id, tax_amount, ext_price)
@@ -1522,6 +1532,15 @@ router.put('/receipts/:receiptId', requireAuth, requireReceiveRight, async (req,
     const changes = [];
     for (const p of plans) {
       const { o } = p;
+      // A changed quantity or price re-costs: the old line comes out at its value, the new one goes
+      // in at its own. Before the line is rewritten, while on-hand still holds the old quantity.
+      if (!isNonStockItem(o.item_type)
+        && (Math.abs(p.qty - Number(o.qty_received)) > 1e-9 || Math.abs(p.net - Number(o.net_of_tax || 0)) > 0.005)) {
+        await applyPurchaseCost(conn, {
+          itemId: o.item_id, userId: req.user.id, ref: `${r.receipt_no} edited`, date: newDate,
+          removeQty: Number(o.qty_received), removeValue: Number(o.net_of_tax || 0), addQty: p.qty, addValue: p.net,
+        });
+      }
       await conn.query(
         `UPDATE purchase_order_receipt_lines SET qty_received = ?, location_id = ?, rate = ?, disc_percent = ?, disc_amount = ?,
                 net_of_tax = ?, tax_code_id = ?, tax_amount = ?, ext_price = ? WHERE id = ?`,
@@ -1703,7 +1722,7 @@ router.post('/:id/returns', requireAuth, requirePermission(ROUTE, 'can_edit'), a
     const totalAmount = netOfTax + taxAmount;
 
     await conn.beginTransaction();
-    const { id: returnId } = await insertNumbered(conn, {
+    const { id: returnId, no: returnNo } = await insertNumbered(conn, {
       table: 'purchase_returns',
       column: 'return_no',
       prefix: 'VR-',
@@ -1715,6 +1734,13 @@ router.post('/:id/returns', requireAuth, requirePermission(ROUTE, 'can_edit'), a
     });
 
     for (const l of computed) {
+      // Returned stock leaves at the price it came in at. Before the line is written (see receipts).
+      if (l.poLine.location_id && l.qty > 0) {
+        await applyPurchaseCost(conn, {
+          itemId: l.poLine.item_id, userId: req.user.id, ref: returnNo,
+          removeQty: l.qty, removeValue: l.lineNetOfTax,
+        });
+      }
       await conn.query(
         `INSERT INTO purchase_return_lines
            (purchase_return_id, purchase_order_line_id, item_id, location_id, qty_returned, rate, disc_percent, disc_amount, net_of_tax, tax_code_id, tax_amount, ext_price)

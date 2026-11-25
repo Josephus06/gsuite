@@ -188,6 +188,8 @@ const NAV_STRUCTURE = [
       {
         title: 'Transaction',
         items: [
+          // Straight into the Signage Studio, signed in (2026-11-25). The studio decides its own menu.
+          { route: '/3d-studio', label: '3D Studio' },
           { route: '/estimates', label: 'Estimates' },
           { route: '/sales-orders', label: 'Sales Orders' },
           { route: '/non-standard-job-orders', label: 'NSTDJO' },
