@@ -10,6 +10,7 @@
 //
 // Idempotent: adds the columns if missing, fills only items still without a location.
 //   node src/db/add-opening-item-location.js --snapshot=2026-09-30:<ar.json> --snapshot=2025-12-31:<ar.json> --dry-run
+//   node src/db/add-opening-item-location.js --ap-default="Head Office" --dry-run    (AP only)
 require('dotenv').config();
 const fs = require('fs');
 const pool = require('../db');
@@ -58,17 +59,35 @@ const squash = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
     console.log(`AR ${s.asOf}: ${set}/${items.length} item(s) given a location ${JSON.stringify(Object.fromEntries(Object.entries(by).map(([k, v]) => [name.get(Number(k)), v])))}${unknown.size ? `; unmatched location names: ${[...unknown].join(', ')}` : ''}`);
   }
 
-  // AP, from the linked bill.
-  if (!DRY) {
-    const [r] = await pool.query(
+  // AP, from the linked bill; a Bill Credit from the credit of the same number (2026-11-26); and,
+  // with --ap-default=<location name>, whatever has no document to take one from (source journals,
+  // bills never migrated) -- in this database 99.9% of vendor bills are Head Office's.
+  const apDefaultName = (process.argv.find((a) => a.startsWith('--ap-default=')) || '').split('=').slice(1).join('=');
+  const apDefault = apDefaultName ? locBy.get(squash(apDefaultName)) : null;
+  if (apDefaultName && !apDefault) throw new Error(`--ap-default: no location named "${apDefaultName}"`);
+  const steps = [
+    ['their bill\'s location',
+      `SELECT COUNT(*) n FROM opening_ap_items o JOIN vendor_bills vb ON vb.id = o.vendor_bill_id WHERE o.location_id IS NULL AND vb.office_location_id IS NOT NULL`,
       `UPDATE opening_ap_items o JOIN vendor_bills vb ON vb.id = o.vendor_bill_id
           SET o.location_id = vb.office_location_id
-        WHERE o.location_id IS NULL AND vb.office_location_id IS NOT NULL`);
-    console.log(`AP: ${r.affectedRows} item(s) given their bill's location.`);
-  } else {
-    const [[r]] = await pool.query(
-      `SELECT COUNT(*) n FROM opening_ap_items o JOIN vendor_bills vb ON vb.id = o.vendor_bill_id WHERE vb.office_location_id IS NOT NULL`);
-    console.log(`AP: ${r.n} item(s) would take their bill's location.`);
+        WHERE o.location_id IS NULL AND vb.office_location_id IS NOT NULL`, []],
+    ['their bill credit\'s location',
+      `SELECT COUNT(*) n FROM opening_ap_items o JOIN bill_credits bc ON bc.bill_credit_no = o.doc_no COLLATE utf8mb4_unicode_ci WHERE o.doc_type = 'Bill Credit' AND o.location_id IS NULL AND bc.office_location_id IS NOT NULL`,
+      `UPDATE opening_ap_items o JOIN bill_credits bc ON bc.bill_credit_no = o.doc_no COLLATE utf8mb4_unicode_ci
+          SET o.location_id = bc.office_location_id
+        WHERE o.doc_type = 'Bill Credit' AND o.location_id IS NULL AND bc.office_location_id IS NOT NULL`, []],
+  ];
+  if (apDefault) {
+    steps.push([`the default location (${apDefaultName})`,
+      'SELECT COUNT(*) n FROM opening_ap_items WHERE location_id IS NULL',
+      'UPDATE opening_ap_items SET location_id = ? WHERE location_id IS NULL', [apDefault]]);
   }
+  // A dry run counts each step as if the ones before it had not run, so its counts can overlap.
+  for (const [label, countSql, updateSql, params] of steps) {
+    if (DRY) { const [[r]] = await pool.query(countSql); console.log(`AP: ${r.n} item(s) would take ${label}.`); }
+    else { const [r] = await pool.query(updateSql, params); console.log(`AP: ${r.affectedRows} item(s) given ${label}.`); }
+  }
+  const [left] = await pool.query("SELECT DATE_FORMAT(as_of, '%Y-%m-%d') AS as_of, doc_type, COUNT(*) n, ROUND(SUM(balance), 2) b FROM opening_ap_items WHERE location_id IS NULL GROUP BY as_of, doc_type");
+  if (left.length) console.log('AP items still without a location (No Location):', left.map((r) => `${r.as_of} ${r.doc_type} ${r.n} (${r.b})`).join('; '));
   await pool.end();
 })().catch(async (e) => { console.error('Failed:', e.message); await pool.end(); process.exit(1); });

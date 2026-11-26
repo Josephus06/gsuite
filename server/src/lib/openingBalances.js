@@ -228,17 +228,29 @@ async function openingItems(side, asOf, books, { partyId, nameStarts, locationId
   // Before that column exists every item is location-less: a location filter has none of them,
   // "No Location" has all of them.
   if (locationId && !withLoc) return [];
+  // AP ITEMS FOLLOW THEIR DOCUMENT (2026-11-26). The source's AP aging names no location, so an AP
+  // item's was copied from its linked bill once, by add-opening-item-location.js -- before most of
+  // those bills had one. 646 of the 719 items at 2026-09-30 (PHP 3.24M) were left without, and AP
+  // Aging, which opens on Head Office, showed nothing before October. An item with no location of its
+  // own now takes its linked bill's (or, for a Bill Credit, that credit's) as it stands today.
+  const locExpr = !withLoc ? null
+    : side === 'ap' ? 'COALESCE(o.location_id, lvb.office_location_id, lbc.office_location_id)' : 'o.location_id';
+  const apLocJoins = withLoc && side === 'ap'
+    ? `LEFT JOIN vendor_bills lvb ON lvb.id = o.vendor_bill_id
+       LEFT JOIN bill_credits lbc ON o.doc_type = 'Bill Credit' AND lbc.bill_credit_no = o.doc_no COLLATE utf8mb4_unicode_ci`
+    : '';
   const where = ['o.as_of = ?'];
   const params = [books.asOf];
-  if (withLoc && locationId) { where.push('o.location_id = ?'); params.push(locationId); }
-  if (withLoc && noLocation) where.push('o.location_id IS NULL');
+  if (withLoc && locationId) { where.push(`${locExpr} = ?`); params.push(locationId); }
+  if (withLoc && noLocation) where.push(`${locExpr} IS NULL`);
   if (partyId) { where.push(`o.${s.party} = ?`); params.push(partyId); }
   if (nameStarts) { where.push('COALESCE(p.name, o.' + (side === 'ar' ? 'customer_name' : 'supplier_name') + ') LIKE ?'); params.push(`${nameStarts}%`); }
   const nameCol = side === 'ar' ? 'customer_name' : 'supplier_name';
   const [rows] = await pool.query(
     `SELECT o.*, COALESCE(p.name, o.${nameCol}) AS party_name${withLoc ? ', loc.location_name' : ''}
        FROM ${s.table} o LEFT JOIN ${s.partyTable} p ON p.id = o.${s.party}
-       ${withLoc ? 'LEFT JOIN locations loc ON loc.id = o.location_id' : ''}
+       ${apLocJoins}
+       ${withLoc ? `LEFT JOIN locations loc ON loc.id = ${locExpr}` : ''}
       WHERE ${where.join(' AND ')}`, params,
   );
   const linked = rows.map((r) => r[s.link]).filter(Boolean);
