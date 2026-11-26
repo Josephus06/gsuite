@@ -328,6 +328,21 @@ router.put('/mark', requireAuth, requirePermission(ROUTE, 'can_update'), async (
 // pending_billing_marks (target 'email': who, when) and shown under the button; the same JO cannot be
 // emailed again within 10 minutes, so a double click is not two emails.
 const EMAIL_COOLDOWN_MIN = 10;
+
+// CC (2026-11-26): extra addresses that get a copy of the email -- a list or a comma / semicolon /
+// space separated string. Anything that is not an email address is refused, naming it, rather than
+// dropped, so nobody believes their supervisor was copied when they were not.
+const CC_MAX = 10;
+const CC_EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+function parseCc(raw) {
+  const tokens = (Array.isArray(raw) ? raw : String(raw || '').split(/[,;\s]+/))
+    .map((t) => String(t || '').trim()).filter(Boolean);
+  const bad = tokens.filter((t) => !CC_EMAIL.test(t));
+  if (bad.length) return { error: `Not an email address in CC: ${bad.slice(0, 3).join(', ')}` };
+  const list = [...new Map(tokens.map((t) => [t.toLowerCase(), t])).values()];
+  if (list.length > CC_MAX) return { error: `CC takes at most ${CC_MAX} addresses.` };
+  return { list };
+}
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const peso = (n) => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const day = (v) => (v ? String(v instanceof Date ? v.toISOString() : v).slice(0, 10) : '');
@@ -404,6 +419,8 @@ router.post('/email-bulk/preview', requireAuth, requirePermission(ROUTE, 'can_vi
 
 router.post('/email-bulk', requireAuth, requirePermission(ROUTE, 'can_view'), async (req, res, next) => {
   try {
+    const cc = parseCc(req.body?.cc);
+    if (cc.error) return res.status(400).json({ error: cc.error });
     const ids = idsOf(req.body?.job_order_ids);
     if (!ids.length) return res.status(400).json({ error: 'Select at least one Job Order.' });
     if (ids.length > BULK_MAX) return res.status(400).json({ error: `Select at most ${BULK_MAX} Job Orders at a time.` });
@@ -438,7 +455,7 @@ ${note ? `<p style="margin-top:14px"><em>Note from ${esc(sender)}:</em><br>${esc
 <p><a href="${esc(`${base}/reports/pending-billing`)}">Open Pending Billing in T1S</a></p>
 <p style="color:#888;font-size:12px">Sent from T1S Pending Billing by ${esc(sender)}.</p>`;
       const sent = await mailer.send({
-        to: g.email, subject, text, html,
+        to: g.email, cc: cc.list, subject, text, html,
         replyTo: me?.email && String(me.email).includes('@') ? me.email : undefined,
         fromName: me?.display_name ? `${me.display_name} via T1S` : undefined,
       });
@@ -460,7 +477,7 @@ ${note ? `<p style="margin-top:14px"><em>Note from ${esc(sender)}:</em><br>${esc
           WHERE m.target = 'email' AND m.target_id IN (?)`, [sentIds]);
       for (const m of ms) marks[m.target_id] = { by: m.marked_by, at: m.marked_at };
     }
-    res.json({ ...planOut(plan), results, marks });
+    res.json({ ...planOut(plan), results, marks, cc: cc.list });
   } catch (err) { next(err); }
 });
 
@@ -476,6 +493,8 @@ router.post('/email', requireAuth, requirePermission(ROUTE, 'can_view'), async (
   try {
     const joId = Number(req.body?.job_order_id);
     if (!joId) return res.status(400).json({ error: 'job_order_id is required.' });
+    const cc = parseCc(req.body?.cc);
+    if (cc.error) return res.status(400).json({ error: cc.error });
     const t = await emailTarget(req, joId);
     if (t.error) return res.status(t.status).json({ error: t.error });
     const r = t.row;
@@ -515,7 +534,7 @@ ${note ? `<p style="margin-top:14px"><em>Note from ${esc(me?.display_name || 'Bi
 <p style="color:#888;font-size:12px">Sent from T1S Pending Billing by ${esc(me?.display_name || '')}.</p>`;
 
     const sent = await mailer.send({
-      to: t.to.email, subject, text, html,
+      to: t.to.email, cc: cc.list, subject, text, html,
       replyTo: me?.email && String(me.email).includes('@') ? me.email : undefined,
       fromName: me?.display_name ? `${me.display_name} via T1S` : undefined,
     });
@@ -527,7 +546,7 @@ ${note ? `<p style="margin-top:14px"><em>Note from ${esc(me?.display_name || 'Bi
     const [[m]] = await pool.query(
       `SELECT m.marked_at, u.display_name AS marked_by FROM pending_billing_marks m LEFT JOIN users u ON u.id = m.marked_by_user_id
         WHERE m.target = 'email' AND m.target_id = ?`, [r.id]);
-    res.json({ ok: true, to: t.to, mark: m ? { by: m.marked_by, at: m.marked_at } : null });
+    res.json({ ok: true, to: t.to, cc: cc.list, mark: m ? { by: m.marked_by, at: m.marked_at } : null });
   } catch (err) { next(err); }
 });
 

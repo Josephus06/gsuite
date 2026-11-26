@@ -38,8 +38,13 @@ export default function PendingBilling() {
   // Email the sales rep (2026-11-24): the window shows who it goes to (their user account's email)
   // before anything is sent; an optional note goes in the email. { row, to, last, note, busy, error, sentTo }
   const [mail, setMail] = useState(null);
+  // CC (2026-11-26): extra addresses copied on the email -- comma separated. The last CC used is
+  // remembered on this browser, since billing usually copies the same supervisor every time.
+  const CC_KEY = 'pendingBilling.cc';
+  const lastCc = () => { try { return localStorage.getItem(CC_KEY) || ''; } catch { return ''; } };
+  const keepCc = (v) => { try { localStorage.setItem(CC_KEY, String(v || '').trim()); } catch { /* private mode */ } };
   async function openEmail(row) {
-    setMail({ row, to: null, note: '', busy: true, error: '' });
+    setMail({ row, to: null, note: '', cc: lastCc(), busy: true, error: '' });
     try {
       const { data: d } = await api.get('/reports/pending-billing/email-preview', { params: { job_order_id: row.id } });
       setMail((m) => m && { ...m, to: d.to, last: d.last, busy: false });
@@ -50,9 +55,10 @@ export default function PendingBilling() {
   async function sendEmail() {
     setMail((m) => ({ ...m, busy: true, error: '' }));
     try {
-      const { data: d } = await api.post('/reports/pending-billing/email', { job_order_id: mail.row.id, note: mail.note });
+      const { data: d } = await api.post('/reports/pending-billing/email', { job_order_id: mail.row.id, note: mail.note, cc: mail.cc });
+      keepCc(mail.cc);
       setData((x) => ({ ...x, rows: x.rows.map((r) => (r.id === mail.row.id ? { ...r, email_mark: d.mark } : r)) }));
-      setMail((m) => ({ ...m, busy: false, sentTo: d.to }));
+      setMail((m) => ({ ...m, busy: false, sentTo: d.to, sentCc: d.cc || [] }));
     } catch (e) {
       setMail((m) => ({ ...m, busy: false, error: e.response?.data?.error || 'The email could not be sent.' }));
     }
@@ -151,7 +157,7 @@ export default function PendingBilling() {
   // { plan, note, busy, error, done }
   const [bulk, setBulk] = useState(null);
   async function openBulk() {
-    setBulk({ plan: null, note: '', busy: true, error: '' });
+    setBulk({ plan: null, note: '', cc: lastCc(), busy: true, error: '' });
     try {
       const { data: plan } = await api.post('/reports/pending-billing/email-bulk/preview', { job_order_ids: [...picked] });
       setBulk((b) => b && { ...b, plan, busy: false });
@@ -160,7 +166,8 @@ export default function PendingBilling() {
   async function sendBulk() {
     setBulk((b) => ({ ...b, busy: true, error: '' }));
     try {
-      const { data: d } = await api.post('/reports/pending-billing/email-bulk', { job_order_ids: [...picked], note: bulk.note });
+      const { data: d } = await api.post('/reports/pending-billing/email-bulk', { job_order_ids: [...picked], note: bulk.note, cc: bulk.cc });
+      keepCc(bulk.cc);
       setData((x) => ({ ...x, rows: x.rows.map((r) => (d.marks[r.id] ? { ...r, email_mark: d.marks[r.id] } : r)) }));
       setBulk((b) => ({ ...b, busy: false, done: d }));
       if (d.results.every((x) => x.ok)) setPicked(new Set());
@@ -192,6 +199,9 @@ export default function PendingBilling() {
                   {x.ok ? '✓' : '✗'} {x.name} &lt;{x.email}&gt; — {x.jos} JO{x.jos === 1 ? '' : 's'}{x.ok ? '' : `: ${x.error}`}
                 </div>
               ))}
+              {bulk.done.cc?.length > 0 && bulk.done.results.some((x) => x.ok) && (
+                <p className="muted" style={{ fontSize: 12 }}>Each email copied to: {bulk.done.cc.join(', ')}</p>
+              )}
               {bulk.done.no_email.length > 0 && <p className="muted" style={{ fontSize: 12 }}>Not sent (no email): {bulk.done.no_email.map((x) => x.name).join(', ')}</p>}
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}><button type="button" className="btn btn-primary" onClick={() => setBulk(null)}>Close</button></div>
             </>
@@ -221,6 +231,12 @@ export default function PendingBilling() {
                   {bulk.plan.no_rep.length > 0 && <>Skipped -- no sales rep: {bulk.plan.no_rep.join(', ')}.</>}
                 </div>
               )}
+              <div className="field" style={{ marginTop: 10 }}>
+                <label>CC (optional, copied on every email)</label>
+                <input type="text" value={bulk.cc} placeholder="e.g. supervisor@graphicstar.com.ph, billing@graphicstar.com.ph"
+                  onChange={(e) => setBulk((b) => ({ ...b, cc: e.target.value }))} style={{ width: '100%' }} />
+                <div className="muted" style={{ fontSize: 12 }}>Separate several addresses with commas.</div>
+              </div>
               <div className="field" style={{ marginTop: 10 }}>
                 <label>Note (optional, in every email)</label>
                 <textarea rows={3} maxLength={2000} value={bulk.note} placeholder="e.g. Please send the signed PARs so we can bill before month end."
@@ -284,7 +300,10 @@ export default function PendingBilling() {
         <Modal title={`Email the sales rep · ${mail.row.job_order_no}`} onClose={() => setMail(null)}>
           {mail.sentTo ? (
             <>
-              <p style={{ marginTop: 0 }}>✓ Sent to <strong>{mail.sentTo.name}</strong> ({mail.sentTo.email}).</p>
+              <p style={{ marginTop: 0 }}>
+                ✓ Sent to <strong>{mail.sentTo.name}</strong> ({mail.sentTo.email}).
+                {mail.sentCc?.length > 0 && <><br />Copied to: {mail.sentCc.join(', ')}.</>}
+              </p>
               <div style={{ display: 'flex', justifyContent: 'flex-end' }}><button type="button" className="btn btn-primary" onClick={() => setMail(null)}>Close</button></div>
             </>
           ) : (
@@ -300,6 +319,12 @@ export default function PendingBilling() {
                 <div style={{ padding: '6px 0' }}>
                   {mail.busy && !mail.to ? 'Finding the sales rep’s email…' : mail.to ? <><strong>{mail.to.name}</strong> &lt;{mail.to.email}&gt;</> : '—'}
                 </div>
+              </div>
+              <div className="field">
+                <label>CC (optional)</label>
+                <input type="text" value={mail.cc} placeholder="e.g. supervisor@graphicstar.com.ph, billing@graphicstar.com.ph"
+                  onChange={(e) => setMail((m) => ({ ...m, cc: e.target.value }))} style={{ width: '100%' }} />
+                <div className="muted" style={{ fontSize: 12 }}>Separate several addresses with commas.</div>
               </div>
               {mail.last && <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>Last emailed {displayDateTime(mail.last.at)}{mail.last.by ? ` by ${mail.last.by}` : ''}.</div>}
               <div className="field">

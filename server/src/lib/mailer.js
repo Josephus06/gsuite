@@ -129,7 +129,8 @@ function encodeAttachments(provider, attachments) {
 //
 // A ten-second budget, matching the SMTP path. An email API that has not answered in ten seconds
 // is not going to, and the person is watching a button.
-async function sendOverHttp(provider, { to, subject, html, text, replyTo, attachments, fromName }) {
+async function sendOverHttp(provider, { to, cc, subject, html, text, replyTo, attachments, fromName }) {
+  const ccList = ccOf(cc);
   const files = encodeAttachments(provider, attachments);
   const from = fromAddress();
   const controller = new AbortController();
@@ -142,6 +143,7 @@ async function sendOverHttp(provider, { to, subject, html, text, replyTo, attach
       body: {
         sender: { email: from, name: fromName || undefined },
         to: [{ email: to }],
+        cc: ccList.length ? ccList.map((email) => ({ email })) : undefined,
         subject,
         htmlContent: html,
         textContent: text,
@@ -157,6 +159,7 @@ async function sendOverHttp(provider, { to, subject, html, text, replyTo, attach
       body: {
         from: fromHeader(fromName),
         to: [to],
+        cc: ccList.length ? ccList : undefined,
         subject,
         html,
         text,
@@ -193,7 +196,22 @@ async function sendOverHttp(provider, { to, subject, html, text, replyTo, attach
 // Resolves to { ok: true, messageId } or { ok: false, error }. It does not throw: every caller so
 // far wants to report the failure to a person rather than turn it into a 500, and a send that
 // fails is a normal outcome (a wrong address, a provider refusing) rather than a bug.
-async function send({ to, subject, html, text, replyTo, attachments, fromName }) {
+// cc (2026-11-26, Pending Billing): a list (or comma-separated string) of extra addresses that get a
+// copy; anything that is not an address is dropped, and an address repeated or equal to 'to' is sent once.
+function ccOf(cc, to) {
+  const list = Array.isArray(cc) ? cc : String(cc || '').split(/[,;\s]+/);
+  const seen = new Set([String(to || '').trim().toLowerCase()]);
+  const out = [];
+  for (const raw of list) {
+    const e = String(raw || '').trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) || seen.has(e.toLowerCase())) continue;
+    seen.add(e.toLowerCase());
+    out.push(e);
+  }
+  return out;
+}
+
+async function send({ to, cc, subject, html, text, replyTo, attachments, fromName }) {
   if (!isConfigured()) return { ok: false, error: `Email is not set up on this server -- ${missingReason()}.` };
 
   // Attachments travel by either route. They used to be refused here on the API path, back when
@@ -201,12 +219,13 @@ async function send({ to, subject, html, text, replyTo, attachments, fromName })
   // Estimates now go out with the quotation PDF on them, and Railway -- the one install that
   // cannot use SMTP at all -- is exactly where that has to keep working.
   const provider = httpProvider();
-  if (provider) return sendOverHttp(provider, { to, subject, html, text, replyTo, attachments, fromName });
+  if (provider) return sendOverHttp(provider, { to, cc: ccOf(cc, to), subject, html, text, replyTo, attachments, fromName });
 
   try {
     const info = await getTransport().sendMail({
       from: fromHeader(fromName),
       to,
+      cc: ccOf(cc, to).length ? ccOf(cc, to) : undefined,
       subject,
       html,
       // Some clients, and most spam filters, want a plain-text alternative. Sending HTML alone
@@ -238,4 +257,4 @@ async function send({ to, subject, html, text, replyTo, attachments, fromName })
   }
 }
 
-module.exports = { send, isConfigured, missingReason, fromAddress, fromHeader };
+module.exports = { send, isConfigured, missingReason, fromAddress, fromHeader, ccOf };
