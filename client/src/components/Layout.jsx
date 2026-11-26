@@ -190,6 +190,8 @@ const NAV_STRUCTURE = [
         items: [
           // Straight into the Signage Studio, signed in (2026-11-25). The studio decides its own menu.
           { route: '/3d-studio', label: '3D Studio' },
+          // Which Job Type a 3D Studio "Create Estimate" gets, per sign category (2026-11-25).
+          { route: '/3d-studio/job-types', label: '3D Studio Job Types' },
           { route: '/estimates', label: 'Estimates' },
           { route: '/sales-orders', label: 'Sales Orders' },
           { route: '/non-standard-job-orders', label: 'NSTDJO' },

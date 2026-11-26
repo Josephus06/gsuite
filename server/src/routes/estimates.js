@@ -1256,6 +1256,13 @@ router.delete('/:id', requireAuth, requirePermission(ROUTE, 'can_delete'), requi
     }
     await conn.query('DELETE FROM estimate_job_orders WHERE estimate_id = ?', [req.params.id]);
     await conn.query('DELETE FROM estimate_shipping_addresses WHERE estimate_id = ?', [req.params.id]);
+    // Its attached files go with it: fk_estimate_attachment refused the delete of any estimate
+    // carrying one (an order-confirmation scan, a 3D Studio render / drawing set), 2026-11-25.
+    await conn.query('DELETE FROM estimate_attachments WHERE estimate_id = ?', [req.params.id]);
+    // A 3D Studio draft made into it no longer has an estimate (the table is absent before
+    // db/create-studio-estimate-drafts.js runs, hence the guard).
+    await conn.query('UPDATE studio_estimate_drafts SET estimate_id = NULL WHERE estimate_id = ?', [req.params.id])
+      .catch((err) => { if (err.code !== 'ER_NO_SUCH_TABLE') throw err; });
     await conn.query('DELETE FROM estimates WHERE id = ?', [req.params.id]);
     await conn.commit();
     res.status(204).send();

@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import api from '../api/client';
 import { useAuth } from '../context/useAuth';
 import DataTable from '../components/DataTable';
@@ -213,6 +213,18 @@ export default function EstimateWizard() {
   // Units too. Choices made before that are held here and applied the moment the line saves,
   // so picking the Job Type first -- the natural order -- does not lose the selection.
   const pendingProcesses = useRef({});
+  // 3D Studio "Create Estimate" (2026-11-25): /estimates/new?studio_draft=<id>. The header is filled
+  // from the studio project; its BOM becomes the job line's material lines (process "3D Studio -
+  // Materials", price 0, so only the material is charged) once the estimate exists, added through
+  // the same save-and-price path as a typed line, so T1S prices them. The plan rides in
+  // sessionStorage across the reload that follows the first save.
+  const [searchParams] = useSearchParams();
+  const studioDraftId = isNew ? searchParams.get('studio_draft') : null;
+  const [studioPlan, setStudioPlan] = useState(null); // { draft, warnings, jobOrders }
+  const [studioApplying, setStudioApplying] = useState(false);
+  const pendingStudioProcesses = useRef({});
+  const applyingStudio = useRef(false);
+  const [studioLoadedFor, setStudioLoadedFor] = useState(null); // estimate id last loaded from the server
   const [units, setUnits] = useState([]);
   const [paymentTerms, setPaymentTerms] = useState([]);
   const [bracketsByProcess, setBracketsByProcess] = useState({});
@@ -299,6 +311,14 @@ export default function EstimateWizard() {
         if (match) overrides.sales_division_id = match.id;
       }
       if (Object.keys(overrides).length) setHeader((h) => ({ ...h, ...overrides }));
+      if (studioDraftId) {
+        const { data: pre } = await api.get(`/studio-estimate-drafts/${encodeURIComponent(studioDraftId)}/prefill`);
+        // The studio's values win; the user defaults above stay wherever it left one blank.
+        const fromStudio = Object.fromEntries(Object.entries(pre.header).filter(([, v]) => v !== '' && v !== null));
+        setHeader((h) => ({ ...h, ...overrides, ...fromStudio }));
+        if (pre.header.customer_id) await loadCustomerExtras(pre.header.customer_id);
+        setStudioPlan({ draft: pre.draft, warnings: pre.warnings || [], jobOrders: pre.job_orders });
+      }
     }
   }
 
@@ -317,6 +337,20 @@ export default function EstimateWizard() {
     setHeader(h);
     const jobOrdersData = (data.jobOrders || []).map((jo) => ({ ...jo, processes: jo.processes || [] }));
     setJobOrders(jobOrdersData);
+    // A 3D Studio estimate whose BOM lines are still to be added (see studioPlan). Once the estimate
+    // has any job line the plan is spent -- never added twice.
+    const savedStudioPlan = sessionStorage.getItem(`studioPlan:${data.id}`);
+    if (savedStudioPlan) {
+      try {
+        if (jobOrdersData.length) throw new Error('already applied');
+        setStudioPlan(JSON.parse(savedStudioPlan));
+      } catch {
+        sessionStorage.removeItem(`studioPlan:${data.id}`);
+      }
+    }
+    // The plan is applied only after THIS load: added earlier, the lines were wiped by it (the
+    // first save switches to /estimates/:id/edit, which reloads the still-empty estimate).
+    setStudioLoadedFor(data.id);
     const usedItemIds = [...new Set(jobOrdersData.flatMap((jo) => jo.processes.map((p) => p.item_id).filter(Boolean)))];
     usedItemIds.forEach((itemId) => ensureUomsLoaded(itemId));
     // Warm the allowed-material lists for rows that already exist, so reopening an estimate
@@ -450,6 +484,11 @@ export default function EstimateWizard() {
         setEstimateId(data.id);
         setEstimateNo(data.estimate_no);
         await uploadPendingAttachments(data.id);
+        if (studioPlan && !studioPlan.applied) {
+          // Ties the studio draft to this estimate and copies its render / drawing set onto it.
+          await api.post(`/studio-estimate-drafts/${encodeURIComponent(studioPlan.draft.id)}/link`, { estimate_id: data.id });
+          sessionStorage.setItem(`studioPlan:${data.id}`, JSON.stringify(studioPlan));
+        }
         navigate(`/estimates/${data.id}/edit`, { replace: true });
       } else {
         await api.put(`/estimates/${estimateId}`, buildHeaderPayload());
@@ -533,6 +572,13 @@ export default function EstimateWizard() {
       if (pending?.length) {
         delete pendingProcesses.current[idx];
         await applyProcessSelection(idx, pending);
+      }
+      const studioRows = pendingStudioProcesses.current[idx];
+      if (studioRows?.length) {
+        delete pendingStudioProcesses.current[idx];
+        // The processes below need the line's id before the next render puts it in the ref.
+        jobOrdersRef.current = jobOrdersRef.current.map((r, i) => (i === idx ? { ...r, id: data.id, line_no: data.line_no, processes: [] } : r));
+        await applyStudioProcesses(idx, studioRows);
       }
     } finally {
       postingJobOrders.current.delete(idx);
@@ -1105,6 +1151,57 @@ export default function EstimateWizard() {
     }
   }
 
+  // The 3D Studio BOM's counterpart of applyProcessSelection: each row arrives complete (process,
+  // material, qty, size in MM, location) and goes through recalcAndCommitProcess, which prices it
+  // with T1S's own costing and saves it -- the same as a line typed in by hand.
+  async function applyStudioProcesses(joIdx, rows) {
+    const startIdx = (jobOrdersRef.current[joIdx]?.processes || []).length;
+    const newRows = rows.map((p, n) => {
+      const proc = processesList.find((x) => x.id === p.process_id);
+      return { _tempId: `studio-${p.process_id}-${startIdx + n}`, id: null, ...EMPTY_PROC, ...p, process_uom: proc ? unitLabel(proc.base_unit_id) : '' };
+    });
+    setJobOrders((prev) => prev.map((r, i) => (i === joIdx ? { ...r, processes: [...(r.processes || []), ...newRows] } : r)));
+    jobOrdersRef.current = jobOrdersRef.current.map((r, i) => (i === joIdx ? { ...r, processes: [...(r.processes || []), ...newRows] } : r));
+    for (let n = 0; n < newRows.length; n++) {
+      if (newRows[n].item_id) ensureUomsLoaded(newRows[n].item_id);
+      await recalcAndCommitProcess(joIdx, startIdx + n, newRows[n]);
+    }
+  }
+
+  // Adds a waiting 3D Studio plan's job line(s) once the estimate exists and the job lines step is
+  // showing. Runs once per plan (applyingStudio); the plan leaves sessionStorage when done.
+  useEffect(() => {
+    if (!studioPlan || studioPlan.applied || !estimateId || step !== 2 || loading || applyingStudio.current) return;
+    if (studioLoadedFor !== estimateId) return; // wait for the reload after the first save
+    if (!sessionStorage.getItem(`studioPlan:${estimateId}`)) return;
+    applyingStudio.current = true;
+    setStudioApplying(true);
+    (async () => {
+      try {
+        for (const jo of studioPlan.jobOrders) {
+          const { processes, ...fields } = jo;
+          const idx = jobOrdersRef.current.length;
+          const row = {
+            _tempId: `studio-jo-${idx}`, id: null, ...EMPTY_JO,
+            tax_code_id: jobOrdersRef.current[0]?.tax_code_id || EMPTY_JO.tax_code_id, ...fields, processes: [],
+          };
+          setJobOrders((prev) => [...prev, row]);
+          jobOrdersRef.current = [...jobOrdersRef.current, row];
+          pendingStudioProcesses.current[idx] = processes;
+          // A line with no Job Type yet (category not mapped) cannot save; Sales picks one and the
+          // materials then follow through the same pending path.
+          await commitJobOrderRowUnsafe(idx, row);
+        }
+      } catch (err) {
+        setError(`Not every 3D Studio material line was added: ${err.response?.data?.error || err.message}. Add the rest by hand.`);
+      } finally {
+        sessionStorage.removeItem(`studioPlan:${estimateId}`);
+        setStudioPlan((p) => (p ? { ...p, applied: true } : p));
+        setStudioApplying(false);
+      }
+    })();
+  }, [studioPlan, estimateId, step, loading, studioLoadedFor]); // eslint-disable-line react-hooks/exhaustive-deps
+
   async function confirmProcessPicker() {
     if (!processPicker) return;
     const { joIdx, selected } = processPicker;
@@ -1359,6 +1456,22 @@ export default function EstimateWizard() {
         </div>
 
         {error && <div className="error-banner">{error}</div>}
+
+        {studioPlan && step <= 2 && (
+          <div className="warning-banner">
+            <strong>From 3D Studio {studioPlan.draft.project_number}</strong>
+            {studioPlan.draft.revision_label ? ` (${studioPlan.draft.revision_label})` : ''}: {studioPlan.draft.project_title}.{' '}
+            {step === 1 && 'Check the details and press Next: the estimate is created and the design\'s materials are added to the job line, priced by T1S.'}
+            {step === 2 && studioApplying && 'Adding the design\'s materials and pricing them...'}
+            {step === 2 && !studioApplying && jobOrders.some((r) => String(r._tempId || '').startsWith('studio-jo') && !r.id)
+              && 'Pick the Job Type on the line below: the design\'s materials are added as soon as the line can be saved.'}
+            {step === 2 && !studioApplying && !jobOrders.some((r) => String(r._tempId || '').startsWith('studio-jo') && !r.id)
+              && 'Materials added under "3D Studio - Materials" (material price only). Add the labour and installation processes, fill in the Delivery Date and Job Location, and change anything needed before you continue.'}
+            {studioPlan.warnings?.length > 0 && (
+              <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>{studioPlan.warnings.map((w) => <li key={w}>{w}</li>)}</ul>
+            )}
+          </div>
+        )}
 
         {step === 1 && (
           <form onSubmit={goNextFromStep1}>

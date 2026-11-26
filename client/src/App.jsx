@@ -57,6 +57,7 @@ import Estimates from './pages/Estimates';
 import EstimateView from './pages/EstimateView';
 import EstimateWizard from './pages/EstimateWizard';
 import StudioLauncher from './pages/StudioLauncher';
+import StudioJobTypes from './pages/StudioJobTypes';
 import EstimatePrint from './pages/EstimatePrint';
 import SalesOrders from './pages/SalesOrders';
 import SalesOrderView from './pages/SalesOrderView';
@@ -373,6 +374,7 @@ function App() {
         <Route path="/system-health" element={<SystemHealth />} />
         <Route path="/registered-devices" element={<RegisteredDevices />} />
         <Route path="/3d-studio" element={<StudioLauncher />} />
+        <Route path="/3d-studio/job-types" element={<StudioJobTypes />} />
         <Route path="/estimates" element={<Estimates />} />
         <Route path="/estimates/new" element={<EstimateWizard />} />
         <Route path="/estimates/:id/edit" element={<EstimateWizard />} />

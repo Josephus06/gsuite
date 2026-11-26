@@ -20,6 +20,9 @@ const loyaltyIntegrationRoutes = require('./routes/loyaltyIntegration');
 const materialCostingIntegrationRoutes = require('./routes/materialCostingIntegration');
 // Read-only customer feed for the Signage Studio, same key. See routes/customerIntegration.js.
 const customerIntegrationRoutes = require('./routes/customerIntegration');
+// The studio's "Create Estimate": its draft in (same key), and the Estimate form's prefill / link.
+const studioEstimateIntegrationRoutes = require('./routes/studioEstimateIntegration');
+const studioEstimateRoutes = require('./routes/studioEstimates');
 // Sales > 3D Studio: one-time sign-in link into the Signage Studio (STUDIO_WEB_URL / STUDIO_SSO_SECRET).
 const studioRoutes = require('./routes/studio');
 const supplierRoutes = require('./routes/suppliers');
@@ -249,7 +252,12 @@ const isFeedWrite = (req) => (
 // MP4 arrives as ~34MB of base64. It gets its own parser rather than raising the shared one,
 // so a 36MB body is only ever accepted on the single route that expects it.
 const carouselUploadJson = express.json({ limit: '36mb' });
+// The studio's Create Estimate draft carries its render and drawing set PDF (25MB each at most).
+const studioDraftJson = express.json({ limit: '80mb' });
 app.use((req, res, next) => {
+  if (req.method === 'POST' && /^\/api\/integrations\/studio\/estimate-drafts\/?$/.test(req.path)) {
+    return studioDraftJson(req, res, next);
+  }
   if (req.method === 'POST' && /^\/api\/dashboard-carousel\/?$/.test(req.path)) {
     return carouselUploadJson(req, res, next);
   }
@@ -371,6 +379,8 @@ app.use('/api/crm-public', crmPublicRoutes);
 app.use('/api/integrations/loyalty', loyaltyIntegrationRoutes);
 app.use('/api/integrations/material-costing', materialCostingIntegrationRoutes);
 app.use('/api/integrations/customers', customerIntegrationRoutes);
+app.use('/api/integrations/studio', studioEstimateIntegrationRoutes);
+app.use('/api/studio-estimate-drafts', studioEstimateRoutes);
 app.use('/api/studio', studioRoutes);
 app.use('/api/web-products', webProductRoutes);
 app.use('/api/employees', employeeRoutes);

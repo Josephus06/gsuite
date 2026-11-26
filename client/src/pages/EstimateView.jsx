@@ -15,6 +15,7 @@ import ButtonMenu from '../components/ButtonMenu';
 import { isPrintSelected } from '../utils/estimatePrintSelected';
 import { downloadFile } from '../utils/downloadFile';
 import { showFullValueOnHover } from '../utils/hoverTitle';
+import EstimateAttachmentsPanel, { useEstimateAttachments } from '../components/EstimateAttachmentsPanel';
 
 // Read-only counterpart to EstimateWizard (which stays the create/edit form): mirrors
 // the real system's estimate detail screen -- a summary banner with status-driven
@@ -107,6 +108,8 @@ export default function EstimateView() {
   const [estimate, setEstimate] = useState(null);
   const [auditLogs, setAuditLogs] = useState([]);
   const [tab, setTab] = useState('job');
+  // Order-confirmation scans, and a 3D Studio estimate's renders and drawing set (2026-11-25).
+  const attachments = useEstimateAttachments(id);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [extracting, setExtracting] = useState(false);
@@ -449,8 +452,13 @@ ${estimate.estimate_no} will be CANCELLED. The new estimate will have you as its
       <div className="status-tabs" style={{ marginTop: 20 }}>
         <button className={`status-tab ${tab === 'job' ? 'active' : ''}`} onClick={() => setTab('job')}>Job</button>
         <button className={`status-tab ${tab === 'gp' ? 'active' : ''}`} onClick={() => setTab('gp')}>GP Computations</button>
+        <button className={`status-tab ${tab === 'attachments' ? 'active' : ''}`} onClick={() => setTab('attachments')}>
+          Attachments <span className="badge badge-muted">{attachments === null ? '' : attachments.length}</span>
+        </button>
         <button className={`status-tab ${tab === 'system' ? 'active' : ''}`} onClick={() => setTab('system')}>System Info</button>
       </div>
+
+      {tab === 'attachments' && <EstimateAttachmentsPanel estimateId={id} files={attachments} />}
 
       {tab === 'job' && (
         <div className="card">
