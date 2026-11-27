@@ -50,7 +50,7 @@ router.get('/for-vendor-bill/:vbId', requireAuth, requirePermission(ROUTE, 'can_
   try {
     const [[vb]] = await pool.query(
       `SELECT vb.id, vb.bill_no, vb.office_location_id, vb.account_id AS ap_account_id, vb.memo,
-              COALESCE(po.supplier_id, vb.supplier_id) AS supplier_id, s.name AS supplier_name, coa.account_code, coa.account_name
+              COALESCE(po.supplier_id, vb.supplier_id) AS supplier_id, s.name AS supplier_name, s.payee_name AS supplier_payee_name, coa.account_code, coa.account_name
        FROM vendor_bills vb
        LEFT JOIN purchase_orders po ON po.id = vb.purchase_order_id
        LEFT JOIN suppliers s ON s.id = COALESCE(po.supplier_id, vb.supplier_id)

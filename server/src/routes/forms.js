@@ -1327,7 +1327,7 @@ router.get('/:id', requireAuth, async (req, res, next) => {
       if (doc.status === 'approved' && !p.fullyPosted) {
         // Create Check Voucher's payee: the Payable To, matched by name among the suppliers.
         const [[sup]] = await pool.query(
-          'SELECT id, name FROM suppliers WHERE is_active = 1 AND LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1', [doc.detail?.payable_to || '']);
+          'SELECT id, name, payee_name FROM suppliers WHERE is_active = 1 AND LOWER(TRIM(name)) = LOWER(TRIM(?)) LIMIT 1', [doc.detail?.payable_to || '']);
         doc.voucher_supplier = sup || null;
       }
     }

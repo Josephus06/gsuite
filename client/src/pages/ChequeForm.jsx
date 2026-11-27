@@ -52,7 +52,7 @@ export default function ChequeForm() {
           setFtr(f);
           setHeader((h) => ({
             ...h,
-            payee_type: 'VENDOR', payee_id: f.voucher_supplier?.id || '', payee_name: f.voucher_supplier?.name || d.payable_to || '',
+            payee_type: 'VENDOR', payee_id: f.voucher_supplier?.id || '', payee_name: (f.voucher_supplier?.payee_name || '').trim() || f.voucher_supplier?.name || d.payable_to || '',
             account_id: d.from_account_id || first.from_account_id || '',
             memo: [f.request_no, ...items.map((it) => it.particulars).filter(Boolean)].join(' -- ').slice(0, 1000),
           }));
@@ -191,7 +191,7 @@ export default function ChequeForm() {
                 <div style={{ flex: 1 }}>
                   <EntityPicker label="Payee" items={payeeItems(header.payee_type)} value={header.payee_id} getLabel={(x) => x.name}
                     columns={[{ key: 'name', label: 'Name' }]} searchKeys={['name']} placeholder={header.payee_name || '--Select--'}
-                    onSelect={(x) => setH({ payee_id: x?.id || '', payee_name: x?.name || '' })} />
+                    onSelect={(x) => setH({ payee_id: x?.id || '', payee_name: (x?.payee_name || '').trim() || x?.name || '' })} />
                 </div>
               </div>
             </div>

@@ -35,7 +35,7 @@ router.get('/meta', requireAuth, requirePermission(ROUTE, 'can_view'), async (re
     const [accounts] = await pool.query('SELECT id, account_code, account_name, account_type FROM chart_of_accounts WHERE (is_summary = 0 OR is_summary IS NULL) ORDER BY account_code');
     const [departments] = await pool.query('SELECT id, name FROM departments WHERE is_active = TRUE ORDER BY name');
     const [locations] = await pool.query('SELECT id, location_name FROM locations ORDER BY location_name');
-    const [vendors] = await pool.query('SELECT id, name FROM suppliers WHERE is_active = TRUE ORDER BY name');
+    const [vendors] = await pool.query('SELECT id, name, payee_name FROM suppliers WHERE is_active = TRUE ORDER BY name');
     const [customers] = await pool.query('SELECT id, name FROM customers ORDER BY name');
     const [employees] = await pool.query("SELECT id, CONCAT(first_name, ' ', last_name) AS name FROM employees WHERE is_active = TRUE ORDER BY first_name, last_name");
     const [taxes] = await pool.query('SELECT id, code, rate FROM taxes ORDER BY code');

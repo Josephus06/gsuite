@@ -76,7 +76,8 @@ export default function BillPaymentModal({ vendorBillId, paymentId, onClose, onS
         setApplyAmounts(Object.fromEntries(d.apply_lines.filter((l) => Number(l.applied_amount) > 0).map((l) => [l.vendor_bill_id, l.applied_amount])));
         setDebitAmounts(Object.fromEntries(d.debit_lines.filter((l) => Number(l.applied_amount) > 0).map((l) => [l.bill_credit_id, l.applied_amount])));
       } else {
-        setPayeeName(d.supplier_name || '');
+        // The supplier's Payee Name (Master Lists > Suppliers) when set, else its name; editable here.
+        setPayeeName((d.supplier_payee_name || '').trim() || d.supplier_name || '');
         setMemo(d.memo || '');
         if (d.ap_account_id) setApAccount({ id: d.ap_account_id, account_code: d.account_code, account_name: d.account_name });
         if (d.office_location_id) setOfficeLocation({ id: d.office_location_id });
