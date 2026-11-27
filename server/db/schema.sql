@@ -174,7 +174,7 @@ CREATE TABLE audit_logs (
     id BIGINT PRIMARY KEY AUTO_INCREMENT,
     auditable_type VARCHAR(150) NOT NULL,
     auditable_id BIGINT NOT NULL,
-    event_type ENUM('Created','Updated','Approved','Disapproved','Cancelled','Deleted','Status Change') NOT NULL,
+    event_type ENUM('Created','Updated','Approved','Disapproved','Cancelled','Deleted','Status Change','Printed','Reprinted') NOT NULL,
     field_name VARCHAR(150) NULL,
     old_value TEXT NULL,
     new_value TEXT NULL,
