@@ -640,6 +640,12 @@ if (crmAttentionJobEnabled()) {
 const { chatPurgeJobEnabled, scheduleChatPurge } = require('./lib/chatPurge');
 if (chatPurgeJobEnabled()) scheduleChatPurge();
 
+// Overtime filed for someone else and not accepted by the end of its OT date is declined just after
+// midnight business time (lib/otAutoDecline.js). OFF unless OT_AUTO_DECLINE_JOB=1 -- ONE box of the
+// replicated set (the droplet) and Railway.
+const { otAutoDeclineJobEnabled, scheduleOtAutoDecline } = require('./lib/otAutoDecline');
+if (otAutoDeclineJobEnabled()) scheduleOtAutoDecline();
+
 // Fleet reminders (lib/fleet.js runFleetReminders): registration / insurance / emission expiring
 // and PMS due, to the General Managers, custodian and in-charge, once a day at 7:00 business time.
 // OFF unless FLEET_REMINDER_JOB=1 -- set it on ONE box of the replicated set: each reminder is
