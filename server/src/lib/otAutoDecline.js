@@ -1,6 +1,6 @@
 // An overtime request filed for someone else that the employee has not answered by the end of its
-// OT date is declined automatically (asked 2026-11-27): filed today for tonight, not accepted
-// today -> Declined tomorrow. Runs just after midnight business time (Philippine), and once when the
+// OT date (or of the day it was approved, if later) is declined automatically (asked 2026-11-27):
+// filed today for tonight, not accepted today -> Declined tomorrow. Runs just after midnight business time (Philippine), and once when the
 // server starts so a box that was down at midnight still catches up.
 //
 // Only requests waiting on the employee (status 'approved', for_self = 0). One still waiting on noting
@@ -13,7 +13,7 @@
 // OFF unless OT_AUTO_DECLINE_JOB=1 -- set it on ONE box of the replicated set (the droplet) and on
 // Railway; two boxes declining the same row would collide in replication.
 const pool = require('../db');
-const { businessToday, msUntilBusinessTime } = require('./crmCadence');
+const { UTC_OFFSET_MIN, businessToday, msUntilBusinessTime } = require('./crmCadence');
 const { notifyFormStatus } = require('./approvalNotifications');
 const { checkOtDeclines } = require('./otDeclineIr');
 
@@ -22,10 +22,16 @@ const REMARK = 'Declined automatically: not accepted by the end of the overtime 
 
 async function autoDeclineUnansweredOvertime() {
   const today = businessToday();
+  // Overtime for ANOTHER employee only: one filed "for someone else" naming the filer is their own
+  // (REQ-556, 2026-11-27). The employee always gets a whole day to answer: the deadline is the end of
+  // the OT date or of the day it was approved, whichever is later (approved_at is UTC, read on the
+  // business clock) -- approved after the OT date, it was declined minutes after approval.
   const [rows] = await pool.query(
     `SELECT f.id, o.target_user_id
        FROM form_requests f JOIN form_overtime_details o ON o.form_request_id = f.id
-      WHERE f.type = 'overtime' AND f.status = 'approved' AND o.for_self = 0 AND o.ot_date < ?`, [today]);
+      WHERE f.type = 'overtime' AND f.status = 'approved' AND o.for_self = 0
+        AND o.target_user_id <> f.user_id
+        AND GREATEST(o.ot_date, DATE(COALESCE(f.approved_at, o.ot_date) + INTERVAL ? MINUTE)) < ?`, [UTC_OFFSET_MIN, today]);
   let declined = 0;
   for (const r of rows) {
     const conn = await pool.getConnection();
