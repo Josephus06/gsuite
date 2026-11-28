@@ -509,7 +509,12 @@ function EventBar({ e, dayKey, weekStart, wrap, draggable, onOpen }) {
 // 12:00 AM to 11:00 PM, each booking a block from its start to its end. A Job Order keeps one colour
 // across every installer on it, so a crew on the same job reads as one band.
 const HOUR_PX = 40;
-const JOB_COLORS = ['#f4b183', '#00b0f0', '#a9d18e', '#ffd966', '#c9a0dc', '#f8a5a5', '#8fd3c7', '#b4c7e7'];
+// No two jobs on the day share a colour (asked 2026-11-28): the palette first, then as many more as
+// needed, spread round the colour wheel by the golden angle in light tones so dark text stays legible.
+const JOB_COLORS = ['#f4b183', '#00b0f0', '#a9d18e', '#ffd966', '#c9a0dc', '#f8a5a5', '#8fd3c7', '#b4c7e7',
+  '#ff8fd8', '#d0d0d0', '#ff9f40', '#7fa7ff', '#e0c39a', '#66e0a3', '#ff6f6f', '#d6e685'];
+const jobColor = (i) => (i < JOB_COLORS.length ? JOB_COLORS[i]
+  : `hsl(${Math.round((i * 137.508) % 360)}, ${i % 2 ? 70 : 55}%, ${i % 3 === 0 ? 72 : i % 3 === 1 ? 80 : 66}%)`);
 const minutesOf = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + (m || 0); };
 const hourLabel = (h) => `${h % 12 || 12}:00 ${h < 12 ? 'AM' : 'PM'}`;
 
@@ -530,11 +535,13 @@ export function DayView({ dayKey, slots, people, kind, onOpen, board = false }) 
   const columns = [...cols.values()].sort((a, b) => a.name.localeCompare(b.name));
   if (!columns.length) return <div className="empty-state">{kind.none}</div>;
 
-  // One colour per job (JO, else project), in the order the jobs first appear.
+  // One colour per job (JO, else project), in the order the jobs first appear on THIS day -- counted
+  // over the day's bookings only, so the colours are not used up by other days' jobs and never repeat.
   const colorOf = new Map();
-  for (const s of [...slots].sort((a, b) => minutesOf(a.start_time) - minutesOf(b.start_time))) {
+  const dayCols = columns.flatMap((c) => c.slots);
+  for (const s of [...dayCols].sort((a, b) => minutesOf(a.start_time) - minutesOf(b.start_time))) {
     const key = s.job_order_no || s.project_no;
-    if (!colorOf.has(key)) colorOf.set(key, JOB_COLORS[colorOf.size % JOB_COLORS.length]);
+    if (!colorOf.has(key)) colorOf.set(key, jobColor(colorOf.size));
   }
   const free = columns.filter((c) => !c.slots.length).length;
   // On the monitor (board) every column fits the screen -- no sideways scrolling -- so they share the width
