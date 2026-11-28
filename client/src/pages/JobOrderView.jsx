@@ -196,7 +196,9 @@ export default function JobOrderView() {
       // The server refuses this when nothing is attached. Swallowing it silently left the
       // button looking broken, so surface whatever reason came back.
       setActionError(err.response?.data?.error || 'Could not send this Job Order for Sales Approval.');
-      await loadAttachmentCount();
+      // Refused because it already moved on (sent from another tab, already approved by Sales):
+      // show where it is now instead of leaving the stale "For Artist" page up.
+      await Promise.all([load(), loadAttachmentCount()]);
     } finally {
       setBusy(false);
     }

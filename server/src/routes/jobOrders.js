@@ -1258,7 +1258,13 @@ router.put('/:id/sales-approval', requireAuth, async (req, res, next) => {
 
     if (jo.sub_status !== 'For Artist' && jo.sub_status !== 'For Artist (Revision)') {
       await conn.rollback();
-      return res.status(409).json({ error: 'This Job Order is not ready for Sales Approval.' });
+      // Say where it is: almost always it was already sent (another tab, a second click) and Sales
+      // may have approved it since -- "not ready" read as if the artist still had work to do.
+      return res.status(409).json({
+        error: ['Sales Approval', 'Approved'].includes(jo.sub_status)
+          ? `${jo.job_order_no} was already sent for Sales Approval${jo.sub_status === 'Approved' ? ' and has been approved' : ''}.`
+          : `This Job Order is not ready for Sales Approval (it is ${jo.sub_status || 'not yet with the artist'}).`,
+      });
     }
 
     // Sales approve against the artist's drawings, so there has to be something to approve.
