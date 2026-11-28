@@ -17,6 +17,10 @@ export default function RwipCreateModal({ jobOrderId, onClose, onSaved }) {
   const [deliveryDate, setDeliveryDate] = useState('');
   const [deliveryTime, setDeliveryTime] = useState('');
   const [rows, setRows] = useState([]);
+  // The RWIP's quantity -- only the pieces being redone (6 made, 3 damaged -> 3). `scaledFrom` is the
+  // last valid quantity the rows were sized for, so each change scales them by new / previous.
+  const [quantity, setQuantity] = useState('');
+  const [scaledFrom, setScaledFrom] = useState(0);
   const [motherUoms, setMotherUoms] = useState(new Map());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -31,6 +35,8 @@ export default function RwipCreateModal({ jobOrderId, onClose, onSaved }) {
       setDeliveryDate(d.data.jo.delivery_date ? String(d.data.jo.delivery_date).slice(0, 10) : '');
       setDeliveryTime(d.data.jo.delivery_time || '');
       setRows((d.data.processes || []).map((p) => ({ ...p })));
+      setQuantity(String(Number(d.data.jo.quantity) || ''));
+      setScaledFrom(Number(d.data.jo.quantity) || 0);
       // The mother's UOM per item: an RWIP line for the same item keeps it (asked 2026-10-08).
       const byItem = new Map();
       for (const p of d.data.processes || []) if (p.item_id && p.uom && !byItem.has(p.item_id)) byItem.set(p.item_id, p.uom);
@@ -42,12 +48,33 @@ export default function RwipCreateModal({ jobOrderId, onClose, onSaved }) {
   const addRow = () => setRows((r) => [...r, { process_id: null, process_name: '', process_qty: 0, process_uom: '', category: '', parts: '', item_id: null, item_name: '', length: '', width: '', uom: '', qty: 0, unit: '', remarks: '' }]);
   const delRow = (i) => setRows((r) => r.filter((_, idx) => idx !== i));
 
+  // Changing the quantity resizes the process rows in proportion (6 -> 3 halves them). A LOT line
+  // (one layout fee, one delivery) stays as it is. Every row remains editable afterwards.
+  const isLot = (u) => String(u || '').trim().toUpperCase() === 'LOT';
+  const round4 = (n) => Math.round(n * 10000) / 10000;
+  function changeQuantity(value) {
+    setQuantity(value);
+    const next = Number(value);
+    if (!(next > 0) || !(scaledFrom > 0) || next === scaledFrom) return;
+    const ratio = next / scaledFrom;
+    setRows((rs) => rs.map((r) => ({
+      ...r,
+      process_qty: isLot(r.process_uom) || r.process_qty === '' || r.process_qty == null ? r.process_qty : round4(Number(r.process_qty) * ratio),
+      qty: isLot(r.uom) || isLot(r.unit) || r.qty === '' || r.qty == null ? r.qty : round4(Number(r.qty) * ratio),
+    })));
+    setScaledFrom(next);
+  }
+
   async function save() {
     setError('');
     // Both required (2026-10-08): an RWIP that does not say why, or what will be done, tells
     // Production nothing. The server refuses one without them too.
     const missing = [!reason.trim() && 'Reason', !action.trim() && 'Action/s to be taken'].filter(Boolean);
     if (missing.length) { setError(`${missing.join(' and ')} ${missing.length > 1 ? 'are' : 'is'} required.`); return; }
+    const q = Number(quantity);
+    const motherQty = Number(jo.quantity) || 0;
+    if (!(q > 0)) { setError('Quantity must be more than 0.'); return; }
+    if (motherQty > 0 && q > motherQty) { setError(`Quantity cannot be more than the Job Order's ${motherQty}.`); return; }
     setSaving(true);
     try {
       const processes = rows.map((r) => ({
@@ -55,7 +82,7 @@ export default function RwipCreateModal({ jobOrderId, onClose, onSaved }) {
         parts: r.parts, item_id: r.item_id || null, length: r.length, width: r.width, uom: r.uom, qty: r.qty, unit: r.unit, remarks: r.remarks,
       }));
       const { data } = await api.post(`/production/${jobOrderId}/rwip`, {
-        reason_code_id: reasonCode?.id || null, reason: reason || null, action_to_be_taken: action || null,
+        quantity: q, reason_code_id: reasonCode?.id || null, reason: reason || null, action_to_be_taken: action || null,
         delivery_date: deliveryDate || null, delivery_time: deliveryTime || null, processes,
       });
       onSaved(data);
@@ -87,7 +114,11 @@ export default function RwipCreateModal({ jobOrderId, onClose, onSaved }) {
               <div>Job Type : <span className="hi">{jo.job_type_name || ''}</span></div>
               <div>Job Desc. : <span className="hi">{jo.description || ''}</span></div>
               <div>Job Location : <span className="hi">{jo.job_location_name || ''}</span></div>
-              <div>Quantity : <span className="hi">{Number(jo.quantity)} {jo.units || ''}</span></div>
+              <div className="field" style={{ marginTop: 6 }}>
+                <label>Quantity * <span className="muted">(JO: {Number(jo.quantity)} {jo.units || ''})</span></label>
+                <input type="number" min="0" max={Number(jo.quantity) || undefined} step="any" value={quantity}
+                  onChange={(e) => changeQuantity(e.target.value)} style={{ width: 120 }} />
+              </div>
               <div>Length : <span className="hi">{jo.length ?? 0}</span> Width : <span className="hi">{jo.width ?? 0}</span> Height : <span className="hi">{jo.height ?? 0}</span></div>
             </div>
           </div>

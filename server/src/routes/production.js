@@ -1191,6 +1191,12 @@ router.post('/:id/rwip', requireAuth, async (req, res, next) => {
     // an RWIP without them tells Production nothing. The RFQC's are required at Quality Inspection.
     const missingWhy = [!String(reason || '').trim() && 'Reason', !String(actionTaken || '').trim() && 'Action to be Taken'].filter(Boolean);
     if (missingWhy.length) return res.status(400).json({ error: `${missingWhy.join(' and ')} ${missingWhy.length > 1 ? 'are' : 'is'} required.` });
+    // The RWIP's quantity: only the pieces being redone (asked 2026-11-28: 6 made, 3 damaged -> an
+    // RWIP for 3). Defaults to the JO's; more than the JO's is refused.
+    const motherQty = rwipNum(jo.quantity);
+    const rwipQty = req.body.quantity === undefined || req.body.quantity === '' || req.body.quantity === null ? motherQty : Number(req.body.quantity);
+    if (!Number.isFinite(rwipQty) || rwipQty <= 0) return res.status(400).json({ error: 'Quantity must be more than 0.' });
+    if (motherQty > 0 && rwipQty > motherQty + 1e-9) return res.status(400).json({ error: `Quantity cannot be more than the Job Order's ${motherQty}.` });
     await conn.beginTransaction();
     // RWIP-### -- next number after the highest existing RWIP, odd on the droplet and even on the
     // office box (lib/docNumber.js), so the two boxes never issue the same one.
@@ -1202,7 +1208,7 @@ router.post('/:id/rwip', requireAuth, async (req, res, next) => {
        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,'Pending RMA Approval')`,
       // The NSSO as well as the sales order: an RWIP of an NSJO otherwise had neither.
       [jobOrderNo, jo.id, jo.sales_order_id, jo.nsso_id || null, jo.sales_order_line_id, jo.job_type_id, jo.job_location_id,
-       jo.description, rwipNum(jo.quantity), jo.units, jo.length, jo.width, jo.height, jo.memo, jo.contact_email, jo.contact_title,
+       jo.description, rwipQty, jo.units, jo.length, jo.width, jo.height, jo.memo, jo.contact_email, jo.contact_title,
        jo.contact_phone, jo.shipping_address, jo.sales_rep_id, deliveryDate || jo.delivery_date || null, deliveryTime || jo.delivery_time || null,
        reasonCodeId || null, rwipTrunc(reason, 500), rwipTrunc(actionTaken, 500)]
     );
