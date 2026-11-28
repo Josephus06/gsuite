@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import api from '../api/client';
 import LoadingSpinner from '../components/LoadingSpinner';
 import { displayDate } from '../utils/dates';
-import { API, RESOURCES, STATUS_COLOR, STATUS_LABEL, StatusBadge, errorOf, resourceKey, resourceList, mergeSlots, resourceName, slotHours, timeText } from './installation/common';
+import { API, RESOURCES, STATUS_COLOR, STATUS_LABEL, StatusBadge, errorOf, fetchCrew, jobColor, resourceKey, resourceList, mergeSlots, resourceName, slotHours, timeText } from './installation/common';
 import { DecisionModal, RescheduleModal, rangeLabel } from './installation/reschedule';
 import { downloadBlob, renderDayPng } from './installation/dayReport';
 import ButtonMenu from '../components/ButtonMenu';
@@ -91,17 +91,17 @@ export default function InstallationPlanner({ readOnly = false }) {
     setLoading(true);
     const q = query || undefined;
     // A merged person (same name on two records) is asked for by every one of their ids.
-    const whoP = whoKey && whoKey[0] === 'e' ? resourceList(resource, people).find((p) => p.key === whoKey) : null;
+    const whoP = whoKey && whoKey[0] === 'e' ? resourceList(resource, people, { withDrivers: true }).find((p) => p.key === whoKey) : null;
     const who = whoKey ? { [whoKey[0] === 'v' ? 'asset_id' : 'employee_id']: whoP ? whoP.ids.join(',') : whoKey.slice(1) } : {};
     const req = view === 'crew' || view === 'day'
-      ? api.get(`${API}/crew`, { params: { from, to, search: q, role: resource } }).then(({ data }) => setCrew(data))
+      ? fetchCrew({ from, to, search: q }, resource).then(setCrew)
       : api.get(`${API}/events`, { params: { from, to, status: status || undefined, ...who, search: q } }).then(({ data }) => setEvents(data));
     req.then(() => setError('')).catch((err) => setError(errorOf(err))).finally(() => setLoading(false));
   }, [from, to, status, view, whoKey, reloadKey, query, resource]);
   // The rows / columns of the Installers, Subcons, Drivers, Vehicles and Day views: every one of that
   // kind, booked or not, narrowed to the one chosen; while searching, to those booked on what matches
   // (everyone else would only be noise in an answer to "who is on JO-123?").
-  const allOfKind = resourceList(resource, people);
+  const allOfKind = resourceList(resource, people, { withDrivers: true });
   const crewM = mergeSlots(allOfKind, crew);
   const shownCrew = whoKey ? crewM.filter((x) => resourceKey(x) === whoKey) : crewM;
   const bookedKeys = new Set(shownCrew.map(resourceKey));
@@ -116,8 +116,8 @@ export default function InstallationPlanner({ readOnly = false }) {
     setReporting(true);
     setError('');
     try {
-      const { data } = await api.get(`${API}/crew`, { params: { from: reportDay, to: reportDay, role: kind } });
-      const reportPeople = resourceList(kind, people);
+      const data = await fetchCrew({ from: reportDay, to: reportDay }, kind);
+      const reportPeople = resourceList(kind, people, { withDrivers: true });
       const blob = await renderDayPng({ dayKey: reportDay, kind: RESOURCES[kind], people: reportPeople, slots: mergeSlots(reportPeople, data) });
       downloadBlob(blob, `${RESOURCES[kind].plural}-Schedule-${reportDay}.png`);
     } catch (err) {
@@ -125,7 +125,7 @@ export default function InstallationPlanner({ readOnly = false }) {
     } finally { setReporting(false); }
   }
   // Choosing another kind clears a pick of the old kind.
-  const pickResource = (r) => { setResource(r); if (whoKey && !resourceList(r, people).some((p) => p.key === whoKey)) setWhoKey(''); };
+  const pickResource = (r) => { setResource(r); if (whoKey && !resourceList(r, people, { withDrivers: true }).some((p) => p.key === whoKey)) setWhoKey(''); };
 
   // Each project on each of its days, IN A FIXED LANE for the week (asked 2026-11-09): a bar keeps its row
   // on every day it spans, and a day where an earlier row is free leaves a gap rather than moving the next
@@ -509,12 +509,7 @@ function EventBar({ e, dayKey, weekStart, wrap, draggable, onOpen }) {
 // 12:00 AM to 11:00 PM, each booking a block from its start to its end. A Job Order keeps one colour
 // across every installer on it, so a crew on the same job reads as one band.
 const HOUR_PX = 40;
-// No two jobs on the day share a colour (asked 2026-11-28): the palette first, then as many more as
-// needed, spread round the colour wheel by the golden angle in light tones so dark text stays legible.
-const JOB_COLORS = ['#f4b183', '#00b0f0', '#a9d18e', '#ffd966', '#c9a0dc', '#f8a5a5', '#8fd3c7', '#b4c7e7',
-  '#ff8fd8', '#d0d0d0', '#ff9f40', '#7fa7ff', '#e0c39a', '#66e0a3', '#ff6f6f', '#d6e685'];
-const jobColor = (i) => (i < JOB_COLORS.length ? JOB_COLORS[i]
-  : `hsl(${Math.round((i * 137.508) % 360)}, ${i % 2 ? 70 : 55}%, ${i % 3 === 0 ? 72 : i % 3 === 1 ? 80 : 66}%)`);
+// Job colours: installation/common.jsx jobColor -- no two jobs on the day share one.
 const minutesOf = (t) => { const [h, m] = String(t).split(':').map(Number); return h * 60 + (m || 0); };
 const hourLabel = (h) => `${h % 12 || 12}:00 ${h < 12 ? 'AM' : 'PM'}`;
 

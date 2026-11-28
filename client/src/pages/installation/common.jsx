@@ -39,20 +39,41 @@ export const resourceName = (s) => (s.role === 'vehicle'
   ? vehicleLabel({ ...s, id: s.asset_id })
   : [s.first_name, s.last_name].filter(Boolean).join(' '));
 // Everyone (or every vehicle) of one kind, as { key, id, name }.
-export function resourceList(kind, { employees = [], vehicles = [] }) {
+// withDrivers: the Installers kind takes in the drivers -- for the planner's calendar and report only;
+// booking crew on a project keeps installers and drivers apart (each booking has its role).
+export function resourceList(kind, { employees = [], vehicles = [] }, { withDrivers = false } = {}) {
   if (kind === 'vehicle') return vehicles.map((v) => ({ key: `v${v.id}`, id: v.id, name: vehicleLabel(v) }));
-  const flag = RESOURCES[kind].flag;
+  // The Installers kind takes in the drivers (asked 2026-11-28): one crew, one calendar and one report.
+  // A driver who is not also an installer is labelled so.
+  const merged = withDrivers && kind === 'installer';
+  const flags = (merged ? rolesOf(kind) : [kind]).map((r) => RESOURCES[r].flag);
   // Two employee records with the same name are one person on the calendar (asked 2026-11-10: ALLAN
   // RAMAN twice) -- one row / column, both records' bookings in it. Keyed on the first record.
   const byName = new Map();
-  for (const e of employees.filter((x) => x[flag])) {
-    const name = personName(e);
-    const k = name.trim().replace(/s+/g, ' ').toLowerCase();
+  for (const e of employees.filter((x) => flags.some((f) => x[f]))) {
+    const driverOnly = merged && !e.is_installer && e.is_driver;
+    const name = driverOnly ? `${personName(e)} (Driver)` : personName(e);
+    const k = personName(e).trim().replace(/\s+/g, ' ').toLowerCase();
     if (byName.has(k)) byName.get(k).ids.push(e.id);
     else byName.set(k, { key: `e${e.id}`, id: e.id, ids: [e.id], name });
   }
   return [...byName.values()];
 }
+
+// The slot roles a kind's views show: the Installers views include the drivers' bookings.
+export const rolesOf = (kind) => (kind === 'installer' ? ['installer', 'driver'] : [kind]);
+// /crew for a kind -- one request per role it covers, together.
+export async function fetchCrew(params, kind) {
+  const parts = await Promise.all(rolesOf(kind).map((role) => api.get(`${API}/crew`, { params: { ...params, role } }).then((r) => r.data)));
+  return parts.flat();
+}
+
+// No two jobs on a day share a colour (2026-11-28): the palette first, then as many more as needed,
+// spread round the colour wheel by the golden angle in light tones so dark text stays legible.
+export const JOB_COLORS = ['#f4b183', '#00b0f0', '#a9d18e', '#ffd966', '#c9a0dc', '#f8a5a5', '#8fd3c7', '#b4c7e7',
+  '#ff8fd8', '#d0d0d0', '#ff9f40', '#7fa7ff', '#e0c39a', '#66e0a3', '#ff6f6f', '#d6e685'];
+export const jobColor = (i) => (i < JOB_COLORS.length ? JOB_COLORS[i]
+  : `hsl(${Math.round((i * 137.508) % 360)}, ${i % 2 ? 70 : 55}%, ${i % 3 === 0 ? 72 : i % 3 === 1 ? 80 : 66}%)`);
 
 // Bookings re-keyed onto the merged people above, so a slot on either record lands in the one column.
 export function mergeSlots(list, slots) {

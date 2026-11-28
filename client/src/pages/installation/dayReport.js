@@ -3,9 +3,7 @@
 // start to its end in its Job Order's colour (the Day view's colours). Drawn straight onto a canvas, so
 // the whole day is in the picture at once: no scroll, no screenshot library.
 import { displayDate } from '../../utils/dates';
-import { resourceKey, resourceName, timeText } from './common';
-
-export const JOB_COLORS = ['#f4b183', '#00b0f0', '#a9d18e', '#ffd966', '#c9a0dc', '#f8a5a5', '#8fd3c7', '#b4c7e7'];
+import { jobColor, resourceKey, resourceName, timeText } from './common';
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 
 const HOUR = 44; // px per hour
@@ -61,7 +59,7 @@ export function renderDayPng({ dayKey, kind, people, slots }) {
   const colorOf = new Map();
   for (const s of [...daySlots].sort((a, b) => minutesOf(a.start_time) - minutesOf(b.start_time))) {
     const key = blockKey(s);
-    if (!colorOf.has(key)) colorOf.set(key, JOB_COLORS[colorOf.size % JOB_COLORS.length]);
+    if (!colorOf.has(key)) colorOf.set(key, jobColor(colorOf.size));
   }
 
   const n = Math.max(columns.length, 1);
