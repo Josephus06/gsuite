@@ -940,7 +940,28 @@ router.put('/:id', requireAuth, requireJobOrderEdit, async (req, res, next) => {
       }
     }
 
+    // A rework JO's (RWIP / RFQC) Quantity: only the pieces being redone (asked 2026-11-28: RWIP-1339,
+    // 6 made, 3 damaged). More than 0, no more than its mother JO's, and not under what is built.
+    // A regular JO's quantity stays the Sales Order's.
+    let newQty = null;
+    if (oldRow.parent_job_order_id && req.body.quantity !== undefined && req.body.quantity !== null && req.body.quantity !== ''
+      && Number(req.body.quantity) !== Number(oldRow.quantity)) {
+      const q = Number(req.body.quantity);
+      const [[mother]] = await conn.query('SELECT job_order_no, quantity FROM job_orders WHERE id = ?', [oldRow.parent_job_order_id]);
+      const motherQty = Number(mother?.quantity) || 0;
+      const built = Number(oldRow.quantity_built) || 0;
+      const bad = !Number.isFinite(q) || q <= 0 ? 'Quantity must be more than 0.'
+        : motherQty > 0 && q > motherQty + 1e-9 ? `Quantity cannot be more than ${mother.job_order_no}'s ${motherQty}.`
+          : q < built - 1e-9 ? `Quantity cannot be less than the ${built} already built.` : null;
+      if (bad) { await conn.rollback(); return res.status(400).json({ error: bad }); }
+      newQty = q;
+    }
+
     const values = EDIT_FIELDS.map((f) => (req.body[f] === undefined || req.body[f] === '' ? null : req.body[f]));
+    if (newQty !== null) {
+      await conn.query('UPDATE job_orders SET quantity = ? WHERE id = ?', [newQty, req.params.id]);
+      await logAudit(conn, { jobOrderId: req.params.id, userId: req.user.id, eventType: 'Updated', fieldName: 'quantity', oldValue: String(Number(oldRow.quantity)), newValue: String(newQty) });
+    }
 
     // Setting both Planned dates is what "scheduling" this JO means on the production
     // floor -- once it has a plan, it's no longer just sitting in the Pending for

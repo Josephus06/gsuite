@@ -124,6 +124,8 @@ export default function JobOrderEdit() {
         planned_start_date: joRes.data.planned_start_date ? String(joRes.data.planned_start_date).slice(0, 10) : '',
         planned_end_date: joRes.data.planned_end_date ? String(joRes.data.planned_end_date).slice(0, 10) : '',
         sales_rep_id: joRes.data.sales_rep_id || '',
+        // Editable on a rework JO (RWIP / RFQC) only; the server ignores it on any other.
+        ...(joRes.data.parent_job_order_id ? { quantity: joRes.data.quantity == null ? '' : String(Number(joRes.data.quantity)) } : {}),
       });
       setLocations(locRes.data);
       setEmployees(empRes.data);
@@ -370,7 +372,17 @@ export default function JobOrderEdit() {
           <div className="field"><label>Contact Title</label><input value={form.contact_title} onChange={(e) => setForm({ ...form, contact_title: e.target.value })} /></div>
           <div className="field">
             <label>Quantity / Length / Width / Height</label>
-            <input readOnly value={`${jo.quantity ?? 0} ${jo.units || ''}  L:${jo.length ?? 0} W:${jo.width ?? 0} H:${jo.height ?? ''}`} />
+            {jo.parent_job_order_id ? (
+              // A rework JO's quantity is only the pieces being redone -- editable (2026-11-28).
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input type="number" min="0" step="any" value={form.quantity ?? ''} style={{ width: 100 }}
+                  onChange={(e) => setForm({ ...form, quantity: e.target.value })} />
+                <input readOnly tabIndex={-1} style={{ flex: 1 }}
+                  value={`${jo.units || ''}  L:${jo.length ?? 0} W:${jo.width ?? 0} H:${jo.height ?? ''}`} />
+              </div>
+            ) : (
+              <input readOnly value={`${jo.quantity ?? 0} ${jo.units || ''}  L:${jo.length ?? 0} W:${jo.width ?? 0} H:${jo.height ?? ''}`} />
+            )}
           </div>
           <div className="field"><label>Sales Rep.</label>
             <EntityPicker
